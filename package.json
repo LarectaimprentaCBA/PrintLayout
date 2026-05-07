@@ -91,7 +91,7 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "larectaimprentacba",
+      "owner": "LarectaimprentaCBA",
       "repo": "PrintLayout",
       "private": true
     }
