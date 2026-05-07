@@ -1,0 +1,209 @@
+import { PDFDocument } from 'pdf-lib';
+import { cellPositions } from './templates.js';
+import { coverCropRect, coverObjectPosition } from './faceDetection.js';
+import { cropImageDataUrl } from './imageCrop.js';
+import { renderPdfBytesToImages } from './pdfPreview.js';
+
+const MM_TO_PT = 72 / 25.4;
+
+function dataUrlToBytes(dataUrl) {
+  const comma = dataUrl.indexOf(',');
+  const base64 = dataUrl.slice(comma + 1);
+  const bin = atob(base64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+function detectMime(dataUrl, fallback = 'image/jpeg') {
+  const m = /^data:([^;]+);/.exec(dataUrl);
+  return m ? m[1].toLowerCase() : fallback;
+}
+
+function fitContain(cellW, cellH, imgW, imgH) {
+  const cellAr = cellW / cellH;
+  const imgAr = imgW / imgH;
+  let drawW;
+  let drawH;
+  if (imgAr > cellAr) {
+    drawW = cellW;
+    drawH = cellW / imgAr;
+  } else {
+    drawH = cellH;
+    drawW = cellH * imgAr;
+  }
+  const dx = (cellW - drawW) / 2;
+  const dy = (cellH - drawH) / 2;
+  return { drawW, drawH, dx, dy };
+}
+
+function base64ToBytes(base64) {
+  const bin = atob(base64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+export async function buildPdf(template, assignments, imageMap, options = {}) {
+  const layoutFitMode = options.layoutFitMode ?? 'contain';
+  // embedBackground: si true, pone la pag 1 del PDF (marcas) detras de las
+  // imagenes. Default true (frente). Para imprimir el dorso pasamos false:
+  // las imagenes salen sin marcas pero en las mismas coordenadas, asi al
+  // dar vuelta la hoja caen sobre las celdas correctas.
+  const embedBackground = options.embedBackground !== false;
+  // Si el papel fisico es mayor (o menor) que la plantilla, la hoja queda
+  // al tamano del papel y el contenido (incluido el fondo de marcas) se
+  // centra. Asi, en doble faz, frente y dorso comparten el mismo centro
+  // fisico y al voltear quedan alineados aunque el papel sea distinto.
+  const paperWmm = options.paperWidthMm ?? template.pageWidthMm;
+  const paperHmm = options.paperHeightMm ?? template.pageHeightMm;
+  const doc = await PDFDocument.create();
+  doc.setTitle(template.name || 'PrintLayout');
+  doc.setProducer('PrintLayout');
+  doc.setCreator('PrintLayout');
+
+  const templateWpt = template.pageWidthMm * MM_TO_PT;
+  const templateHpt = template.pageHeightMm * MM_TO_PT;
+  const pageW = paperWmm * MM_TO_PT;
+  const pageH = paperHmm * MM_TO_PT;
+  const offsetXpt = (pageW - templateWpt) / 2;
+  const offsetYpt = (pageH - templateHpt) / 2;
+
+  let bgPage = null;
+  if (embedBackground && template.pdfBase64) {
+    try {
+      const bytes = base64ToBytes(template.pdfBase64);
+      [bgPage] = await doc.embedPdf(bytes, [0]);
+    } catch (err) {
+      console.error('No se pudo embeber pag 1 del PDF de plantilla:', err);
+    }
+  }
+
+  const embedCache = new Map();
+  async function embedFull(image) {
+    const key = `full:${image.id}`;
+    if (embedCache.has(key)) return embedCache.get(key);
+    const bytes = dataUrlToBytes(image.dataUrl);
+    const mime = detectMime(image.dataUrl, image.mime);
+    const embedded = mime.includes('png')
+      ? await doc.embedPng(bytes)
+      : await doc.embedJpg(bytes);
+    embedCache.set(key, embedded);
+    return embedded;
+  }
+
+  async function embedCoverCrop(image, cellW, cellH) {
+    const aspectKey = `${cellW.toFixed(3)}x${cellH.toFixed(3)}`;
+    const key = `cover:${image.id}:${aspectKey}`;
+    if (embedCache.has(key)) return embedCache.get(key);
+    const rect = coverCropRect(image, cellW, cellH);
+    if (!rect) return embedFull(image);
+    const cropped = await cropImageDataUrl(
+      image.dataUrl,
+      rect,
+      image.width,
+      image.height,
+    );
+    const bytes = dataUrlToBytes(cropped);
+    const embedded = await doc.embedJpg(bytes);
+    embedCache.set(key, embedded);
+    return embedded;
+  }
+
+  const face = options.face ?? (embedBackground ? 'front' : 'back');
+  const cells = cellPositions(template, face);
+  const cellsPerPage = cells.length;
+  const total = assignments?.length ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / cellsPerPage));
+
+  for (let p = 0; p < pageCount; p++) {
+    const page = doc.addPage([pageW, pageH]);
+    const offset = p * cellsPerPage;
+
+    if (bgPage) {
+      page.drawPage(bgPage, {
+        x: offsetXpt,
+        y: offsetYpt,
+        width: templateWpt,
+        height: templateHpt,
+      });
+    }
+
+    for (let i = 0; i < cellsPerPage; i++) {
+      const cell = cells[i];
+      const imgId = assignments?.[offset + i];
+      if (!imgId) continue;
+      const image = imageMap.get(imgId);
+      if (!image) continue;
+
+      const cellWpt = cell.w * MM_TO_PT;
+      const cellHpt = cell.h * MM_TO_PT;
+      // PDF usa origen bottom-left. Las celdas vienen con origen top-left
+      // dentro de la plantilla; sumamos el offset de centrado para llevarlas
+      // a coords del papel fisico.
+      const baseX = cell.x * MM_TO_PT + offsetXpt;
+      const baseYBottom = pageH - offsetYpt - cell.y * MM_TO_PT - cellHpt;
+      const cellFitMode = image.fitOverride ?? layoutFitMode;
+
+      if (cellFitMode === 'cover') {
+        const embedded = await embedCoverCrop(image, cell.w, cell.h);
+        page.drawImage(embedded, {
+          x: baseX,
+          y: baseYBottom,
+          width: cellWpt,
+          height: cellHpt,
+        });
+      } else {
+        const embedded = await embedFull(image);
+        const { drawW, drawH, dx, dy } = fitContain(
+          cellWpt,
+          cellHpt,
+          embedded.width,
+          embedded.height,
+        );
+        page.drawImage(embedded, {
+          x: baseX + dx,
+          y: baseYBottom + dy,
+          width: drawW,
+          height: drawH,
+        });
+      }
+    }
+  }
+
+  return doc.save();
+}
+
+function safePdfName(template, options = {}) {
+  const safe =
+    (template.name || 'PrintLayout').replace(/[\\/:*?"<>|]+/g, '_').trim() ||
+    'PrintLayout';
+  const suffix = options.faceLabel ? ` - ${options.faceLabel}` : '';
+  return `${safe}${suffix}.pdf`;
+}
+
+export async function exportLayoutToPdf(template, assignments, imageMap, options) {
+  const bytes = await buildPdf(template, assignments, imageMap, options);
+  const result = await window.printlayout.pdf.save(safePdfName(template, options), bytes);
+  return result;
+}
+
+export async function printLayoutPdf(template, assignments, imageMap, options) {
+  const bytes = await buildPdf(template, assignments, imageMap, options);
+  // webContents.print() del PDF viewer interno de Chromium sale en blanco
+  // en builds packaged. Rasterizamos con pdfjs e imprimimos como HTML.
+  const dpi = options?.printDpi ?? 240;
+  const images = await renderPdfBytesToImages(bytes, dpi);
+  const paperWidthMm = options?.paperWidthMm ?? template.pageWidthMm;
+  const paperHeightMm = options?.paperHeightMm ?? template.pageHeightMm;
+  const result = await window.printlayout.pdf.print({
+    defaultName: safePdfName(template, options),
+    images,
+    pageWidthMm: paperWidthMm,
+    pageHeightMm: paperHeightMm,
+  });
+  return result;
+}
+
+// Por completitud, no se usa todavia: podriamos exponer "el ojo" del cover.
+export { coverObjectPosition };

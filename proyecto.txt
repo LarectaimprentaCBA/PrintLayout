@@ -1,0 +1,63 @@
+Construí una app de escritorio llamada PrintLayout usando Electron + React.
+
+La app es para imprentas y diseñadores que necesitan acomodar fotos,
+tarjetas, stickers y otros productos en plantillas listas para imprimir.
+
+## FUNCIONALIDADES PRINCIPALES
+
+### 1. Gestor de Plantillas
+- Crear y guardar plantillas personalizadas con:
+  - Tamaño de hoja (A4, A3, Carta o dimensiones custom en mm)
+  - Cantidad de filas y columnas
+  - Tamaño de cada celda en mm (ancho x alto)
+  - Margenes y espaciado entre celdas en mm
+  - Nombre de la plantilla y tipo de producto (foto, tarjeta, sticker, otro)
+- Lista de plantillas guardadas con miniatura de preview
+- Editar y eliminar plantillas
+- Las plantillas se guardan entre sesiones (JSON local)
+
+### 2. Editor de Layout
+- Seleccionar una plantilla para empezar un nuevo layout
+- Subir multiples imagenes a la vez (JPG, PNG, JPEG)
+- Las imagenes se acomodan automaticamente en la grilla en orden (izquierda a derecha, arriba hacia abajo)
+- Cada celda muestra la imagen ajustada (manteniendo proporcion, centrada)
+- Drag and drop para reordenar imagenes entre celdas
+- Click en una celda para reemplazar su imagen
+- Click en una celda para seleccionarla y moverla con las teclas de flecha
+- Celdas vacias muestran un placeholder con icono + para agregar imagen
+- Canvas visual que muestra las proporciones exactas del layout
+
+### 3. Exportacion PDF
+- Boton exportar que genera un PDF listo para imprimir
+- El PDF tiene exactamente el tamanio de hoja definido en la plantilla
+- Imagenes renderizadas a 300 DPI de calidad
+- Cada imagen posicionada y escalada exactamente como se ve en el canvas
+- Dialogo para elegir donde guardar el archivo y con que nombre
+
+## TECNOLOGIAS
+- Electron (ultima version) como wrapper de escritorio
+- React para la interfaz
+- Vite para el bundling
+- pdf-lib para generar el PDF
+- sharp para procesar imagenes y redimensionar a 300dpi
+- react-dnd para drag and drop
+- Tailwind CSS para los estilos
+
+## INTERFAZ
+- Tema oscuro, limpio y profesional
+- Sidebar izquierdo: lista de plantillas + boton "Nueva Plantilla"
+- Area central: canvas del layout
+- Sidebar derecho: lista de imagenes y propiedades de la celda seleccionada
+- Barra superior: nombre de la app, boton exportar PDF, controles de zoom
+
+## ESTRUCTURA DEL PROYECTO
+Crear un proyecto completo y funcional Electron + React + Vite con:
+- package.json con todas las dependencias
+- electron/main.js para el proceso principal
+- electron/preload.js para IPC seguro
+- src/ para la app React
+- Todos los archivos de configuracion necesarios (vite.config.js, tailwind.config.js, etc.)
+
+## PRIMER PASO
+Armar toda la estructura del proyecto y dejarlo funcionando con
+"npm install" y "npm run dev" antes de agregar funcionalidades.

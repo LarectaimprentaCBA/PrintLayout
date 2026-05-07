@@ -1,0 +1,99 @@
+{
+  "name": "printlayout",
+  "version": "0.1.0",
+  "description": "Desktop app to arrange photos, cards and stickers on print-ready templates",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev:vite": "vite",
+    "dev:electron": "wait-on tcp:5174 && cross-env NODE_ENV=development electron .",
+    "dev": "concurrently -k -n VITE,ELECTRON -c blue,magenta \"npm:dev:vite\" \"npm:dev:electron\"",
+    "build:vite": "vite build",
+    "build": "vite build",
+    "preview": "vite preview",
+    "pack": "vite build && electron-packager . PrintLayout --platform=win32 --arch=x64 --out=release --overwrite --ignore=\"^/(release|src|build|scripts|public|templates-pdf|.vscode|.git|.idea)($|/)\" --ignore=\"^/(vite.config|tailwind.config|postcss.config|index.html|proyecto.txt|.gitignore)$\"",
+    "shortcut": "node scripts/create-shortcut.cjs",
+    "dist": "npm run pack && npm run shortcut",
+    "installer": "vite build && electron-builder --win nsis",
+    "release": "vite build && electron-builder --win nsis --publish always"
+  },
+  "dependencies": {
+    "@dnd-kit/core": "^6.1.0",
+    "@dnd-kit/sortable": "^8.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
+    "electron-updater": "^6.8.3",
+    "face-api.js": "^0.22.2",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^4.10.38",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.19",
+    "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3",
+    "electron-packager": "^17.1.2",
+    "postcss": "^8.4.39",
+    "tailwindcss": "^3.4.6",
+    "vite": "^5.3.4",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.printlayout.app",
+    "productName": "PrintLayout",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "python",
+        "to": "python",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "python-runtime",
+        "to": "python-runtime",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "PrintLayout-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "PrintLayout"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "larectaimprentacba",
+      "repo": "PrintLayout",
+      "private": true
+    }
+  }
+}

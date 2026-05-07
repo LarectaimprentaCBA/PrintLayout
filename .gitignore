@@ -1,0 +1,17 @@
+node_modules
+dist
+dist-electron
+release
+.vite
+.env
+.env.local
+*.log
+.DS_Store
+Thumbs.db
+
+# Runtime de Python embebido: lo regenera scripts/setup-python.ps1
+python-runtime/
+get-pip.py
+
+# Sample images del repo viejo que no van versionadas
+fotosPolaroid95x95 (1).jpg

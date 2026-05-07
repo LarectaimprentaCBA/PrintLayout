@@ -1,0 +1,32 @@
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('printlayout', {
+  version: '0.2.0',
+  templates: {
+    list: () => ipcRenderer.invoke('templates:list'),
+    save: (template) => ipcRenderer.invoke('templates:save', template),
+    delete: (id) => ipcRenderer.invoke('templates:delete', id),
+    parsePdf: (bytes, opts) =>
+      ipcRenderer.invoke('templates:parse-pdf', { bytes, ...(opts || {}) }),
+  },
+  plotter: {
+    sendCut: (payload) => ipcRenderer.invoke('plotter:send-cut', payload),
+  },
+  pdf: {
+    save: (defaultName, bytes) =>
+      ipcRenderer.invoke('export:save-pdf', { defaultName, bytes }),
+    print: (payload) => ipcRenderer.invoke('print:pdf', payload),
+  },
+  shell: {
+    showItem: (p) => ipcRenderer.invoke('shell:show-item', p),
+  },
+  updater: {
+    onStatus: (cb) => {
+      const handler = (_evt, payload) => cb(payload);
+      ipcRenderer.on('updater:status', handler);
+      return () => ipcRenderer.removeListener('updater:status', handler);
+    },
+    installNow: () => ipcRenderer.invoke('updater:install-now'),
+    checkNow: () => ipcRenderer.invoke('updater:check-now'),
+  },
+});
