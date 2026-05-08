@@ -98,7 +98,10 @@ export function useTemplates() {
   // simplemente refrescamos el state para que la UI los muestre.
   const syncPull = useCallback(async () => {
     const res = await window.printlayout.templates.syncPull();
-    if (res?.ok && (res.added?.length || res.updated?.length)) {
+    if (
+      res?.ok
+      && (res.added?.length || res.updated?.length || res.replaced?.length)
+    ) {
       const list = await window.printlayout.templates.list();
       setTemplates(list);
     }

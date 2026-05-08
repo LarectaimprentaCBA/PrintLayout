@@ -118,6 +118,7 @@ ipcMain.handle('templates:sync-pull', async () => {
 
     const added = [];
     const updated = [];
+    const replaced = [];
     const errors = [];
 
     for (const entry of remote) {
@@ -131,6 +132,21 @@ ipcMain.handle('templates:sync-pull', async () => {
           errors.push({ id: entry.id, name: entry.name, error: 'no encontrada en repo' });
           continue;
         }
+
+        // Primer sync de una plantilla que ya existia local con el mismo
+        // nombre (pero distinto id porque cada PC genera el suyo al cargar
+        // un PDF). Borramos la local-only para no duplicar.
+        let displaceId = null;
+        if (!localTpl) {
+          const localByName = local.find(
+            (t) => t.name === entry.name && !t.sharedAt && t.id !== entry.id,
+          );
+          if (localByName) {
+            displaceId = localByName.id;
+            templatesStore.remove(localByName.id);
+          }
+        }
+
         const merged = {
           ...full,
           id: entry.id,
@@ -139,13 +155,29 @@ ipcMain.handle('templates:sync-pull', async () => {
         };
         const saved = templatesStore.save(merged);
         if (localTpl) updated.push({ id: saved.id, name: saved.name });
+        else if (displaceId) replaced.push({ id: saved.id, name: saved.name });
         else added.push({ id: saved.id, name: saved.name });
       } catch (err) {
         errors.push({ id: entry.id, name: entry.name, error: err.message });
       }
     }
 
-    return { ok: true, added, updated, errors };
+    // Cleanup pass: borra plantillas local-only que colisionan en nombre con
+    // alguna ya compartida. Cubre duplicados creados por syncs previos al
+    // dedup (cuando ambas PCs subieron la misma plantilla con ids distintos).
+    const all = templatesStore.list();
+    const sharedNames = new Set(
+      all.filter((t) => t.sharedAt).map((t) => t.name),
+    );
+    const cleaned = [];
+    for (const t of all) {
+      if (!t.sharedAt && sharedNames.has(t.name)) {
+        templatesStore.remove(t.id);
+        cleaned.push({ id: t.id, name: t.name });
+      }
+    }
+
+    return { ok: true, added, updated, replaced, cleaned, errors };
   } catch (err) {
     return { ok: false, error: err.message };
   }

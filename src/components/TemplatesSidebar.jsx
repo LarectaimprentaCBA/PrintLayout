@@ -5,9 +5,11 @@ export default function TemplatesSidebar({
   templates,
   selectedId,
   uploading,
+  syncing,
   onSelect,
   onUploadPdf,
   onDelete,
+  onSync,
 }) {
   const fileRef = useRef(null);
 
@@ -30,14 +32,26 @@ export default function TemplatesSidebar({
         <h2 className="text-xs font-semibold uppercase tracking-wider text-ink-300">
           Plantillas
         </h2>
-        <button
-          onClick={() => fileRef.current?.click()}
-          disabled={uploading}
-          className="rounded bg-accent-600 px-2 py-1 text-xs font-medium text-white hover:bg-accent-500 disabled:opacity-40"
-          title="Subir un PDF de plantilla (3 páginas: imprimible, celdas, cortes)"
-        >
-          {uploading ? 'Cargando…' : '+ Subir PDF'}
-        </button>
+        <div className="flex gap-1">
+          {onSync && (
+            <button
+              onClick={onSync}
+              disabled={syncing}
+              className="rounded border border-ink-700 px-2 py-1 text-xs text-ink-300 hover:bg-ink-800 disabled:opacity-40"
+              title="Pullear plantillas compartidas desde el repo"
+            >
+              {syncing ? '…' : '↻'}
+            </button>
+          )}
+          <button
+            onClick={() => fileRef.current?.click()}
+            disabled={uploading}
+            className="rounded bg-accent-600 px-2 py-1 text-xs font-medium text-white hover:bg-accent-500 disabled:opacity-40"
+            title="Subir un PDF de plantilla (3 páginas: imprimible, celdas, cortes)"
+          >
+            {uploading ? 'Cargando…' : '+ Subir PDF'}
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-2">

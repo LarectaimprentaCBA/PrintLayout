@@ -39,6 +39,41 @@ export default function App() {
   } = useTemplates();
   const [selectedId, setSelectedId] = useState(null);
   const [sharing, setSharing] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+
+  const runSyncWithToast = async ({ silent = false } = {}) => {
+    setSyncing(true);
+    try {
+      const r = await syncPull();
+      if (!r?.ok) {
+        if (!silent) {
+          setToast({ kind: 'error', text: `Sync fallo: ${r?.error ?? 'error'}` });
+        }
+        return;
+      }
+      const a = r.added?.length ?? 0;
+      const u = r.updated?.length ?? 0;
+      const rep = r.replaced?.length ?? 0;
+      const c = r.cleaned?.length ?? 0;
+      if (a + u + rep + c > 0) {
+        const parts = [];
+        if (a) parts.push(`${a} nueva${a === 1 ? '' : 's'}`);
+        if (u) parts.push(`${u} actualizada${u === 1 ? '' : 's'}`);
+        if (rep) parts.push(`${rep} reemplazada${rep === 1 ? '' : 's'}`);
+        if (c) parts.push(`${c} duplicada${c === 1 ? '' : 's'} eliminada${c === 1 ? '' : 's'}`);
+        setToast({ kind: 'success', text: `Plantillas: ${parts.join(', ')}.` });
+      } else if (!silent) {
+        setToast({ kind: 'success', text: 'Plantillas sincronizadas, sin cambios.' });
+      }
+    } catch (err) {
+      if (!silent) {
+        setToast({ kind: 'error', text: `Sync fallo: ${err.message}` });
+      }
+      console.warn('Sync de plantillas fallo:', err);
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const selected = useMemo(
     () => templates.find((t) => t.id === selectedId) ?? null,
@@ -81,21 +116,7 @@ export default function App() {
   useEffect(() => {
     if (templatesLoading || syncedOnceRef.current) return;
     syncedOnceRef.current = true;
-    (async () => {
-      try {
-        const r = await syncPull();
-        if (!r?.ok) return;
-        const total = (r.added?.length ?? 0) + (r.updated?.length ?? 0);
-        if (total > 0) {
-          setToast({
-            kind: 'success',
-            text: `Plantillas sincronizadas: ${r.added.length} nuevas, ${r.updated.length} actualizadas.`,
-          });
-        }
-      } catch (err) {
-        console.warn('Sync de plantillas fallo:', err);
-      }
-    })();
+    runSyncWithToast({ silent: true });
   }, [templatesLoading, syncPull]);
 
   const handleShare = async (template) => {
@@ -552,9 +573,11 @@ export default function App() {
             templates={templates}
             selectedId={selectedId}
             uploading={uploading}
+            syncing={syncing}
             onSelect={setSelectedId}
             onUploadPdf={handleUploadPdf}
             onDelete={handleDelete}
+            onSync={() => runSyncWithToast()}
           />
           <LayoutCanvas
             template={selected}
