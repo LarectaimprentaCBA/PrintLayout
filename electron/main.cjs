@@ -162,16 +162,17 @@ ipcMain.handle('templates:sync-pull', async () => {
       }
     }
 
-    // Cleanup pass: borra plantillas local-only que colisionan en nombre con
-    // alguna ya compartida. Cubre duplicados creados por syncs previos al
-    // dedup (cuando ambas PCs subieron la misma plantilla con ids distintos).
+    // Cleanup pass: para cada nombre que existe en el repo, hay UNA plantilla
+    // local canonica (la que tiene el id del manifest). Cualquier otra local
+    // con el mismo nombre y un id distinto es un duplicado: o es local-only
+    // (caso original de dos PCs subiendo la misma) o es una copia bogus
+    // generada por el bug de templates-store que descartaba ids pulleados.
+    const remoteByName = new Map(remote.map((e) => [e.name, e.id]));
     const all = templatesStore.list();
-    const sharedNames = new Set(
-      all.filter((t) => t.sharedAt).map((t) => t.name),
-    );
     const cleaned = [];
     for (const t of all) {
-      if (!t.sharedAt && sharedNames.has(t.name)) {
+      const canonicalId = remoteByName.get(t.name);
+      if (canonicalId && t.id !== canonicalId) {
         templatesStore.remove(t.id);
         cleaned.push({ id: t.id, name: t.name });
       }

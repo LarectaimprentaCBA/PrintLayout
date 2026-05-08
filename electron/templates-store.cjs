@@ -46,6 +46,17 @@ function save(template) {
       writeAll(all);
       return all[idx];
     }
+    // Si vino con id pero no existe local, lo respetamos (caso de plantillas
+    // pulleadas del repo de sync, cuyo id viene del manifest y debe persistir
+    // para que futuros syncs encuentren la plantilla por id).
+    const createdWithId = {
+      ...template,
+      createdAt: template.createdAt || now,
+      updatedAt: now,
+    };
+    all.push(createdWithId);
+    writeAll(all);
+    return createdWithId;
   }
 
   const created = {
