@@ -29,6 +29,26 @@ export function hasCustomBackCells(template) {
   return Array.isArray(template?.celdasDorso) && template.celdasDorso.length > 0;
 }
 
+// Orientacion target de la plantilla: tomamos la primera celda (asumimos
+// que las plantillas tienen celdas todas con la misma orientacion, que es
+// el caso comun: Polaroid vertical, tarjetas horizontal, etc).
+// Devuelve 'portrait' | 'landscape' | 'square' | null si no hay celdas.
+export function templateOrientation(template) {
+  const cell = template?.celdas?.[0];
+  if (!cell) return null;
+  if (cell.w > cell.h) return 'landscape';
+  if (cell.h > cell.w) return 'portrait';
+  return 'square';
+}
+
+// Orientacion de una imagen.
+export function imageOrientation(image) {
+  if (!image) return null;
+  if (image.width > image.height) return 'landscape';
+  if (image.height > image.width) return 'portrait';
+  return 'square';
+}
+
 // Para mostrar en la sidebar, agrupamos celdas en filas para describir la
 // distribución sin pretender que sea una grilla regular.
 export function describeCells(template) {

@@ -21,7 +21,7 @@ import {
   exportDoubleSidedLayoutToPdf,
   printLayoutPdf,
 } from './lib/exportPdf.js';
-import { hasCuts } from './lib/templates.js';
+import { hasCuts, templateOrientation, imageOrientation } from './lib/templates.js';
 import { facesBoundingBox } from './lib/faceDetection.js';
 import { cropImageDataUrl } from './lib/imageCrop.js';
 import { rotateImageDataUrl90CW } from './lib/imageRotate.js';
@@ -308,6 +308,52 @@ export default function App() {
   };
 
   const handleDragCancel = () => setActiveDrag(null);
+
+  // Al cargar imagenes, si la plantilla tiene una orientacion clara
+  // (vertical/horizontal) y la imagen viene en la opuesta, la rotamos 90 CW
+  // para que entre directo. Casos comunes: photos horizontales en plantilla
+  // Polaroid (vertical), o photos verticales en tarjetas horizontales.
+  const handleAddImages = async (loadedImages) => {
+    if (!selected) {
+      layout.addImages(loadedImages);
+      return;
+    }
+    const target = templateOrientation(selected);
+    if (target === 'square' || target === null) {
+      layout.addImages(loadedImages);
+      return;
+    }
+    const processed = [];
+    let rotatedCount = 0;
+    for (const img of loadedImages) {
+      const imgOr = imageOrientation(img);
+      if (imgOr !== 'square' && imgOr !== target) {
+        try {
+          const r = await rotateImageDataUrl90CW(img.dataUrl);
+          processed.push({
+            ...img,
+            dataUrl: r.dataUrl,
+            width: r.width,
+            height: r.height,
+            faces: [],
+          });
+          rotatedCount++;
+        } catch (err) {
+          console.warn('Auto-rotate fallo, dejo la imagen como esta:', err);
+          processed.push(img);
+        }
+      } else {
+        processed.push(img);
+      }
+    }
+    layout.addImages(processed);
+    if (rotatedCount > 0) {
+      setToast({
+        kind: 'success',
+        text: `${rotatedCount} imagen${rotatedCount === 1 ? '' : 'es'} rotada${rotatedCount === 1 ? '' : 's'} para coincidir con la plantilla.`,
+      });
+    }
+  };
 
   const handleRotate = async (imageId) => {
     const img = layout.imageMap.get(imageId);
@@ -612,7 +658,7 @@ export default function App() {
             sharing={sharing}
             onShare={handleShare}
             onEditMargin={handleEditMargin}
-            onAddImages={layout.addImages}
+            onAddImages={handleAddImages}
             onRemoveImage={layout.removeImage}
             onClearCell={layout.clearCell}
             onClearAll={layout.clearAll}
