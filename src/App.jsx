@@ -12,6 +12,7 @@ import LayoutCanvas from './components/LayoutCanvas.jsx';
 import PropertiesSidebar from './components/PropertiesSidebar.jsx';
 import PromptModal from './components/PromptModal.jsx';
 import PdfUploadModal from './components/PdfUploadModal.jsx';
+import GridUploadModal from './components/GridUploadModal.jsx';
 import ImageEditorModal from './components/ImageEditorModal.jsx';
 import { useTemplates } from './hooks/useTemplates.js';
 import { useLayoutEditor } from './hooks/useLayoutEditor.js';
@@ -79,10 +80,14 @@ export default function App() {
     }
   };
 
-  const selected = useMemo(
-    () => templates.find((t) => t.id === selectedId) ?? null,
-    [templates, selectedId],
-  );
+  // Plantilla "grilla rapida": vive solo en memoria. Si su id coincide con
+  // selectedId, la usamos para todo el flujo. Al cerrar la app se descarta.
+  const [dynamicTemplate, setDynamicTemplate] = useState(null);
+
+  const selected = useMemo(() => {
+    if (dynamicTemplate && selectedId === dynamicTemplate.id) return dynamicTemplate;
+    return templates.find((t) => t.id === selectedId) ?? null;
+  }, [templates, selectedId, dynamicTemplate]);
 
   // Lista unica de carpetas usadas por las plantillas (para autocomplete y
   // agrupado en la sidebar).
@@ -106,6 +111,9 @@ export default function App() {
   }, [selected?.doubleSided, viewingFace]);
   const cellPickerRef = useRef(null);
   const pendingCellRef = useRef(null);
+  // File picker para "+ Subir PDF" cuando se invoca desde el canvas vacio
+  // (la sidebar tiene su propio input interno).
+  const blankPdfInputRef = useRef(null);
 
   const [activeDrag, setActiveDrag] = useState(null);
   const [exporting, setExporting] = useState(false);
@@ -173,6 +181,8 @@ export default function App() {
   const [marginPrompt, setMarginPrompt] = useState(null);
   // Modal de subida de PDF (margen + doble faz).
   const [pdfUpload, setPdfUpload] = useState(null);
+  // Modal de grilla rapida (plantilla en memoria, sin PDF).
+  const [gridModalOpen, setGridModalOpen] = useState(false);
   // Imagen abierta en el editor.
   const [editingImageId, setEditingImageId] = useState(null);
 
@@ -218,6 +228,10 @@ export default function App() {
   const handleRenameTemplate = async (template, newName) => {
     const trimmed = (newName || '').trim();
     if (!trimmed || trimmed === template.name) return;
+    if (template.temporal) {
+      setDynamicTemplate((prev) => (prev ? { ...prev, name: trimmed } : prev));
+      return;
+    }
     await update({ ...template, name: trimmed });
   };
 
@@ -225,7 +239,30 @@ export default function App() {
     const trimmed = (newCategoria || '').trim();
     const current = (template.categoria || '').trim();
     if (trimmed === current) return;
+    if (template.temporal) return; // categoria no aplica a temporales
     await update({ ...template, categoria: trimmed || undefined });
+  };
+
+  const handleCreateGrid = ({ paperWidthMm, paperHeightMm, cells }) => {
+    const id = `tpl_dyn_${Date.now().toString(36)}`;
+    const tpl = {
+      id,
+      name: 'Grilla rápida',
+      pdfBase64: null,
+      pageWidthMm: paperWidthMm,
+      pageHeightMm: paperHeightMm,
+      pageCount: 1,
+      celdas: cells,
+      celdasDorso: [],
+      cortes: [],
+      markMarginMm: 0,
+      doubleSided: false,
+      singlePage: true,
+      temporal: true,
+    };
+    setDynamicTemplate(tpl);
+    setSelectedId(id);
+    setGridModalOpen(false);
   };
 
   const submitPdfUpload = async ({ margin: rawMargin, doubleSided, name, categoria }) => {
@@ -673,6 +710,8 @@ export default function App() {
               layout.setSelectedCell(null);
             }}
             onCellClick={handleCellClick}
+            onUploadPdfClick={() => blankPdfInputRef.current?.click()}
+            onCreateGridClick={() => setGridModalOpen(true)}
           />
           <PropertiesSidebar
             template={selected}
@@ -747,6 +786,24 @@ export default function App() {
           existingCategories={categoriasList}
           onConfirm={submitPdfUpload}
           onCancel={() => setPdfUpload(null)}
+        />
+
+        <GridUploadModal
+          open={gridModalOpen}
+          onConfirm={handleCreateGrid}
+          onCancel={() => setGridModalOpen(false)}
+        />
+
+        <input
+          ref={blankPdfInputRef}
+          type="file"
+          accept="application/pdf,.pdf"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = '';
+            if (file) handleUploadPdf(file);
+          }}
         />
 
         {(() => {

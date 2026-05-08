@@ -20,6 +20,8 @@ export default function LayoutCanvas({
   showBackground = true,
   showCuts = false,
   face = 'front',
+  onUploadPdfClick,
+  onCreateGridClick,
 }) {
   const scrollRef = useRef(null);
   const [fitScale, setFitScale] = useState(1);
@@ -108,9 +110,32 @@ export default function LayoutCanvas({
   if (!template) {
     return (
       <main className="flex flex-1 items-center justify-center overflow-auto bg-ink-950 p-8">
-        <div className="flex flex-col items-center gap-3 text-ink-400">
-          <div className="flex h-[60vh] w-[42vh] items-center justify-center rounded-md border border-dashed border-ink-600 bg-ink-900 shadow-2xl">
-            <span className="text-sm">Subí o seleccioná una plantilla para empezar</span>
+        <div className="flex flex-col items-center gap-4 text-ink-400">
+          <div className="flex h-[60vh] w-[42vh] flex-col items-center justify-center gap-4 rounded-md border border-dashed border-ink-600 bg-ink-900 px-8 shadow-2xl">
+            <span className="text-center text-sm text-ink-300">
+              Subí o seleccioná una plantilla para empezar
+            </span>
+            <div className="flex w-full flex-col gap-2">
+              {onUploadPdfClick && (
+                <button
+                  onClick={onUploadPdfClick}
+                  className="rounded bg-accent-600 px-4 py-2 text-sm font-medium text-white hover:bg-accent-500"
+                >
+                  + Subir PDF
+                </button>
+              )}
+              {onCreateGridClick && (
+                <button
+                  onClick={onCreateGridClick}
+                  className="rounded border border-accent-500/40 bg-ink-800 px-4 py-2 text-sm font-medium text-accent-300 hover:bg-ink-700"
+                >
+                  + Grilla rápida
+                </button>
+              )}
+            </div>
+            <p className="text-center text-[11px] text-ink-500">
+              La grilla rápida es una hoja en blanco con celdas uniformes que vive solo en esta sesión.
+            </p>
           </div>
         </div>
       </main>

@@ -216,37 +216,39 @@ export default function PropertiesSidebar({
                 )}
               </dd>
             </div>
-            <div>
-              <dt className="text-ink-400 mb-1">Carpeta</dt>
-              <dd>
-                {onSetCategoria ? (
-                  <>
-                    <input
-                      list="properties-categorias"
-                      defaultValue={template.categoria || ''}
-                      key={template.id + (template.categoria || '')}
-                      placeholder="Sin carpeta"
-                      onBlur={(e) => onSetCategoria(template, e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') e.target.blur();
-                        if (e.key === 'Escape') {
-                          e.target.value = template.categoria || '';
-                          e.target.blur();
-                        }
-                      }}
-                      className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1 text-xs text-ink-100 outline-none focus:border-accent-500"
-                    />
-                    <datalist id="properties-categorias">
-                      {categoriasList.map((c) => (
-                        <option key={c} value={c} />
-                      ))}
-                    </datalist>
-                  </>
-                ) : (
-                  <span className="text-ink-100">{template.categoria || '—'}</span>
-                )}
-              </dd>
-            </div>
+            {!template.temporal && (
+              <div>
+                <dt className="text-ink-400 mb-1">Carpeta</dt>
+                <dd>
+                  {onSetCategoria ? (
+                    <>
+                      <input
+                        list="properties-categorias"
+                        defaultValue={template.categoria || ''}
+                        key={template.id + (template.categoria || '')}
+                        placeholder="Sin carpeta"
+                        onBlur={(e) => onSetCategoria(template, e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') e.target.blur();
+                          if (e.key === 'Escape') {
+                            e.target.value = template.categoria || '';
+                            e.target.blur();
+                          }
+                        }}
+                        className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1 text-xs text-ink-100 outline-none focus:border-accent-500"
+                      />
+                      <datalist id="properties-categorias">
+                        {categoriasList.map((c) => (
+                          <option key={c} value={c} />
+                        ))}
+                      </datalist>
+                    </>
+                  ) : (
+                    <span className="text-ink-100">{template.categoria || '—'}</span>
+                  )}
+                </dd>
+              </div>
+            )}
             <div className="flex justify-between">
               <dt className="text-ink-400">Hoja</dt>
               <dd>
@@ -290,32 +292,41 @@ export default function PropertiesSidebar({
                 {template.doubleSided ? 'Sí' : 'No'}
               </dd>
             </div>
-            <div className="flex items-center justify-between">
-              <dt className="text-ink-400">Compartida</dt>
-              <dd className={template.sharedAt ? 'text-accent-400' : 'text-ink-500'}>
-                {template.sharedAt ? 'Sí' : 'No'}
-              </dd>
-            </div>
-            {onShare && (
-              <div className="pt-1">
-                <button
-                  onClick={() => onShare(template)}
-                  disabled={!canShare || sharing}
-                  title={
-                    canShare
-                      ? template.sharedAt
-                        ? 'Subir cambios al repo compartido'
-                        : 'Subir al repo compartido (la van a recibir todas las PCs)'
-                      : 'Token de sync no configurado en este build'
-                  }
-                  className="w-full rounded border border-accent-500/40 px-2 py-1 text-[11px] text-accent-300 hover:bg-accent-500/10 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {sharing
-                    ? 'Subiendo…'
-                    : template.sharedAt
-                    ? 'Subir cambios'
-                    : 'Compartir'}
-                </button>
+            {!template.temporal && (
+              <>
+                <div className="flex items-center justify-between">
+                  <dt className="text-ink-400">Compartida</dt>
+                  <dd className={template.sharedAt ? 'text-accent-400' : 'text-ink-500'}>
+                    {template.sharedAt ? 'Sí' : 'No'}
+                  </dd>
+                </div>
+                {onShare && (
+                  <div className="pt-1">
+                    <button
+                      onClick={() => onShare(template)}
+                      disabled={!canShare || sharing}
+                      title={
+                        canShare
+                          ? template.sharedAt
+                            ? 'Subir cambios al repo compartido'
+                            : 'Subir al repo compartido (la van a recibir todas las PCs)'
+                          : 'Token de sync no configurado en este build'
+                      }
+                      className="w-full rounded border border-accent-500/40 px-2 py-1 text-[11px] text-accent-300 hover:bg-accent-500/10 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {sharing
+                        ? 'Subiendo…'
+                        : template.sharedAt
+                        ? 'Subir cambios'
+                        : 'Compartir'}
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+            {template.temporal && (
+              <div className="rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-[11px] text-amber-200">
+                Grilla temporal — vive solo en esta sesión.
               </div>
             )}
           </dl>
