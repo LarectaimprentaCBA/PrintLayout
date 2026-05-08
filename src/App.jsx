@@ -422,6 +422,7 @@ export default function App() {
     try {
       // Doble faz: un solo PDF con pag 1 = frente (con marcas) y pag 2 = dorso
       // (sin marcas). Lo viewing no influye, siempre mandamos las dos caras.
+      // 1-pagina: no se embebe nada del PDF original (las cajas son guias).
       const result = selected.doubleSided
         ? await exportDoubleSidedLayoutToPdf(
             selected,
@@ -440,7 +441,7 @@ export default function App() {
             layout.imageMap,
             {
               layoutFitMode,
-              embedBackground: true,
+              embedBackground: !selected.singlePage,
               paperWidthMm: customPaper?.widthMm,
               paperHeightMm: customPaper?.heightMm,
             },
@@ -479,7 +480,7 @@ export default function App() {
     try {
       const result = await printLayoutPdf(selected, assignments, layout.imageMap, {
         layoutFitMode,
-        embedBackground: !isBack,
+        embedBackground: !isBack && !selected.singlePage,
         faceLabel: selected.doubleSided ? (isBack ? 'dorso' : 'frente') : undefined,
         paperWidthMm: customPaper?.widthMm,
         paperHeightMm: customPaper?.heightMm,

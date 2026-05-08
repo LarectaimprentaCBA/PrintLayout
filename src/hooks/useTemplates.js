@@ -42,6 +42,7 @@ export function useTemplates() {
     for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
     const pdfBase64 = btoa(bin);
 
+    const isSinglePage = !!parsed.singlePage;
     const tpl = {
       name,
       pdfBase64,
@@ -52,7 +53,10 @@ export function useTemplates() {
       celdasDorso: parsed.celdasDorso ?? [],
       cortes: parsed.cortes ?? [],
       markMarginMm,
-      doubleSided,
+      // En modo 1-pagina, el PDF solo aporta las cajas como referencia
+      // visual; no hay marcas para imprimir ni dorso.
+      doubleSided: isSinglePage ? false : doubleSided,
+      singlePage: isSinglePage,
     };
     const saved = await window.printlayout.templates.save(tpl);
     setTemplates((prev) => [...prev, saved]);

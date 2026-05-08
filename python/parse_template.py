@@ -1,6 +1,11 @@
 """
 Parsea un PDF de plantilla PrintLayout.
 
+Formato 1-pagina (modo simple, sin marcas ni cortes):
+  pag 1 (idx 0) -> vectores de cajas. Cada drawing -> una celda. NO se imprime.
+  La app no embebe nada del PDF en el export, las cajas son solo guias para
+  posicionar imagenes.
+
 Formato simple-faz (3 paginas):
   pag 1 (idx 0) -> imprimible. No se parsea aqui, la app la embebe.
   pag 2 (idx 1) -> vectores de cajas de posicionado. Cada drawing -> una celda.
@@ -52,13 +57,10 @@ def parse_pdf(pdf_path, doble_faz=False):
         return {"ok": False, "error": f"No se pudo abrir el PDF: {e}"}
 
     n = len(doc)
-    if n < 2:
+    if n < 1:
         return {
             "ok": False,
-            "error": (
-                f"El PDF tiene {n} pagina(s). Se necesitan al menos 2: "
-                "pag 1 imprimible, pag 2 celdas."
-            ),
+            "error": "El PDF esta vacio.",
         }
 
     page0 = doc[0]
@@ -66,6 +68,21 @@ def parse_pdf(pdf_path, doble_faz=False):
     page_h_pt = page0.rect.height
     page_w_mm = pt_to_mm(page_w_pt)
     page_h_mm = pt_to_mm(page_h_pt)
+
+    # Modo 1-pagina: la unica pagina trae las cajas como celdas. No hay
+    # imprimible (no se embebe en el export) ni cortes ni dorso.
+    if n == 1:
+        celdas_simple = _extraer_celdas(page0, page_h_pt)
+        return {
+            "ok": True,
+            "pageWidthMm": page_w_mm,
+            "pageHeightMm": page_h_mm,
+            "pageCount": 1,
+            "celdas": celdas_simple,
+            "celdasDorso": [],
+            "cortes": [],
+            "singlePage": True,
+        }
 
     # Pagina 2: celdas frente.
     page1 = doc[1]
