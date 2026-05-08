@@ -44,23 +44,12 @@ function base64ToBytes(base64) {
   return bytes;
 }
 
-export async function buildPdf(template, assignments, imageMap, options = {}) {
-  const layoutFitMode = options.layoutFitMode ?? 'contain';
-  // embedBackground: si true, pone la pag 1 del PDF (marcas) detras de las
-  // imagenes. Default true (frente). Para imprimir el dorso pasamos false:
-  // las imagenes salen sin marcas pero en las mismas coordenadas, asi al
-  // dar vuelta la hoja caen sobre las celdas correctas.
-  const embedBackground = options.embedBackground !== false;
-  // Si el papel fisico es mayor (o menor) que la plantilla, la hoja queda
-  // al tamano del papel y el contenido (incluido el fondo de marcas) se
-  // centra. Asi, en doble faz, frente y dorso comparten el mismo centro
-  // fisico y al voltear quedan alineados aunque el papel sea distinto.
-  const paperWmm = options.paperWidthMm ?? template.pageWidthMm;
-  const paperHmm = options.paperHeightMm ?? template.pageHeightMm;
-  const doc = await PDFDocument.create();
-  doc.setTitle(template.name || 'PrintLayout');
-  doc.setProducer('PrintLayout');
-  doc.setCreator('PrintLayout');
+// Renderiza una "cara" (frente o dorso) como pagina(s) sobre un doc existente.
+// El embedCache se comparte entre llamadas para que las mismas imagenes usadas
+// en frente y dorso se embeban una sola vez.
+async function appendFaceToDoc(doc, ctx, template, assignments, options) {
+  const { layoutFitMode, embedBackground, face, paperWmm, paperHmm } = options;
+  const { imageMap, embedCache } = ctx;
 
   const templateWpt = template.pageWidthMm * MM_TO_PT;
   const templateHpt = template.pageHeightMm * MM_TO_PT;
@@ -71,15 +60,19 @@ export async function buildPdf(template, assignments, imageMap, options = {}) {
 
   let bgPage = null;
   if (embedBackground && template.pdfBase64) {
-    try {
-      const bytes = base64ToBytes(template.pdfBase64);
-      [bgPage] = await doc.embedPdf(bytes, [0]);
-    } catch (err) {
-      console.error('No se pudo embeber pag 1 del PDF de plantilla:', err);
+    if (ctx.bgPageCache) {
+      bgPage = ctx.bgPageCache;
+    } else {
+      try {
+        const bytes = base64ToBytes(template.pdfBase64);
+        [bgPage] = await doc.embedPdf(bytes, [0]);
+        ctx.bgPageCache = bgPage;
+      } catch (err) {
+        console.error('No se pudo embeber pag 1 del PDF de plantilla:', err);
+      }
     }
   }
 
-  const embedCache = new Map();
   async function embedFull(image) {
     const key = `full:${image.id}`;
     if (embedCache.has(key)) return embedCache.get(key);
@@ -110,7 +103,6 @@ export async function buildPdf(template, assignments, imageMap, options = {}) {
     return embedded;
   }
 
-  const face = options.face ?? (embedBackground ? 'front' : 'back');
   const cells = cellPositions(template, face);
   const cellsPerPage = cells.length;
   const total = assignments?.length ?? 0;
@@ -170,6 +162,74 @@ export async function buildPdf(template, assignments, imageMap, options = {}) {
       }
     }
   }
+}
+
+export async function buildPdf(template, assignments, imageMap, options = {}) {
+  const layoutFitMode = options.layoutFitMode ?? 'contain';
+  // embedBackground: si true, pone la pag 1 del PDF (marcas) detras de las
+  // imagenes. Default true (frente). Para imprimir el dorso pasamos false:
+  // las imagenes salen sin marcas pero en las mismas coordenadas, asi al
+  // dar vuelta la hoja caen sobre las celdas correctas.
+  const embedBackground = options.embedBackground !== false;
+  // Si el papel fisico es mayor (o menor) que la plantilla, la hoja queda
+  // al tamano del papel y el contenido (incluido el fondo de marcas) se
+  // centra. Asi, en doble faz, frente y dorso comparten el mismo centro
+  // fisico y al voltear quedan alineados aunque el papel sea distinto.
+  const paperWmm = options.paperWidthMm ?? template.pageWidthMm;
+  const paperHmm = options.paperHeightMm ?? template.pageHeightMm;
+  const face = options.face ?? (embedBackground ? 'front' : 'back');
+
+  const doc = await PDFDocument.create();
+  doc.setTitle(template.name || 'PrintLayout');
+  doc.setProducer('PrintLayout');
+  doc.setCreator('PrintLayout');
+
+  const ctx = { imageMap, embedCache: new Map(), bgPageCache: null };
+  await appendFaceToDoc(doc, ctx, template, assignments, {
+    layoutFitMode,
+    embedBackground,
+    face,
+    paperWmm,
+    paperHmm,
+  });
+
+  return doc.save();
+}
+
+// Para plantillas doble faz: genera un unico PDF con frente (pag 1, con marcas)
+// + dorso (pag 2, sin marcas). Las imagenes que aparezcan en ambas caras se
+// embeben una sola vez gracias al embedCache compartido.
+export async function buildDoubleSidedPdf(
+  template,
+  assignmentsFront,
+  assignmentsBack,
+  imageMap,
+  options = {},
+) {
+  const layoutFitMode = options.layoutFitMode ?? 'contain';
+  const paperWmm = options.paperWidthMm ?? template.pageWidthMm;
+  const paperHmm = options.paperHeightMm ?? template.pageHeightMm;
+
+  const doc = await PDFDocument.create();
+  doc.setTitle(template.name || 'PrintLayout');
+  doc.setProducer('PrintLayout');
+  doc.setCreator('PrintLayout');
+
+  const ctx = { imageMap, embedCache: new Map(), bgPageCache: null };
+  await appendFaceToDoc(doc, ctx, template, assignmentsFront, {
+    layoutFitMode,
+    embedBackground: true,
+    face: 'front',
+    paperWmm,
+    paperHmm,
+  });
+  await appendFaceToDoc(doc, ctx, template, assignmentsBack, {
+    layoutFitMode,
+    embedBackground: false,
+    face: 'back',
+    paperWmm,
+    paperHmm,
+  });
 
   return doc.save();
 }
@@ -185,6 +245,27 @@ function safePdfName(template, options = {}) {
 export async function exportLayoutToPdf(template, assignments, imageMap, options) {
   const bytes = await buildPdf(template, assignments, imageMap, options);
   const result = await window.printlayout.pdf.save(safePdfName(template, options), bytes);
+  return result;
+}
+
+export async function exportDoubleSidedLayoutToPdf(
+  template,
+  assignmentsFront,
+  assignmentsBack,
+  imageMap,
+  options,
+) {
+  const bytes = await buildDoubleSidedPdf(
+    template,
+    assignmentsFront,
+    assignmentsBack,
+    imageMap,
+    options,
+  );
+  const result = await window.printlayout.pdf.save(
+    safePdfName(template, options),
+    bytes,
+  );
   return result;
 }
 

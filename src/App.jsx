@@ -16,7 +16,11 @@ import ImageEditorModal from './components/ImageEditorModal.jsx';
 import { useTemplates } from './hooks/useTemplates.js';
 import { useLayoutEditor } from './hooks/useLayoutEditor.js';
 import { readImageFiles } from './lib/images.js';
-import { exportLayoutToPdf, printLayoutPdf } from './lib/exportPdf.js';
+import {
+  exportLayoutToPdf,
+  exportDoubleSidedLayoutToPdf,
+  printLayoutPdf,
+} from './lib/exportPdf.js';
 import { hasCuts } from './lib/templates.js';
 import { facesBoundingBox } from './lib/faceDetection.js';
 import { cropImageDataUrl } from './lib/imageCrop.js';
@@ -284,23 +288,34 @@ export default function App() {
 
   const handleExport = async () => {
     if (!selected || exporting) return;
-    const isBack = viewingFace === 'back';
-    const assignments = isBack ? layout.assignmentsBack : layout.assignmentsFront;
     setExporting(true);
     setToast(null);
     try {
-      const result = await exportLayoutToPdf(
-        selected,
-        assignments,
-        layout.imageMap,
-        {
-          layoutFitMode,
-          embedBackground: !isBack,
-          faceLabel: selected.doubleSided ? (isBack ? 'dorso' : 'frente') : undefined,
-          paperWidthMm: customPaper?.widthMm,
-          paperHeightMm: customPaper?.heightMm,
-        },
-      );
+      // Doble faz: un solo PDF con pag 1 = frente (con marcas) y pag 2 = dorso
+      // (sin marcas). Lo viewing no influye, siempre mandamos las dos caras.
+      const result = selected.doubleSided
+        ? await exportDoubleSidedLayoutToPdf(
+            selected,
+            layout.assignmentsFront,
+            layout.assignmentsBack,
+            layout.imageMap,
+            {
+              layoutFitMode,
+              paperWidthMm: customPaper?.widthMm,
+              paperHeightMm: customPaper?.heightMm,
+            },
+          )
+        : await exportLayoutToPdf(
+            selected,
+            layout.assignmentsFront,
+            layout.imageMap,
+            {
+              layoutFitMode,
+              embedBackground: true,
+              paperWidthMm: customPaper?.widthMm,
+              paperHeightMm: customPaper?.heightMm,
+            },
+          );
       if (result?.canceled) {
         setToast(null);
       } else if (result?.error) {
