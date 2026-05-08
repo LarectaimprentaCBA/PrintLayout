@@ -10,6 +10,9 @@ export default function PropertiesSidebar({
   imageMap,
   selectedCell,
   viewingFace,
+  canShare,
+  sharing,
+  onShare,
   onEditMargin,
   onAddImages,
   onRemoveImage,
@@ -235,6 +238,34 @@ export default function PropertiesSidebar({
                 {template.doubleSided ? 'Sí' : 'No'}
               </dd>
             </div>
+            <div className="flex items-center justify-between">
+              <dt className="text-ink-400">Compartida</dt>
+              <dd className={template.sharedAt ? 'text-accent-400' : 'text-ink-500'}>
+                {template.sharedAt ? 'Sí' : 'No'}
+              </dd>
+            </div>
+            {onShare && (
+              <div className="pt-1">
+                <button
+                  onClick={() => onShare(template)}
+                  disabled={!canShare || sharing}
+                  title={
+                    canShare
+                      ? template.sharedAt
+                        ? 'Subir cambios al repo compartido'
+                        : 'Subir al repo compartido (la van a recibir todas las PCs)'
+                      : 'Token de sync no configurado en este build'
+                  }
+                  className="w-full rounded border border-accent-500/40 px-2 py-1 text-[11px] text-accent-300 hover:bg-accent-500/10 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {sharing
+                    ? 'Subiendo…'
+                    : template.sharedAt
+                    ? 'Subir cambios'
+                    : 'Compartir'}
+                </button>
+              </div>
+            )}
           </dl>
         )}
       </div>

@@ -3,13 +3,16 @@ import { useCallback, useEffect, useState } from 'react';
 export function useTemplates() {
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [canShare, setCanShare] = useState(false);
 
   useEffect(() => {
     let mounted = true;
     (async () => {
       const list = await window.printlayout.templates.list();
+      const able = await window.printlayout.templates.canShare();
       if (mounted) {
         setTemplates(list);
+        setCanShare(!!able);
         setLoading(false);
       }
     })();
@@ -75,5 +78,42 @@ export function useTemplates() {
     setTemplates((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  return { templates, loading, refresh, createFromPdf, update, remove };
+  const share = useCallback(async (template) => {
+    const res = await window.printlayout.templates.share(template);
+    if (res?.ok && res.template) {
+      setTemplates((prev) => {
+        const idx = prev.findIndex((t) => t.id === res.template.id);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = res.template;
+          return next;
+        }
+        return prev;
+      });
+    }
+    return res;
+  }, []);
+
+  // Pull-only sync. El handler IPC ya guarda los cambios en el store; aca
+  // simplemente refrescamos el state para que la UI los muestre.
+  const syncPull = useCallback(async () => {
+    const res = await window.printlayout.templates.syncPull();
+    if (res?.ok && (res.added?.length || res.updated?.length)) {
+      const list = await window.printlayout.templates.list();
+      setTemplates(list);
+    }
+    return res;
+  }, []);
+
+  return {
+    templates,
+    loading,
+    canShare,
+    refresh,
+    createFromPdf,
+    update,
+    remove,
+    share,
+    syncPull,
+  };
 }

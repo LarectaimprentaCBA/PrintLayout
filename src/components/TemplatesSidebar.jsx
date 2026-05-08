@@ -67,8 +67,16 @@ export default function TemplatesSidebar({
                     onClick={() => onSelect(t.id)}
                   >
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-medium text-ink-100">
-                        {t.name}
+                      <div className="flex items-center gap-1.5 text-sm font-medium text-ink-100">
+                        <span className="truncate">{t.name}</span>
+                        {t.sharedAt && (
+                          <span
+                            className="shrink-0 text-accent-400"
+                            title="Plantilla compartida con el equipo"
+                          >
+                            ☁
+                          </span>
+                        )}
                       </div>
                       <div className="text-[11px] text-ink-400">
                         {describeCells(t)}

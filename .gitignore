@@ -15,3 +15,6 @@ get-pip.py
 
 # Sample images del repo viejo que no van versionadas
 fotosPolaroid95x95 (1).jpg
+
+# Token embebido para sync de plantillas (lo escribe scripts/write-templates-config.cjs)
+electron/templates-config.json

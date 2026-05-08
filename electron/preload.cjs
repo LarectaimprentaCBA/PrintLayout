@@ -8,6 +8,9 @@ contextBridge.exposeInMainWorld('printlayout', {
     delete: (id) => ipcRenderer.invoke('templates:delete', id),
     parsePdf: (bytes, opts) =>
       ipcRenderer.invoke('templates:parse-pdf', { bytes, ...(opts || {}) }),
+    canShare: () => ipcRenderer.invoke('templates:can-share'),
+    syncPull: () => ipcRenderer.invoke('templates:sync-pull'),
+    share: (template) => ipcRenderer.invoke('templates:share', template),
   },
   plotter: {
     sendCut: (payload) => ipcRenderer.invoke('plotter:send-cut', payload),

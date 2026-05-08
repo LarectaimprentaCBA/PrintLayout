@@ -27,8 +27,18 @@ import { cropImageDataUrl } from './lib/imageCrop.js';
 import { rotateImageDataUrl90CW } from './lib/imageRotate.js';
 
 export default function App() {
-  const { templates, createFromPdf, update, remove } = useTemplates();
+  const {
+    templates,
+    loading: templatesLoading,
+    canShare,
+    createFromPdf,
+    update,
+    remove,
+    share,
+    syncPull,
+  } = useTemplates();
   const [selectedId, setSelectedId] = useState(null);
+  const [sharing, setSharing] = useState(false);
 
   const selected = useMemo(
     () => templates.find((t) => t.id === selectedId) ?? null,
@@ -63,6 +73,54 @@ export default function App() {
   useEffect(() => {
     setCustomPaper(null);
   }, [selected?.id]);
+
+  // Sync inicial al arrancar: cuando termina de cargar las plantillas locales,
+  // pulla el manifest remoto. Si trae cambios, refresca local y avisa con un
+  // toast. Solo corre una vez, no entorpece nada si falla (red caida, etc).
+  const syncedOnceRef = useRef(false);
+  useEffect(() => {
+    if (templatesLoading || syncedOnceRef.current) return;
+    syncedOnceRef.current = true;
+    (async () => {
+      try {
+        const r = await syncPull();
+        if (!r?.ok) return;
+        const total = (r.added?.length ?? 0) + (r.updated?.length ?? 0);
+        if (total > 0) {
+          setToast({
+            kind: 'success',
+            text: `Plantillas sincronizadas: ${r.added.length} nuevas, ${r.updated.length} actualizadas.`,
+          });
+        }
+      } catch (err) {
+        console.warn('Sync de plantillas fallo:', err);
+      }
+    })();
+  }, [templatesLoading, syncPull]);
+
+  const handleShare = async (template) => {
+    if (!template || sharing) return;
+    setSharing(true);
+    setToast(null);
+    try {
+      const r = await share(template);
+      if (r?.ok) {
+        setToast({
+          kind: 'success',
+          text: `Plantilla "${template.name}" compartida con el equipo.`,
+        });
+      } else {
+        setToast({
+          kind: 'error',
+          text: `No se pudo compartir: ${r?.error || 'error desconocido'}`,
+        });
+      }
+    } catch (err) {
+      setToast({ kind: 'error', text: `Error al compartir: ${err.message}` });
+    } finally {
+      setSharing(false);
+    }
+  };
 
   // Blade offset para el plotter. Persiste en localStorage porque solo
   // cambia cuando se reemplaza fisicamente la cuchilla.
@@ -523,6 +581,9 @@ export default function App() {
             imageMap={layout.imageMap}
             selectedCell={layout.selectedCell}
             viewingFace={viewingFace}
+            canShare={canShare}
+            sharing={sharing}
+            onShare={handleShare}
             onEditMargin={handleEditMargin}
             onAddImages={layout.addImages}
             onRemoveImage={layout.removeImage}

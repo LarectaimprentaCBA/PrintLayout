@@ -5,6 +5,7 @@ const os = require('node:os');
 const { spawn } = require('node:child_process');
 const { autoUpdater } = require('electron-updater');
 const templatesStore = require('./templates-store.cjs');
+const templatesSync = require('./templates-sync.cjs');
 
 autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
@@ -101,6 +102,73 @@ function runPython(scriptName, { args = [], stdin = null } = {}) {
 ipcMain.handle('templates:list', () => templatesStore.list());
 ipcMain.handle('templates:save', (_evt, template) => templatesStore.save(template));
 ipcMain.handle('templates:delete', (_evt, id) => templatesStore.remove(id));
+
+// Sync de plantillas con GitHub.
+// templates:sync-pull => pulla manifest + plantillas nuevas/cambiadas. Sobrescribe
+//   las locales que esten marcadas como compartidas. Devuelve resumen.
+// templates:share => sube una plantilla local al repo y la marca como sharedAt.
+// templates:can-share => true si el build tiene token configurado.
+ipcMain.handle('templates:can-share', () => templatesSync.hasToken());
+
+ipcMain.handle('templates:sync-pull', async () => {
+  try {
+    const remote = await templatesSync.listRemote();
+    const local = templatesStore.list();
+    const localById = new Map(local.map((t) => [t.id, t]));
+
+    const added = [];
+    const updated = [];
+    const errors = [];
+
+    for (const entry of remote) {
+      const localTpl = localById.get(entry.id);
+      // Si ya existe local con mismo hash, no hacer nada.
+      if (localTpl && localTpl.sharedHash === entry.hash) continue;
+
+      try {
+        const full = await templatesSync.pullTemplate(entry.id);
+        if (!full) {
+          errors.push({ id: entry.id, name: entry.name, error: 'no encontrada en repo' });
+          continue;
+        }
+        const merged = {
+          ...full,
+          id: entry.id,
+          sharedAt: entry.updatedAt,
+          sharedHash: entry.hash,
+        };
+        const saved = templatesStore.save(merged);
+        if (localTpl) updated.push({ id: saved.id, name: saved.name });
+        else added.push({ id: saved.id, name: saved.name });
+      } catch (err) {
+        errors.push({ id: entry.id, name: entry.name, error: err.message });
+      }
+    }
+
+    return { ok: true, added, updated, errors };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('templates:share', async (_evt, template) => {
+  try {
+    if (!templatesSync.hasToken()) {
+      return { ok: false, error: 'Token no configurado en este build.' };
+    }
+    const r = await templatesSync.pushTemplate(template);
+    if (!r.ok) return r;
+    // Marcar la plantilla local como compartida.
+    const updated = templatesStore.save({
+      ...template,
+      sharedAt: r.updatedAt,
+      sharedHash: r.hash,
+    });
+    return { ok: true, template: updated };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
 
 ipcMain.handle('templates:parse-pdf', async (_evt, payload) => {
   // payload = { bytes, doubleSided }
