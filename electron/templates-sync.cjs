@@ -97,8 +97,10 @@ function hashTemplateContent(tpl) {
     .digest('hex');
 }
 
-// Lee el contenido de un archivo via Contents API (no via raw, para evitar
-// caching del CDN). Devuelve el texto del contenido, o null si 404.
+// Lee el contenido de un archivo via Contents API. Para archivos < 1 MB
+// el contenido viene base64-encoded en `meta.content`. Para archivos mas
+// grandes, Contents API devuelve content="" y debemos usar la Git Blobs API
+// con el sha (no tiene limite de 1 MB, hasta 100 MB).
 async function fetchContent(filePath) {
   const fetchFn = getFetch();
   const url = `${API}/repos/${OWNER}/${REPO}/contents/${filePath}?ref=${BRANCH}`;
@@ -106,8 +108,19 @@ async function fetchContent(filePath) {
   if (r.status === 404) return null;
   if (!r.ok) throw new Error(`GET ${filePath} -> ${r.status}`);
   const meta = await r.json();
-  if (!meta?.content) return null;
-  return Buffer.from(meta.content, 'base64').toString('utf-8');
+  if (meta?.content) {
+    return Buffer.from(meta.content, 'base64').toString('utf-8');
+  }
+  // Contents API trunco el contenido (archivo > 1 MB). Caemos al Blobs API.
+  if (meta?.sha) {
+    const blobUrl = `${API}/repos/${OWNER}/${REPO}/git/blobs/${meta.sha}`;
+    const br = await fetchFn(blobUrl, { headers: authHeaders() });
+    if (!br.ok) throw new Error(`GET blob ${meta.sha} -> ${br.status}`);
+    const blob = await br.json();
+    if (!blob?.content) return null;
+    return Buffer.from(blob.content, 'base64').toString('utf-8');
+  }
+  return null;
 }
 
 async function fetchManifest() {

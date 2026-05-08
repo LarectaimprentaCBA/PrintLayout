@@ -55,7 +55,11 @@ export default function App() {
       const u = r.updated?.length ?? 0;
       const rep = r.replaced?.length ?? 0;
       const c = r.cleaned?.length ?? 0;
-      if (a + u + rep + c > 0) {
+      const errs = r.errors?.length ?? 0;
+      if (errs > 0) {
+        const failed = r.errors.map((e) => `${e.name}: ${e.error}`).join('; ');
+        setToast({ kind: 'error', text: `Sync con errores — ${failed}` });
+      } else if (a + u + rep + c > 0) {
         const parts = [];
         if (a) parts.push(`${a} nueva${a === 1 ? '' : 's'}`);
         if (u) parts.push(`${u} actualizada${u === 1 ? '' : 's'}`);
