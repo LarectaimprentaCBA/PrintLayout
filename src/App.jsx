@@ -692,6 +692,7 @@ export default function App() {
             onUploadPdf={handleUploadPdf}
             onDelete={handleDelete}
             onSync={() => runSyncWithToast()}
+            onCreateGrid={() => setGridModalOpen(true)}
           />
           <LayoutCanvas
             template={selected}

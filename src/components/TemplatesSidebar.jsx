@@ -32,6 +32,7 @@ export default function TemplatesSidebar({
   onUploadPdf,
   onDelete,
   onSync,
+  onCreateGrid,
 }) {
   const fileRef = useRef(null);
   const [collapsed, setCollapsed] = useState(() => loadCollapsed());
@@ -103,8 +104,17 @@ export default function TemplatesSidebar({
             className="rounded bg-accent-600 px-2 py-1 text-xs font-medium text-white hover:bg-accent-500 disabled:opacity-40"
             title="Subir un PDF de plantilla (3 páginas: imprimible, celdas, cortes)"
           >
-            {uploading ? 'Cargando…' : '+ Subir PDF'}
+            {uploading ? 'Cargando…' : '+ PDF'}
           </button>
+          {onCreateGrid && (
+            <button
+              onClick={onCreateGrid}
+              className="rounded border border-accent-500/40 bg-ink-800 px-2 py-1 text-xs font-medium text-accent-300 hover:bg-ink-700"
+              title="Crear una grilla rápida en memoria (sin PDF)"
+            >
+              + Grilla
+            </button>
+          )}
         </div>
       </div>
 
