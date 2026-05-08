@@ -1,6 +1,6 @@
 {
   "name": "printlayout",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Desktop app to arrange photos, cards and stickers on print-ready templates",
   "type": "module",
   "main": "electron/main.cjs",
@@ -82,12 +82,12 @@
       "artifactName": "PrintLayout-Setup-${version}.${ext}"
     },
     "nsis": {
-      "oneClick": false,
+      "oneClick": true,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "PrintLayout"
+      "shortcutName": "PrintLayout",
+      "runAfterFinish": true
     },
     "publish": {
       "provider": "github",
