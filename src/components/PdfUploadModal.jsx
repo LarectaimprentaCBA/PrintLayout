@@ -5,26 +5,38 @@ export default function PdfUploadModal({
   fileName,
   defaultMargin = 10,
   defaultDoubleSided = false,
+  existingCategories = [],
   onConfirm,
   onCancel,
 }) {
   const [margin, setMargin] = useState(String(defaultMargin));
   const [doubleSided, setDoubleSided] = useState(defaultDoubleSided);
+  const [name, setName] = useState('');
+  const [categoria, setCategoria] = useState('');
   const inputRef = useRef(null);
 
   useEffect(() => {
     if (open) {
       setMargin(String(defaultMargin));
       setDoubleSided(defaultDoubleSided);
+      // Default: nombre del archivo sin .pdf
+      const baseName = (fileName || '').replace(/\.pdf$/i, '').trim();
+      setName(baseName);
+      setCategoria('');
       setTimeout(() => inputRef.current?.select(), 0);
     }
-  }, [open, defaultMargin, defaultDoubleSided]);
+  }, [open, defaultMargin, defaultDoubleSided, fileName]);
 
   if (!open) return null;
 
   const submit = (e) => {
     e?.preventDefault();
-    onConfirm?.({ margin, doubleSided });
+    onConfirm?.({
+      margin,
+      doubleSided,
+      name: name.trim(),
+      categoria: categoria.trim(),
+    });
   };
 
   return (
@@ -46,11 +58,43 @@ export default function PdfUploadModal({
         )}
 
         <label className="mt-4 block text-xs text-ink-300">
+          <span className="block mb-1">Nombre</span>
+          <input
+            ref={inputRef}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') onCancel?.();
+            }}
+            placeholder="Nombre de la plantilla"
+            className="w-full rounded border border-ink-700 bg-ink-800 px-3 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
+          />
+        </label>
+
+        <label className="mt-3 block text-xs text-ink-300">
+          <span className="block mb-1">Carpeta (opcional)</span>
+          <input
+            list="pdf-upload-categorias"
+            value={categoria}
+            onChange={(e) => setCategoria(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') onCancel?.();
+            }}
+            placeholder="Sin carpeta — ej: Fotos, Tarjetas"
+            className="w-full rounded border border-ink-700 bg-ink-800 px-3 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
+          />
+          <datalist id="pdf-upload-categorias">
+            {existingCategories.map((c) => (
+              <option key={c} value={c} />
+            ))}
+          </datalist>
+        </label>
+
+        <label className="mt-3 block text-xs text-ink-300">
           <span className="block mb-1">
             Margen entre el borde de la hoja y las marcas L (mm)
           </span>
           <input
-            ref={inputRef}
             value={margin}
             onChange={(e) => setMargin(e.target.value)}
             onKeyDown={(e) => {

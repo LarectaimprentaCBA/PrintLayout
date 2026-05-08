@@ -84,6 +84,17 @@ export default function App() {
     [templates, selectedId],
   );
 
+  // Lista unica de carpetas usadas por las plantillas (para autocomplete y
+  // agrupado en la sidebar).
+  const categoriasList = useMemo(() => {
+    const set = new Set();
+    for (const t of templates) {
+      const c = (t.categoria || '').trim();
+      if (c) set.add(c);
+    }
+    return Array.from(set).sort();
+  }, [templates]);
+
   const [viewingFace, setViewingFace] = useState('front');
   const layout = useLayoutEditor(selected, viewingFace);
 
@@ -204,7 +215,20 @@ export default function App() {
     setMarginPrompt({ defaultValue: String(selected.markMarginMm ?? 10) });
   };
 
-  const submitPdfUpload = async ({ margin: rawMargin, doubleSided }) => {
+  const handleRenameTemplate = async (template, newName) => {
+    const trimmed = (newName || '').trim();
+    if (!trimmed || trimmed === template.name) return;
+    await update({ ...template, name: trimmed });
+  };
+
+  const handleSetCategoria = async (template, newCategoria) => {
+    const trimmed = (newCategoria || '').trim();
+    const current = (template.categoria || '').trim();
+    if (trimmed === current) return;
+    await update({ ...template, categoria: trimmed || undefined });
+  };
+
+  const submitPdfUpload = async ({ margin: rawMargin, doubleSided, name, categoria }) => {
     const file = pdfUpload?.file;
     setPdfUpload(null);
     if (!file) return;
@@ -219,6 +243,8 @@ export default function App() {
       const saved = await createFromPdf(file, {
         markMarginMm: margin,
         doubleSided,
+        name,
+        categoria,
       });
       setSelectedId(saved.id);
       setToast({
@@ -658,6 +684,9 @@ export default function App() {
             canShare={canShare}
             sharing={sharing}
             onShare={handleShare}
+            onRenameTemplate={handleRenameTemplate}
+            onSetCategoria={handleSetCategoria}
+            categoriasList={categoriasList}
             onEditMargin={handleEditMargin}
             onAddImages={handleAddImages}
             onRemoveImage={layout.removeImage}
@@ -715,6 +744,7 @@ export default function App() {
         <PdfUploadModal
           open={!!pdfUpload}
           fileName={pdfUpload?.file?.name}
+          existingCategories={categoriasList}
           onConfirm={submitPdfUpload}
           onCancel={() => setPdfUpload(null)}
         />

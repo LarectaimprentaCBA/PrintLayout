@@ -90,6 +90,8 @@ function hashTemplateContent(tpl) {
     cortes: tpl.cortes ?? [],
     markMarginMm: tpl.markMarginMm,
     doubleSided: !!tpl.doubleSided,
+    singlePage: !!tpl.singlePage,
+    categoria: tpl.categoria || '',
   };
   return crypto
     .createHash('sha256')

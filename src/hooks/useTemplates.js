@@ -27,7 +27,10 @@ export function useTemplates() {
   }, []);
 
   // Subir un PDF -> parsearlo en el backend Python -> guardar plantilla.
-  const createFromPdf = useCallback(async (file, { markMarginMm = 10, doubleSided = false } = {}) => {
+  const createFromPdf = useCallback(async (
+    file,
+    { markMarginMm = 10, doubleSided = false, name: customName, categoria } = {},
+  ) => {
     if (!file) throw new Error('Archivo no provisto.');
     const buf = await file.arrayBuffer();
     const bytes = new Uint8Array(buf);
@@ -37,7 +40,8 @@ export function useTemplates() {
     if (!parsed?.ok) {
       throw new Error(parsed?.error || 'No se pudo parsear el PDF.');
     }
-    const name = file.name.replace(/\.pdf$/i, '');
+    const fallbackName = file.name.replace(/\.pdf$/i, '');
+    const name = (customName || '').trim() || fallbackName;
     let bin = '';
     for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
     const pdfBase64 = btoa(bin);
@@ -57,6 +61,7 @@ export function useTemplates() {
       // visual; no hay marcas para imprimir ni dorso.
       doubleSided: isSinglePage ? false : doubleSided,
       singlePage: isSinglePage,
+      categoria: (categoria || '').trim() || undefined,
     };
     const saved = await window.printlayout.templates.save(tpl);
     setTemplates((prev) => [...prev, saved]);

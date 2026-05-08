@@ -14,6 +14,9 @@ export default function PropertiesSidebar({
   sharing,
   onShare,
   onEditMargin,
+  onRenameTemplate,
+  onSetCategoria,
+  categoriasList = [],
   onAddImages,
   onRemoveImage,
   onClearCell,
@@ -191,9 +194,58 @@ export default function PropertiesSidebar({
           <p className="text-ink-400">Ninguna plantilla seleccionada.</p>
         ) : (
           <dl className="space-y-1.5 text-ink-300">
-            <div className="flex justify-between">
-              <dt className="text-ink-400">Nombre</dt>
-              <dd className="text-ink-100">{template.name}</dd>
+            <div>
+              <dt className="text-ink-400 mb-1">Nombre</dt>
+              <dd>
+                {onRenameTemplate ? (
+                  <input
+                    defaultValue={template.name}
+                    key={template.id + template.name}
+                    onBlur={(e) => onRenameTemplate(template, e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') e.target.blur();
+                      if (e.key === 'Escape') {
+                        e.target.value = template.name;
+                        e.target.blur();
+                      }
+                    }}
+                    className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1 text-xs text-ink-100 outline-none focus:border-accent-500"
+                  />
+                ) : (
+                  <span className="text-ink-100">{template.name}</span>
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-ink-400 mb-1">Carpeta</dt>
+              <dd>
+                {onSetCategoria ? (
+                  <>
+                    <input
+                      list="properties-categorias"
+                      defaultValue={template.categoria || ''}
+                      key={template.id + (template.categoria || '')}
+                      placeholder="Sin carpeta"
+                      onBlur={(e) => onSetCategoria(template, e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') e.target.blur();
+                        if (e.key === 'Escape') {
+                          e.target.value = template.categoria || '';
+                          e.target.blur();
+                        }
+                      }}
+                      className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1 text-xs text-ink-100 outline-none focus:border-accent-500"
+                    />
+                    <datalist id="properties-categorias">
+                      {categoriasList.map((c) => (
+                        <option key={c} value={c} />
+                      ))}
+                    </datalist>
+                  </>
+                ) : (
+                  <span className="text-ink-100">{template.categoria || '—'}</span>
+                )}
+              </dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-ink-400">Hoja</dt>
