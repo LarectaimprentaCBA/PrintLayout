@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { totalCells } from '../lib/templates.js';
+import { distributeEvenly } from '../lib/grid.js';
 
 // Soporta plantillas simple-faz (un assignments) y doble-faz (front/back).
 // El estado interno SIEMPRE mantiene los dos arrays alineados (misma length);
@@ -153,6 +154,39 @@ export function useLayoutEditor(template, face = 'front') {
     [applyMutation, cellsPerPage],
   );
 
+  // Reparte equitativamente las imagenes cargadas entre las celdas de la pagina
+  // indicada (default: primera). Modos:
+  //   'fill-empty'  -> solo asigna en celdas vacias de la pagina (preserva las ocupadas).
+  //   'replace-all' -> sobreescribe todas las celdas de la pagina con el reparto.
+  // pageIdx fuera de rango: no hace nada.
+  const distributeImagesEvenly = useCallback(
+    (mode = 'fill-empty', pageIdx = 0) => {
+      if (cellsPerPage === 0 || images.length === 0) return;
+      const start = pageIdx * cellsPerPage;
+      const end = start + cellsPerPage;
+      if (start >= assignments.length) return;
+
+      const range = [];
+      for (let i = start; i < end; i++) range.push(i);
+      const targetIndices =
+        mode === 'replace-all'
+          ? range
+          : range.filter((i) => assignments[i] === null);
+      if (targetIndices.length === 0) return;
+
+      const imageIds = images.map((img) => img.id);
+      const placement = distributeEvenly(targetIndices, imageIds);
+
+      applyMutation((arr) => {
+        for (const [cellIdx, imageId] of placement.entries()) {
+          arr[cellIdx] = imageId;
+        }
+        return arr;
+      });
+    },
+    [cellsPerPage, images, assignments, applyMutation],
+  );
+
   const clearCell = useCallback(
     (cellIdx) => {
       applyMutation((arr) => {
@@ -216,6 +250,7 @@ export function useLayoutEditor(template, face = 'front') {
     addImageToCell,
     assignImageToCell,
     fillAllWith,
+    distributeImagesEvenly,
     swapCells,
     clearCell,
     removeImage,
