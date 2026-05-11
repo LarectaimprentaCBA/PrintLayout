@@ -57,6 +57,42 @@ export function computeBestGrid(params) {
   return direct;
 }
 
+// Reparte una lista de imageIds entre celdas objetivo de forma equitativa.
+// - targetCellIndices: array<number> con los indices de celdas a llenar (orden ascendente).
+// - imageIds: array<string> con los IDs de imagen en orden de carga.
+//
+// Algoritmo: cada imagen sale floor(N/K) veces; las primeras (N%K) imagenes
+// salen una vez mas. Orden agrupado: A A A B B B C C C.
+// Si imageIds.length > targetCellIndices.length, se usan solo las primeras
+// targetCellIndices.length imagenes con 1 copia c/u.
+//
+// Retorna: Map<cellIdx, imageId>.
+export function distributeEvenly(targetCellIndices, imageIds) {
+  const result = new Map();
+  const N = targetCellIndices.length;
+  const K = imageIds.length;
+  if (N === 0 || K === 0) return result;
+
+  if (K >= N) {
+    for (let i = 0; i < N; i++) {
+      result.set(targetCellIndices[i], imageIds[i]);
+    }
+    return result;
+  }
+
+  const base = Math.floor(N / K);
+  const extras = N % K;
+  let cellPos = 0;
+  for (let imgIdx = 0; imgIdx < K; imgIdx++) {
+    const copies = imgIdx < extras ? base + 1 : base;
+    for (let c = 0; c < copies; c++) {
+      result.set(targetCellIndices[cellPos], imageIds[imgIdx]);
+      cellPos += 1;
+    }
+  }
+  return result;
+}
+
 export const PAPER_PRESETS = [
   { id: 'a4', label: 'A4 (210×297)', w: 210, h: 297 },
   { id: 'a3', label: 'A3 (297×420)', w: 297, h: 420 },
