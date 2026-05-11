@@ -1,4 +1,4 @@
-// Modal de confirmacion genérico con N acciones. No es un input — solo botones.
+// Modal de confirmacion generico con N acciones. No es un input — solo botones.
 // Props:
 //   - open: boolean
 //   - title: string
@@ -8,7 +8,7 @@
 //   - onCancel: () => void (se llama al click en backdrop o Escape)
 //   - cancelLabel?: string (default 'Cancelar'; agrega boton extra al inicio)
 //
-// Convención: el último botón de actions es el confirmativo (variant 'primary'),
+// Convencion: el ultimo boton de actions es el confirmativo (variant 'primary'),
 // pero no es obligatorio — el caller arma las acciones como quiera.
 import { useEffect } from 'react';
 
