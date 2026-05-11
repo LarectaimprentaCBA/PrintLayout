@@ -681,6 +681,18 @@ export default function App() {
           onCustomPaperChange={selected ? setCustomPaper : undefined}
           bladeOffsetMm={bladeOffsetMm}
           onBladeOffsetChange={setBladeOffsetMm}
+          cellsPerPage={layout.cellsPerPage}
+          imagesLoaded={layout.images.length}
+          hasOccupiedCells={(() => {
+            const cpp = layout.cellsPerPage;
+            if (!cpp) return false;
+            const start = currentPage * cpp;
+            const end = start + cpp;
+            return layout.assignments.slice(start, end).some((id) => id !== null);
+          })()}
+          onDistributeEvenly={(mode) =>
+            layout.distributeImagesEvenly(mode, currentPage)
+          }
         />
         <div className="flex flex-1 overflow-hidden">
           <TemplatesSidebar
