@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import ConfirmModal from './ConfirmModal.jsx';
 
 function fmtMm(n) {
   if (!Number.isFinite(n)) return '?';
@@ -216,9 +217,35 @@ export default function TopBar({
   onCustomPaperChange,
   bladeOffsetMm,
   onBladeOffsetChange,
+  // nuevas
+  cellsPerPage,
+  imagesLoaded,
+  hasOccupiedCells,
+  onDistributeEvenly,
 }) {
   const fitDisabled = !onLayoutFitChange;
   const pdfBusy = exporting || printing;
+
+  const [distributeModalOpen, setDistributeModalOpen] = useState(false);
+
+  const canDistribute =
+    typeof onDistributeEvenly === 'function' &&
+    (cellsPerPage ?? 0) >= 2 &&
+    imagesLoaded > 0;
+
+  const handleDistributeClick = () => {
+    if (!canDistribute) return;
+    if (hasOccupiedCells) {
+      setDistributeModalOpen(true);
+    } else {
+      onDistributeEvenly('fill-empty');
+    }
+  };
+
+  const handleDistributeAction = (mode) => {
+    setDistributeModalOpen(false);
+    onDistributeEvenly(mode);
+  };
 
   return (
     <header className="flex h-12 shrink-0 items-center justify-between border-b border-ink-700 bg-ink-900 px-4">
@@ -313,6 +340,22 @@ export default function TopBar({
           />
         )}
 
+        {(cellsPerPage ?? 0) >= 2 && (
+          <button
+            type="button"
+            onClick={handleDistributeClick}
+            disabled={!canDistribute}
+            title={
+              imagesLoaded === 0
+                ? 'Cargá imágenes primero'
+                : 'Repartir las imágenes cargadas en las celdas de esta hoja'
+            }
+            className="rounded-md border border-ink-700 bg-ink-800 px-3 py-1.5 text-sm font-medium text-ink-100 hover:bg-ink-700 disabled:opacity-40"
+          >
+            Repartir parejo
+          </button>
+        )}
+
         {doubleSided ? (
           <>
             <button
@@ -361,6 +404,17 @@ export default function TopBar({
           {cutting ? 'Enviando…' : 'Cortar'}
         </button>
       </div>
+        <ConfirmModal
+          open={distributeModalOpen}
+          title="Ya hay celdas ocupadas en esta hoja"
+          message="¿Querés llenar solo las celdas vacías o reemplazar todas las celdas con un reparto nuevo?"
+          actions={[
+            { label: 'Solo llenar vacías', value: 'fill-empty', variant: 'default' },
+            { label: 'Reemplazar todo', value: 'replace-all', variant: 'primary' },
+          ]}
+          onAction={handleDistributeAction}
+          onCancel={() => setDistributeModalOpen(false)}
+        />
     </header>
   );
 }
