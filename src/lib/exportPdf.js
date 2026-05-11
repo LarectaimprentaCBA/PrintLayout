@@ -1,5 +1,10 @@
 import { PDFDocument } from 'pdf-lib';
-import { cellPositions } from './templates.js';
+import {
+  cellPositions,
+  cellsForPage,
+  pageStartOffset,
+  fixedPageCount,
+} from './templates.js';
 import { coverCropRect, coverObjectPosition } from './faceDetection.js';
 import { cropImageDataUrl } from './imageCrop.js';
 import { renderPdfBytesToImages } from './pdfPreview.js';
@@ -103,14 +108,27 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
     return embedded;
   }
 
-  const cells = cellPositions(template, face);
-  const cellsPerPage = cells.length;
-  const total = assignments?.length ?? 0;
-  const pageCount = Math.max(1, Math.ceil(total / cellsPerPage));
+  const isMulti = fixedPageCount(template) !== null;
+  // Para multi-page: cada hoja tiene sus propias celdas; pageCount fijo.
+  // Para legacy: las mismas celdas se repiten; pageCount sale del array.
+  let pageCount;
+  if (isMulti) {
+    pageCount = fixedPageCount(template);
+  } else {
+    const cellsLen = cellPositions(template, face).length;
+    const total = assignments?.length ?? 0;
+    pageCount = Math.max(1, Math.ceil(total / Math.max(1, cellsLen)));
+  }
 
   for (let p = 0; p < pageCount; p++) {
+    const cells = isMulti
+      ? cellsForPage(template, p, face)
+      : cellPositions(template, face);
+    const offset = isMulti
+      ? pageStartOffset(template, p, face)
+      : p * cells.length;
+
     const page = doc.addPage([pageW, pageH]);
-    const offset = p * cellsPerPage;
 
     if (bgPage) {
       page.drawPage(bgPage, {
@@ -121,7 +139,7 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
       });
     }
 
-    for (let i = 0; i < cellsPerPage; i++) {
+    for (let i = 0; i < cells.length; i++) {
       const cell = cells[i];
       const imgId = assignments?.[offset + i];
       if (!imgId) continue;
@@ -130,9 +148,6 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
 
       const cellWpt = cell.w * MM_TO_PT;
       const cellHpt = cell.h * MM_TO_PT;
-      // PDF usa origen bottom-left. Las celdas vienen con origen top-left
-      // dentro de la plantilla; sumamos el offset de centrado para llevarlas
-      // a coords del papel fisico.
       const baseX = cell.x * MM_TO_PT + offsetXpt;
       const baseYBottom = pageH - offsetYpt - cell.y * MM_TO_PT - cellHpt;
       const cellFitMode = image.fitOverride ?? layoutFitMode;

@@ -1,10 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { totalCells } from '../lib/templates.js';
+import {
+  totalCells,
+  cellsCountOnPage,
+  fixedPageCount,
+} from '../lib/templates.js';
 import { distributeEvenly } from '../lib/grid.js';
 
 // Soporta plantillas simple-faz (un assignments) y doble-faz (front/back).
 // El estado interno SIEMPRE mantiene los dos arrays alineados (misma length);
 // para simple-faz, assignmentsBack queda como espejo vacio que no se usa.
+//
+// Plantillas multi-page (template.pages presente): las celdas son distintas
+// por hoja y el numero de hojas es FIJO. assignments tiene length = total
+// celdas, sin paginacion automatica al pasarse.
+//
+// Plantillas legacy (template.celdas): las celdas son las mismas en todas
+// las hojas, y las hojas crecen dinamicamente al cargar mas imagenes.
 //
 // La cara activa la decide quien consume el hook (App.jsx) via `face`.
 export function useLayoutEditor(template, face = 'front') {
@@ -13,19 +24,27 @@ export function useLayoutEditor(template, face = 'front') {
   const [assignmentsBack, setAssignmentsBack] = useState([]);
   const [selectedCell, setSelectedCell] = useState(null);
 
-  const cellsPerPage = template ? totalCells(template) : 0;
+  const isMultiPage = fixedPageCount(template) !== null;
+  // cellsPerPage tiene el significado legacy (cantidad por hoja, constante).
+  // En multi-page no aplica directamente; usamos cellsCountOnPage(pageIdx).
+  // Para legacy, equivale a totalCells.
+  const cellsPerPage = isMultiPage ? 0 : (template ? totalCells(template) : 0);
+  // total: en multi-page es la suma de celdas en todas las paginas; en legacy
+  // es el largo del array que queremos inicializar (= celdas de 1 hoja).
+  const totalCellsCount = template ? totalCells(template) : 0;
 
   useEffect(() => {
-    setAssignmentsFront(cellsPerPage > 0 ? Array(cellsPerPage).fill(null) : []);
-    setAssignmentsBack(cellsPerPage > 0 ? Array(cellsPerPage).fill(null) : []);
+    setAssignmentsFront(totalCellsCount > 0 ? Array(totalCellsCount).fill(null) : []);
+    setAssignmentsBack(totalCellsCount > 0 ? Array(totalCellsCount).fill(null) : []);
     setSelectedCell(null);
-  }, [template?.id, cellsPerPage]);
+  }, [template?.id, totalCellsCount]);
 
   const isFront = face !== 'back';
   const assignments = isFront ? assignmentsFront : assignmentsBack;
 
-  const pageCount =
-    cellsPerPage > 0 ? Math.max(1, assignmentsFront.length / cellsPerPage) : 0;
+  const pageCount = isMultiPage
+    ? fixedPageCount(template)
+    : (cellsPerPage > 0 ? Math.max(1, assignmentsFront.length / cellsPerPage) : 0);
 
   const imageMap = useMemo(() => {
     const m = new Map();
@@ -33,17 +52,24 @@ export function useLayoutEditor(template, face = 'front') {
     return m;
   }, [images]);
 
-  // Garantiza que ambos arrays tengan la misma longitud, multiplo de cellsPerPage.
+  // Garantiza que ambos arrays tengan la misma longitud. En modo multi-page,
+  // la longitud es fija (totalCellsCount); en legacy se redondea a multiplo
+  // de cellsPerPage.
   const matchLength = useCallback(
     (front, back, targetLen) => {
-      const want = Math.max(targetLen, cellsPerPage);
+      let want;
+      if (isMultiPage) {
+        want = totalCellsCount;
+      } else {
+        want = Math.max(targetLen, cellsPerPage);
+      }
       const padded = (arr) =>
         arr.length >= want
-          ? arr
+          ? arr.slice(0, Math.max(arr.length, want)) // multi-page: trunca extra
           : arr.concat(Array(want - arr.length).fill(null));
       return [padded(front), padded(back)];
     },
-    [cellsPerPage],
+    [cellsPerPage, isMultiPage, totalCellsCount],
   );
 
   // Pure helpers que aplican una mutacion al array de la cara activa
@@ -51,7 +77,6 @@ export function useLayoutEditor(template, face = 'front') {
   const applyMutation = useCallback(
     (mutator) => {
       setAssignmentsFront((prevFront) => {
-        // Necesitamos la cara opuesta tambien. Usamos un ref-like via setter.
         let nextFront = prevFront;
         let nextBack = assignmentsBack;
         if (isFront) {
@@ -61,8 +86,9 @@ export function useLayoutEditor(template, face = 'front') {
           nextBack = mutator([...assignmentsBack]);
           [nextFront, nextBack] = matchLength(prevFront, nextBack, nextBack.length);
         }
-        // Compact trailing pages where AMBAS caras estan vacias.
-        if (cellsPerPage > 0) {
+        // Compact trailing pages solo en modo legacy (las hojas son virtuales).
+        // En multi-page la cantidad es fija — no se compacta.
+        if (!isMultiPage && cellsPerPage > 0) {
           while (
             nextFront.length > cellsPerPage &&
             nextFront.slice(-cellsPerPage).every((id) => id === null) &&
@@ -76,12 +102,28 @@ export function useLayoutEditor(template, face = 'front') {
         return nextFront;
       });
     },
-    [isFront, assignmentsBack, matchLength, cellsPerPage],
+    [isFront, assignmentsBack, matchLength, cellsPerPage, isMultiPage],
   );
 
   const addImages = useCallback(
     (newImages) => {
-      if (newImages.length === 0 || cellsPerPage === 0) return;
+      if (newImages.length === 0) return;
+      // Modo multi-page: solo asigna en celdas vacias existentes, sin crecer.
+      if (isMultiPage) {
+        if (totalCellsCount === 0) return;
+        setImages((prev) => [...prev, ...newImages]);
+        applyMutation((arr) => {
+          const next = arr.slice();
+          for (const img of newImages) {
+            const idx = next.findIndex((id) => id === null);
+            if (idx === -1) break; // no hay mas celdas vacias
+            next[idx] = img.id;
+          }
+          return next;
+        });
+        return;
+      }
+      if (cellsPerPage === 0) return;
       setImages((prev) => [...prev, ...newImages]);
       applyMutation((arr) => {
         let next = arr;
@@ -96,7 +138,29 @@ export function useLayoutEditor(template, face = 'front') {
         return next;
       });
     },
-    [cellsPerPage, applyMutation],
+    [cellsPerPage, isMultiPage, totalCellsCount, applyMutation],
+  );
+
+  // Carga imagenes y asigna celdas explicitamente segun un mapping
+  // cellIndex -> imageIndex (indices dentro del array newImages).
+  // Pensado para auto-pack: las celdas se computaron sabiendo que imagen
+  // va en cada una, y queremos que ese orden se respete en una sola operacion.
+  const loadImagesWithMapping = useCallback(
+    (newImages, cellMapping) => {
+      if (newImages.length === 0 || cellMapping.length === 0) return;
+      if (totalCellsCount === 0) return;
+      setImages((prev) => [...prev, ...newImages]);
+      applyMutation((arr) => {
+        const next = arr.slice();
+        while (next.length < cellMapping.length) next.push(null);
+        for (let i = 0; i < cellMapping.length; i++) {
+          const img = newImages[cellMapping[i]];
+          if (img) next[i] = img.id;
+        }
+        return next;
+      });
+    },
+    [applyMutation, totalCellsCount],
   );
 
   const addImageToCell = useCallback(
@@ -135,23 +199,37 @@ export function useLayoutEditor(template, face = 'front') {
   // que hoja (0 = primera). Si no se pasa, opera sobre la primera.
   const fillAllWith = useCallback(
     (imageId, pageIdx = 0) => {
-      if (cellsPerPage === 0) return;
-      const start = pageIdx * cellsPerPage;
+      let start, count;
+      if (isMultiPage) {
+        if (!template) return;
+        // Para multi-page, las celdas dependen de la cara activa.
+        const cellFace = isFront ? 'front' : 'back';
+        let offset = 0;
+        for (let i = 0; i < pageIdx; i++) {
+          offset += cellsCountOnPage(template, i, cellFace);
+        }
+        count = cellsCountOnPage(template, pageIdx, cellFace);
+        start = offset;
+        if (count === 0) return;
+      } else {
+        if (cellsPerPage === 0) return;
+        start = pageIdx * cellsPerPage;
+        count = cellsPerPage;
+      }
       applyMutation((arr) => {
-        // Si la hoja pedida no existe aun (pageIdx mas alla del array),
-        // expandir con nulls hasta esa pagina.
-        const needed = start + cellsPerPage;
+        const needed = start + count;
         let next = arr;
-        while (next.length < needed) {
+        // Solo en legacy se expanden mas paginas; en multi-page no aplica.
+        while (!isMultiPage && next.length < needed) {
           next = next.concat(Array(cellsPerPage).fill(null));
         }
-        for (let i = start; i < start + cellsPerPage; i++) {
+        for (let i = start; i < start + count && i < next.length; i++) {
           next[i] = imageId;
         }
         return next;
       });
     },
-    [applyMutation, cellsPerPage],
+    [applyMutation, cellsPerPage, isMultiPage, template, isFront],
   );
 
   // Reparte equitativamente las imagenes cargadas entre las celdas de la pagina
@@ -161,13 +239,28 @@ export function useLayoutEditor(template, face = 'front') {
   // pageIdx fuera de rango: no hace nada.
   const distributeImagesEvenly = useCallback(
     (mode = 'fill-empty', pageIdx = 0) => {
-      if (cellsPerPage === 0 || images.length === 0) return;
-      const start = pageIdx * cellsPerPage;
-      const end = start + cellsPerPage;
+      if (images.length === 0) return;
+      let start, count;
+      if (isMultiPage) {
+        if (!template) return;
+        const cellFace = isFront ? 'front' : 'back';
+        let offset = 0;
+        for (let i = 0; i < pageIdx; i++) {
+          offset += cellsCountOnPage(template, i, cellFace);
+        }
+        count = cellsCountOnPage(template, pageIdx, cellFace);
+        start = offset;
+        if (count === 0) return;
+      } else {
+        if (cellsPerPage === 0) return;
+        start = pageIdx * cellsPerPage;
+        count = cellsPerPage;
+      }
+      const end = start + count;
       if (start >= assignments.length) return;
 
       const range = [];
-      for (let i = start; i < end; i++) range.push(i);
+      for (let i = start; i < end && i < assignments.length; i++) range.push(i);
       const targetIndices =
         mode === 'replace-all'
           ? range
@@ -184,7 +277,7 @@ export function useLayoutEditor(template, face = 'front') {
         return arr;
       });
     },
-    [cellsPerPage, images, assignments, applyMutation],
+    [cellsPerPage, isMultiPage, template, isFront, images, assignments, applyMutation],
   );
 
   const clearCell = useCallback(
@@ -200,12 +293,12 @@ export function useLayoutEditor(template, face = 'front') {
   const removeImage = useCallback(
     (imageId) => {
       setImages((prev) => prev.filter((i) => i.id !== imageId));
-      // Limpiar la imagen en AMBAS caras y compactar.
+      // Limpiar la imagen en AMBAS caras y compactar (solo legacy).
       setAssignmentsFront((prevF) => {
         let nf = prevF.map((id) => (id === imageId ? null : id));
         let nb = assignmentsBack.map((id) => (id === imageId ? null : id));
         [nf, nb] = matchLength(nf, nb, nf.length);
-        if (cellsPerPage > 0) {
+        if (!isMultiPage && cellsPerPage > 0) {
           while (
             nf.length > cellsPerPage &&
             nf.slice(-cellsPerPage).every((id) => id === null) &&
@@ -219,7 +312,7 @@ export function useLayoutEditor(template, face = 'front') {
         return nf;
       });
     },
-    [assignmentsBack, matchLength, cellsPerPage],
+    [assignmentsBack, matchLength, cellsPerPage, isMultiPage],
   );
 
   const updateImage = useCallback((imageId, updates) => {
@@ -230,11 +323,12 @@ export function useLayoutEditor(template, face = 'front') {
 
   const clearAll = useCallback(() => {
     setImages([]);
-    const empty = cellsPerPage > 0 ? Array(cellsPerPage).fill(null) : [];
+    const size = isMultiPage ? totalCellsCount : cellsPerPage;
+    const empty = size > 0 ? Array(size).fill(null) : [];
     setAssignmentsFront(empty);
     setAssignmentsBack([...empty]);
     setSelectedCell(null);
-  }, [cellsPerPage]);
+  }, [cellsPerPage, isMultiPage, totalCellsCount]);
 
   return {
     images,
@@ -247,6 +341,7 @@ export function useLayoutEditor(template, face = 'front') {
     cellsPerPage,
     pageCount,
     addImages,
+    loadImagesWithMapping,
     addImageToCell,
     assignImageToCell,
     fillAllWith,

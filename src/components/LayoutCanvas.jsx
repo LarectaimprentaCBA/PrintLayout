@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { cellPositions } from '../lib/templates.js';
+import {
+  cellPositions,
+  cellsForPage,
+  pageStartOffset,
+  fixedPageCount,
+} from '../lib/templates.js';
 import { coverObjectPosition } from '../lib/faceDetection.js';
 import { renderPdfPage1Preview } from '../lib/pdfPreview.js';
 import CellSlot from './CellSlot.jsx';
@@ -142,10 +147,15 @@ export default function LayoutCanvas({
     );
   }
 
-  const cells = cellPositions(template, face);
+  const isMultiPage = fixedPageCount(template) !== null;
+  const cells = isMultiPage
+    ? cellsForPage(template, currentPage ?? 0, face)
+    : cellPositions(template, face);
   const sheetW = template.pageWidthMm * PX_PER_MM_AT_100 * scale;
   const sheetH = template.pageHeightMm * PX_PER_MM_AT_100 * scale;
-  const pageOffset = (currentPage ?? 0) * (cellsPerPage ?? cells.length);
+  const pageOffset = isMultiPage
+    ? pageStartOffset(template, currentPage ?? 0, face)
+    : (currentPage ?? 0) * (cellsPerPage ?? cells.length);
   const totalPages = pageCount ?? 1;
   const pxPerMm = PX_PER_MM_AT_100 * scale;
 

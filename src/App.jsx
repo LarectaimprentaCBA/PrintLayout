@@ -12,7 +12,9 @@ import LayoutCanvas from './components/LayoutCanvas.jsx';
 import PropertiesSidebar from './components/PropertiesSidebar.jsx';
 import PromptModal from './components/PromptModal.jsx';
 import PdfUploadModal from './components/PdfUploadModal.jsx';
+import PdfImageExtractModal from './components/PdfImageExtractModal.jsx';
 import GridUploadModal from './components/GridUploadModal.jsx';
+import ImagePackModal from './components/ImagePackModal.jsx';
 import ImageEditorModal from './components/ImageEditorModal.jsx';
 import { useTemplates } from './hooks/useTemplates.js';
 import { useLayoutEditor } from './hooks/useLayoutEditor.js';
@@ -22,7 +24,15 @@ import {
   exportDoubleSidedLayoutToPdf,
   printLayoutPdf,
 } from './lib/exportPdf.js';
-import { hasCuts, templateOrientation, imageOrientation } from './lib/templates.js';
+import {
+  hasCuts,
+  templateOrientation,
+  imageOrientation,
+  fixedPageCount,
+  cellsCountOnPage,
+  pageStartOffset,
+  findCellPageInfo,
+} from './lib/templates.js';
 import { facesBoundingBox } from './lib/faceDetection.js';
 import { cropImageDataUrl } from './lib/imageCrop.js';
 import { rotateImageDataUrl90CW } from './lib/imageRotate.js';
@@ -185,6 +195,13 @@ export default function App() {
   const [gridModalOpen, setGridModalOpen] = useState(false);
   // Imagen abierta en el editor.
   const [editingImageId, setEditingImageId] = useState(null);
+  // Extraccion de imagenes desde PDF.
+  const [extractingPdf, setExtractingPdf] = useState(false);
+  const [pdfExtract, setPdfExtract] = useState(null); // { fileName, tmpDir, images }
+  // Auto-acomodar imagenes.
+  const [autoPackFiles, setAutoPackFiles] = useState(null);
+  // Imagenes precargadas que se asignan a una plantilla recien creada.
+  const [pendingAutoAssign, setPendingAutoAssign] = useState(null); // { templateId, images }
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -297,6 +314,177 @@ export default function App() {
       setToast({ kind: 'error', text: `No se pudo cargar el PDF: ${err.message}` });
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleImportPdfImages = async (file) => {
+    if (!file || extractingPdf) return;
+    setExtractingPdf(true);
+    setToast(null);
+    try {
+      const bytes = await file.arrayBuffer();
+      const result = await window.printlayout.pdf.extractImages(bytes);
+      if (!result?.ok) {
+        setToast({
+          kind: 'error',
+          text: `No se pudo procesar el PDF: ${result?.error ?? 'error desconocido'}`,
+        });
+        return;
+      }
+      if (!result.images || result.images.length === 0) {
+        setToast({
+          kind: 'error',
+          text: 'No se encontraron imágenes embebidas en ese PDF.',
+        });
+        if (result.tmpDir) {
+          try { await window.printlayout.pdf.cleanupExtracted(result.tmpDir); } catch {}
+        }
+        return;
+      }
+      setPdfExtract({
+        fileName: file.name,
+        tmpDir: result.tmpDir,
+        images: result.images,
+      });
+    } catch (err) {
+      console.error(err);
+      setToast({ kind: 'error', text: `Error extrayendo imágenes: ${err.message}` });
+    } finally {
+      setExtractingPdf(false);
+    }
+  };
+
+  const submitPdfExtract = async (chosen) => {
+    const ctx = pdfExtract;
+    setPdfExtract(null);
+    if (!ctx || !chosen?.length) {
+      if (ctx?.tmpDir) {
+        try { await window.printlayout.pdf.cleanupExtracted(ctx.tmpDir); } catch {}
+      }
+      return;
+    }
+    try {
+      const files = [];
+      let counter = 1;
+      for (const img of chosen) {
+        const r = await window.printlayout.pdf.readExtractedImage(img.path);
+        if (!r?.ok || !r.bytes) continue;
+        const mime = img.ext === 'png' ? 'image/png' : 'image/jpeg';
+        const copies = Math.max(1, img.copies || 1);
+        for (let i = 0; i < copies; i++) {
+          const suffix = copies > 1 ? ` (${i + 1})` : '';
+          const baseName = (ctx.fileName || 'pdf').replace(/\.pdf$/i, '');
+          const fileName = `${baseName} - ${counter}${suffix}.${img.ext === 'png' ? 'png' : 'jpg'}`;
+          files.push(new File([r.bytes], fileName, { type: mime }));
+        }
+        counter++;
+      }
+      if (files.length === 0) {
+        setToast({ kind: 'error', text: 'No se pudo leer ninguna imagen extraída.' });
+        return;
+      }
+      const loaded = await readImageFiles(files);
+      if (loaded.length === 0) {
+        setToast({ kind: 'error', text: 'Las imágenes extraídas no se pudieron cargar.' });
+        return;
+      }
+      await handleAddImages(loaded);
+      setToast({
+        kind: 'success',
+        text: `${loaded.length} imagen${loaded.length === 1 ? '' : 'es'} importada${loaded.length === 1 ? '' : 's'} desde el PDF.`,
+      });
+    } catch (err) {
+      console.error(err);
+      setToast({ kind: 'error', text: `Error importando: ${err.message}` });
+    } finally {
+      if (ctx?.tmpDir) {
+        try { await window.printlayout.pdf.cleanupExtracted(ctx.tmpDir); } catch {}
+      }
+    }
+  };
+
+  const handleStartAutoPack = (files) => {
+    if (!files?.length) return;
+    setAutoPackFiles(files);
+  };
+
+  const submitAutoPack = async ({
+    paperWidthMm, paperHeightMm, pages, files, cellMapping,
+    totalCells, uniqueUsed, totalInput, repeated, pageCount,
+  }) => {
+    setAutoPackFiles(null);
+    if (!files?.length) return;
+    try {
+      const loaded = await readImageFiles(files);
+      if (loaded.length === 0) {
+        setToast({ kind: 'error', text: 'No se pudieron leer las imágenes.' });
+        return;
+      }
+      const id = `tpl_dyn_${Date.now().toString(36)}`;
+      const tpl = {
+        id,
+        name: repeated
+          ? `Auto-acomodar (${totalCells} celdas, ${loaded.length} imgs)`
+          : pageCount > 1
+            ? `Auto-acomodar (${loaded.length} imgs · ${pageCount} hojas)`
+            : `Auto-acomodar (${loaded.length})`,
+        pdfBase64: null,
+        pageWidthMm: paperWidthMm,
+        pageHeightMm: paperHeightMm,
+        pageCount,
+        // Modelo multi-page: cada hoja tiene sus propias celdas. celdas legacy
+        // queda como las de la primera hoja (para compatibilidad de helpers
+        // que aun lo usan, como templateOrientation).
+        celdas: pages[0]?.celdas ?? [],
+        pages,
+        celdasDorso: [],
+        cortes: [],
+        markMarginMm: 0,
+        doubleSided: false,
+        singlePage: true,
+        temporal: true,
+      };
+      setDynamicTemplate(tpl);
+      setSelectedId(id);
+      setPendingAutoAssign({ templateId: id, images: loaded, cellMapping });
+      if (repeated) {
+        setToast({
+          kind: 'success',
+          text: `Plantilla creada: ${totalCells} celdas repitiendo ${uniqueUsed} imagen${uniqueUsed === 1 ? '' : 'es'}.`,
+        });
+      } else if (uniqueUsed < totalInput) {
+        setToast({
+          kind: 'success',
+          text: `Plantilla creada: ${uniqueUsed} de ${totalInput} imágenes en ${pageCount} hoja${pageCount === 1 ? '' : 's'} (${totalInput - uniqueUsed} no entraron).`,
+        });
+      } else {
+        setToast({
+          kind: 'success',
+          text: `Plantilla creada: ${uniqueUsed} imágenes en ${pageCount} hoja${pageCount === 1 ? '' : 's'}.`,
+        });
+      }
+    } catch (err) {
+      console.error(err);
+      setToast({ kind: 'error', text: `Error en auto-acomodar: ${err.message}` });
+    }
+  };
+
+  // Cuando la plantilla recien creada por auto-pack queda activa y el layout
+  // hook ya tiene las celdas listas, asignamos las imagenes preloaded segun
+  // el cellMapping (que puede repetir indices cuando es modo "repetir").
+  useEffect(() => {
+    if (!pendingAutoAssign) return;
+    if (selected?.id !== pendingAutoAssign.templateId) return;
+    if (layout.cellsPerPage === 0) return;
+    layout.loadImagesWithMapping(pendingAutoAssign.images, pendingAutoAssign.cellMapping);
+    setPendingAutoAssign(null);
+  }, [pendingAutoAssign, selected?.id, layout.cellsPerPage, layout.loadImagesWithMapping]);
+
+  const cancelPdfExtract = async () => {
+    const ctx = pdfExtract;
+    setPdfExtract(null);
+    if (ctx?.tmpDir) {
+      try { await window.printlayout.pdf.cleanupExtracted(ctx.tmpDir); } catch {}
     }
   };
 
@@ -681,14 +869,27 @@ export default function App() {
           onCustomPaperChange={selected ? setCustomPaper : undefined}
           bladeOffsetMm={bladeOffsetMm}
           onBladeOffsetChange={setBladeOffsetMm}
-          cellsPerPage={layout.cellsPerPage}
+          cellsPerPage={(() => {
+            if (!selected) return 0;
+            if (fixedPageCount(selected) !== null) {
+              return cellsCountOnPage(selected, currentPage, viewingFace);
+            }
+            return layout.cellsPerPage;
+          })()}
           imagesLoaded={layout.images.length}
           hasOccupiedCells={(() => {
-            const cpp = layout.cellsPerPage;
-            if (!cpp) return false;
-            const start = currentPage * cpp;
-            const end = start + cpp;
-            return layout.assignments.slice(start, end).some((id) => id !== null);
+            if (!selected) return false;
+            let start, count;
+            if (fixedPageCount(selected) !== null) {
+              start = pageStartOffset(selected, currentPage, viewingFace);
+              count = cellsCountOnPage(selected, currentPage, viewingFace);
+            } else {
+              const cpp = layout.cellsPerPage;
+              if (!cpp) return false;
+              start = currentPage * cpp;
+              count = cpp;
+            }
+            return layout.assignments.slice(start, start + count).some((id) => id !== null);
           })()}
           onDistributeEvenly={(mode) =>
             layout.distributeImagesEvenly(mode, currentPage)
@@ -705,6 +906,7 @@ export default function App() {
             onDelete={handleDelete}
             onSync={() => runSyncWithToast()}
             onCreateGrid={() => setGridModalOpen(true)}
+            onAutoPack={handleStartAutoPack}
           />
           <LayoutCanvas
             template={selected}
@@ -741,15 +943,23 @@ export default function App() {
             categoriasList={categoriasList}
             onEditMargin={handleEditMargin}
             onAddImages={handleAddImages}
+            onImportPdfImages={handleImportPdfImages}
+            extractingPdf={extractingPdf}
             onRemoveImage={layout.removeImage}
             onClearCell={layout.clearCell}
             onClearAll={layout.clearAll}
             onAddImageToCell={layout.addImageToCell}
             onFillAll={(imageId) => {
-              const cellsPP = layout.cellsPerPage;
-              const start = currentPage * cellsPP;
-              const end = start + cellsPP;
-              const pageSlice = layout.assignments.slice(start, end);
+              let start, count;
+              if (fixedPageCount(selected) !== null) {
+                start = pageStartOffset(selected, currentPage, viewingFace);
+                count = cellsCountOnPage(selected, currentPage, viewingFace);
+              } else {
+                const cellsPP = layout.cellsPerPage;
+                start = currentPage * cellsPP;
+                count = cellsPP;
+              }
+              const pageSlice = layout.assignments.slice(start, start + count);
               const others = pageSlice.some(
                 (id) => id !== null && id !== imageId,
               );
@@ -767,8 +977,8 @@ export default function App() {
             onSelectImage={(imageId) => {
               const idx = layout.assignments.findIndex((id) => id === imageId);
               if (idx >= 0) {
-                const page = Math.floor(idx / layout.cellsPerPage);
-                if (page !== currentPage) setCurrentPage(page);
+                const info = findCellPageInfo(selected, idx, viewingFace);
+                if (info.page !== currentPage) setCurrentPage(info.page);
                 layout.setSelectedCell(idx);
               }
             }}
@@ -805,6 +1015,21 @@ export default function App() {
           open={gridModalOpen}
           onConfirm={handleCreateGrid}
           onCancel={() => setGridModalOpen(false)}
+        />
+
+        <PdfImageExtractModal
+          open={!!pdfExtract}
+          fileName={pdfExtract?.fileName}
+          images={pdfExtract?.images ?? []}
+          onConfirm={submitPdfExtract}
+          onCancel={cancelPdfExtract}
+        />
+
+        <ImagePackModal
+          open={!!autoPackFiles}
+          files={autoPackFiles ?? []}
+          onConfirm={submitAutoPack}
+          onCancel={() => setAutoPackFiles(null)}
         />
 
         <input

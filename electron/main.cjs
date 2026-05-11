@@ -228,6 +228,67 @@ ipcMain.handle('templates:parse-pdf', async (_evt, payload) => {
   }
 });
 
+// Extrae imagenes raster embebidas de un PDF. Las deja en un dir temporal
+// y devuelve metadata + thumbs. El renderer despues pide los bytes con
+// pdf:read-extracted-image y limpia con pdf:cleanup-extracted.
+ipcMain.handle('pdf:extract-images', async (_evt, payload) => {
+  const bytes = payload?.bytes ?? payload;
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'printlayout-extract-'));
+  const tmpPdf = path.join(tmpDir, 'source.pdf');
+  const outDir = path.join(tmpDir, 'images');
+  try {
+    fs.writeFileSync(tmpPdf, Buffer.from(bytes));
+    fs.mkdirSync(outDir);
+    const { stdout } = await runPython('extract_pdf_images.py', { args: [tmpPdf, outDir] });
+    let parsed;
+    try {
+      parsed = JSON.parse(stdout.trim());
+    } catch (e) {
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+      return { ok: false, error: `Salida invalida del extractor: ${e.message}` };
+    }
+    if (!parsed.ok) {
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+      return parsed;
+    }
+    parsed.tmpDir = tmpDir;
+    return parsed;
+  } catch (err) {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('pdf:read-extracted-image', async (_evt, payload) => {
+  try {
+    const filePath = payload?.path;
+    if (!filePath) return { ok: false, error: 'path requerido' };
+    const normalized = path.normalize(filePath);
+    const tmpRoot = path.normalize(os.tmpdir());
+    if (!normalized.startsWith(tmpRoot)) {
+      return { ok: false, error: 'path fuera de tmpdir' };
+    }
+    const buf = fs.readFileSync(normalized);
+    return { ok: true, bytes: buf };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('pdf:cleanup-extracted', async (_evt, payload) => {
+  try {
+    const dir = payload?.tmpDir;
+    if (!dir) return { ok: false };
+    const normalized = path.normalize(dir);
+    const tmpRoot = path.normalize(os.tmpdir());
+    if (!normalized.startsWith(tmpRoot)) return { ok: false };
+    fs.rmSync(normalized, { recursive: true, force: true });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 ipcMain.handle('plotter:send-cut', async (_evt, payload) => {
   try {
     const stdin = JSON.stringify(payload);

@@ -33,14 +33,22 @@ export default function TemplatesSidebar({
   onDelete,
   onSync,
   onCreateGrid,
+  onAutoPack,
 }) {
   const fileRef = useRef(null);
+  const autoPackRef = useRef(null);
   const [collapsed, setCollapsed] = useState(() => loadCollapsed());
 
   const handlePick = (e) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (file) onUploadPdf?.(file);
+  };
+
+  const handleAutoPackPick = (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (files.length > 0) onAutoPack?.(files);
   };
 
   const toggleCategoria = (cat) => {
@@ -83,6 +91,14 @@ export default function TemplatesSidebar({
         className="hidden"
         onChange={handlePick}
       />
+      <input
+        ref={autoPackRef}
+        type="file"
+        accept="image/jpeg,image/png,image/jpg"
+        multiple
+        className="hidden"
+        onChange={handleAutoPackPick}
+      />
       <div className="flex items-center justify-between gap-1 border-b border-ink-700 px-3 py-2">
         <h2 className="text-xs font-semibold uppercase tracking-wider text-ink-300">
           Plantillas
@@ -113,6 +129,15 @@ export default function TemplatesSidebar({
               title="Crear una grilla rápida en memoria (sin PDF)"
             >
               + Grilla
+            </button>
+          )}
+          {onAutoPack && (
+            <button
+              onClick={() => autoPackRef.current?.click()}
+              className="rounded border border-accent-500/40 bg-ink-800 px-2 py-1 text-xs font-medium text-accent-300 hover:bg-ink-700"
+              title="Subir imágenes y crear una plantilla acomodándolas por tamaño físico"
+            >
+              + Auto
             </button>
           )}
         </div>

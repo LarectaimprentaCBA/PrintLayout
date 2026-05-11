@@ -19,6 +19,11 @@ contextBridge.exposeInMainWorld('printlayout', {
     save: (defaultName, bytes) =>
       ipcRenderer.invoke('export:save-pdf', { defaultName, bytes }),
     print: (payload) => ipcRenderer.invoke('print:pdf', payload),
+    extractImages: (bytes) => ipcRenderer.invoke('pdf:extract-images', { bytes }),
+    readExtractedImage: (filePath) =>
+      ipcRenderer.invoke('pdf:read-extracted-image', { path: filePath }),
+    cleanupExtracted: (tmpDir) =>
+      ipcRenderer.invoke('pdf:cleanup-extracted', { tmpDir }),
   },
   shell: {
     showItem: (p) => ipcRenderer.invoke('shell:show-item', p),

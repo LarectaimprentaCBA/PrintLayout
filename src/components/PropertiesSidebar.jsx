@@ -1,5 +1,5 @@
-import { useRef } from 'react';
-import { totalCells, hasCuts } from '../lib/templates.js';
+import { useRef, useState } from 'react';
+import { totalCells, hasCuts, findCellPageInfo } from '../lib/templates.js';
 import { readImageFiles } from '../lib/images.js';
 import SidebarImageItem from './SidebarImageItem.jsx';
 
@@ -18,6 +18,8 @@ export default function PropertiesSidebar({
   onSetCategoria,
   categoriasList = [],
   onAddImages,
+  onImportPdfImages,
+  extractingPdf,
   onRemoveImage,
   onClearCell,
   onClearAll,
@@ -31,6 +33,9 @@ export default function PropertiesSidebar({
 }) {
   const multiInputRef = useRef(null);
   const singleInputRef = useRef(null);
+  const pdfInputRef = useRef(null);
+  const [dragKind, setDragKind] = useState(null); // 'pdf' | 'image' | null
+  const dragCounterRef = useRef(0);
 
   const usageById = new Map();
   if (assignments) {
@@ -48,6 +53,57 @@ export default function PropertiesSidebar({
     e.target.value = '';
   };
 
+  const handlePdfPick = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (file) onImportPdfImages?.(file);
+  };
+
+  const isPdf = (f) =>
+    (f?.type || '').toLowerCase() === 'application/pdf'
+    || /\.pdf$/i.test(f?.name || '');
+
+  const isImg = (f) =>
+    /^image\/(jpe?g|png)$/i.test(f?.type || '')
+    || /\.(jpe?g|png)$/i.test(f?.name || '');
+
+  const handleDragEnter = (e) => {
+    if (!e.dataTransfer?.types?.includes('Files')) return;
+    e.preventDefault();
+    dragCounterRef.current += 1;
+    // Sin acceso a los files hasta el drop. Asumimos generico hasta entonces.
+    setDragKind('any');
+  };
+
+  const handleDragOver = (e) => {
+    if (!e.dataTransfer?.types?.includes('Files')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  };
+
+  const handleDragLeave = (e) => {
+    if (!e.dataTransfer?.types?.includes('Files')) return;
+    dragCounterRef.current = Math.max(0, dragCounterRef.current - 1);
+    if (dragCounterRef.current === 0) setDragKind(null);
+  };
+
+  const handleDrop = async (e) => {
+    if (!e.dataTransfer?.files?.length) return;
+    e.preventDefault();
+    dragCounterRef.current = 0;
+    setDragKind(null);
+    const files = Array.from(e.dataTransfer.files);
+    const pdf = files.find(isPdf);
+    if (pdf) {
+      onImportPdfImages?.(pdf);
+      return;
+    }
+    const imgs = files.filter(isImg);
+    if (imgs.length === 0) return;
+    const loaded = await readImageFiles(imgs);
+    if (loaded.length > 0) onAddImages?.(loaded);
+  };
+
   const handleSinglePick = async (e) => {
     const files = e.target.files;
     if (!files || files.length === 0 || selectedCell === null) return;
@@ -62,7 +118,15 @@ export default function PropertiesSidebar({
   const selectedImg = selectedImgId ? imageMap?.get(selectedImgId) : null;
 
   return (
-    <aside className="flex w-72 shrink-0 flex-col border-l border-ink-700 bg-ink-900">
+    <aside
+      className={`relative flex w-72 shrink-0 flex-col border-l border-ink-700 bg-ink-900 ${
+        dragKind ? 'ring-2 ring-accent-500/60' : ''
+      }`}
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <input
         ref={multiInputRef}
         type="file"
@@ -78,6 +142,13 @@ export default function PropertiesSidebar({
         className="hidden"
         onChange={handleSinglePick}
       />
+      <input
+        ref={pdfInputRef}
+        type="file"
+        accept="application/pdf,.pdf"
+        className="hidden"
+        onChange={handlePdfPick}
+      />
 
       <div className="flex items-center justify-between border-b border-ink-700 px-3 py-2">
         <h2 className="text-xs font-semibold uppercase tracking-wider text-ink-300">
@@ -91,6 +162,14 @@ export default function PropertiesSidebar({
           >
             + Cargar
           </button>
+          <button
+            disabled={!template || extractingPdf}
+            onClick={() => pdfInputRef.current?.click()}
+            title="Importar imágenes embebidas en un PDF"
+            className="rounded border border-ink-700 px-2 py-1 text-[11px] text-ink-200 hover:bg-ink-800 disabled:opacity-40"
+          >
+            {extractingPdf ? 'Extrayendo…' : '+ PDF'}
+          </button>
           {images && images.length > 0 && (
             <button
               onClick={() => {
@@ -103,6 +182,17 @@ export default function PropertiesSidebar({
           )}
         </div>
       </div>
+
+      {dragKind && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-accent-500/10">
+          <div className="rounded border border-accent-500/60 bg-ink-950/80 px-3 py-2 text-xs text-accent-200">
+            Soltá archivos para agregar
+            <div className="mt-0.5 text-[10px] text-ink-400">
+              PDF → extraer imágenes · JPG/PNG → cargar
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto p-2">
         {!template ? (
@@ -150,13 +240,11 @@ export default function PropertiesSidebar({
           <div className="space-y-2">
             <div className="text-ink-300">
               {(() => {
-                const cellsPP = totalCells(template);
-                const pageIdx = Math.floor(selectedCell / cellsPP) + 1;
-                const localIdx = (selectedCell % cellsPP) + 1;
+                const info = findCellPageInfo(template, selectedCell, viewingFace);
                 return (
                   <>
-                    Celda <span className="text-ink-100">{localIdx}</span> de {cellsPP}
-                    <span className="ml-2 text-ink-500">· hoja {pageIdx}</span>
+                    Celda <span className="text-ink-100">{info.localIdx + 1}</span> de {info.pageSize}
+                    <span className="ml-2 text-ink-500">· hoja {info.page + 1}</span>
                   </>
                 );
               })()}
