@@ -99,28 +99,30 @@ export default function TemplatesSidebar({
         className="hidden"
         onChange={handleAutoPackPick}
       />
-      <div className="flex items-center justify-between gap-1 border-b border-ink-700 px-3 py-2">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-ink-300">
-          Plantillas
-        </h2>
-        <div className="flex gap-1">
+      <div className="border-b border-ink-700 px-3 py-2">
+        <div className="flex items-center justify-between gap-1">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-ink-300">
+            Plantillas
+          </h2>
           {onSync && (
             <button
               onClick={onSync}
               disabled={syncing}
-              className="rounded border border-ink-700 px-2 py-1 text-xs text-ink-300 hover:bg-ink-800 disabled:opacity-40"
+              className="rounded border border-ink-700 px-2 py-0.5 text-xs text-ink-300 hover:bg-ink-800 disabled:opacity-40"
               title="Pullear plantillas compartidas desde el repo"
             >
               {syncing ? '…' : '↻'}
             </button>
           )}
+        </div>
+        <div className="mt-2 grid grid-cols-3 gap-1">
           <button
             onClick={() => fileRef.current?.click()}
             disabled={uploading}
             className="rounded bg-accent-600 px-2 py-1 text-xs font-medium text-white hover:bg-accent-500 disabled:opacity-40"
             title="Subir un PDF de plantilla (3 páginas: imprimible, celdas, cortes)"
           >
-            {uploading ? 'Cargando…' : '+ PDF'}
+            {uploading ? '…' : '+ PDF'}
           </button>
           {onCreateGrid && (
             <button

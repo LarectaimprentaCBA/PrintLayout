@@ -475,10 +475,10 @@ export default function App() {
   useEffect(() => {
     if (!pendingAutoAssign) return;
     if (selected?.id !== pendingAutoAssign.templateId) return;
-    if (layout.cellsPerPage === 0) return;
+    if (layout.totalCellsCount === 0) return;
     layout.loadImagesWithMapping(pendingAutoAssign.images, pendingAutoAssign.cellMapping);
     setPendingAutoAssign(null);
-  }, [pendingAutoAssign, selected?.id, layout.cellsPerPage, layout.loadImagesWithMapping]);
+  }, [pendingAutoAssign, selected?.id, layout.totalCellsCount, layout.loadImagesWithMapping]);
 
   const cancelPdfExtract = async () => {
     const ctx = pdfExtract;

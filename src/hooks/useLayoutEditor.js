@@ -339,6 +339,7 @@ export function useLayoutEditor(template, face = 'front') {
     selectedCell,
     setSelectedCell,
     cellsPerPage,
+    totalCellsCount,
     pageCount,
     addImages,
     loadImagesWithMapping,

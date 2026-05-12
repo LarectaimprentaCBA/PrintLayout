@@ -93,7 +93,7 @@ export default function ImagePackModal({ open, files = [], onConfirm, onCancel }
       spacingX: params.spacingX,
       spacingY: params.spacingY,
       repeatToFill,
-      multiPage: !repeatToFill,
+      multiPage: true,
     });
   }, [valid, imageDims, fixedDim, params, repeatToFill]);
 
@@ -283,9 +283,9 @@ export default function ImagePackModal({ open, files = [], onConfirm, onCancel }
                 className="h-4 w-4 accent-accent-500"
               />
               <span>
-                Repetir hasta llenar la hoja
+                Rellenar huecos repitiendo imágenes
                 <span className="ml-1 text-ink-500">
-                  (las imágenes se ciclan hasta que no entre ninguna más)
+                  (después de paginar, cicla las imágenes en cada hoja hasta llenarla)
                 </span>
               </span>
             </label>
@@ -303,15 +303,16 @@ export default function ImagePackModal({ open, files = [], onConfirm, onCancel }
               ) : repeatToFill ? (
                 <>
                   <p className="text-ink-200">
-                    <span className="font-semibold text-accent-400">{pack.cells.length}</span>
-                    {' '}celdas en la hoja, repitiendo {pack.uniqueUsed} imagen
-                    {pack.uniqueUsed === 1 ? '' : 'es'}.
+                    {pack.uniqueUsed} de {pack.total} imágen{pack.total === 1 ? '' : 'es'} en{' '}
+                    <span className="font-semibold text-accent-400">
+                      {pack.pageCount} hoja{pack.pageCount === 1 ? '' : 's'}
+                    </span>
+                    , con <span className="font-semibold text-accent-400">{pack.cells.length}</span> celdas en total
+                    {pack.cells.length > pack.uniqueUsed ? ' (huecos rellenados)' : ''}.
                   </p>
                   {pack.uniqueUsed < pack.total && (
                     <p className="mt-1 text-amber-300">
-                      {pack.total - pack.uniqueUsed} imagen
-                      {pack.total - pack.uniqueUsed === 1 ? '' : 'es'} sin usar
-                      (más grandes que la hoja).
+                      {pack.total - pack.uniqueUsed} sin usar (más grandes que la hoja).
                     </p>
                   )}
                 </>
