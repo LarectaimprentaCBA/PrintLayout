@@ -35,7 +35,7 @@ import {
 } from './lib/templates.js';
 import { facesBoundingBox } from './lib/faceDetection.js';
 import { cropImageDataUrl } from './lib/imageCrop.js';
-import { rotateImageDataUrl90CW } from './lib/imageRotate.js';
+import { rotateImageDataUrl90CW, rotateFaces90CW } from './lib/imageRotate.js';
 
 export default function App() {
   const {
@@ -586,7 +586,7 @@ export default function App() {
             dataUrl: r.dataUrl,
             width: r.width,
             height: r.height,
-            faces: [],
+            faces: rotateFaces90CW(img.faces, img.width, img.height),
           });
           rotatedCount++;
         } catch (err) {
@@ -615,8 +615,7 @@ export default function App() {
         dataUrl: rotated.dataUrl,
         width: rotated.width,
         height: rotated.height,
-        // Las caras detectadas previamente ya no aplican; las invalidamos.
-        faces: [],
+        faces: rotateFaces90CW(img.faces, img.width, img.height),
         autoZoomed: false,
       });
     } catch (err) {
