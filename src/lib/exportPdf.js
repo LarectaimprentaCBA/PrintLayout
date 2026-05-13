@@ -103,7 +103,10 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
       image.height,
     );
     const bytes = dataUrlToBytes(cropped);
-    const embedded = await doc.embedJpg(bytes);
+    const mime = detectMime(cropped, 'image/png');
+    const embedded = mime.includes('png')
+      ? await doc.embedPng(bytes)
+      : await doc.embedJpg(bytes);
     embedCache.set(key, embedded);
     return embedded;
   }

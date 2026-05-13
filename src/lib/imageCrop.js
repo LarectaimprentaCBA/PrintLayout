@@ -28,7 +28,9 @@ export async function cropImageDataUrl(dataUrl, pageRect, viewBoxW, viewBoxH) {
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, clampedW, clampedH);
   ctx.drawImage(img, sx, sy, clampedW, clampedH, 0, 0, clampedW, clampedH);
-  return canvas.toDataURL('image/jpeg', 0.92);
+  // PNG para preservar el snap-a-blanco-puro de normalizeImageToSrgb. JPEG
+  // re-corre (255,255,255) a (254,254,254) y eso le pide tinta al driver.
+  return canvas.toDataURL('image/png');
 }
 
 export function dataUrlToBase64(dataUrl) {

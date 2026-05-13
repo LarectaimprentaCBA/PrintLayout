@@ -1,6 +1,6 @@
 {
   "name": "printlayout",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "Desktop app to arrange photos, cards and stickers on print-ready templates",
   "type": "module",
   "main": "electron/main.cjs",

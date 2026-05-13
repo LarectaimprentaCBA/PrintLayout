@@ -14,10 +14,15 @@ function base64ToBytes(base64) {
   return bytes;
 }
 
-// Rasteriza todas las paginas de un PDF (bytes) a JPEG dataURLs en el DPI
+// Rasteriza todas las paginas de un PDF (bytes) a PNG dataURLs en el DPI
 // pedido. Lo usa el flujo de impresion porque webContents.print() sobre un
 // PDF cargado en Electron sale en blanco; imprimir HTML con <img> si funciona.
-export async function renderPdfBytesToImages(bytes, dpi = 240, quality = 0.92) {
+//
+// PNG (lossless) en vez de JPEG: JPEG 0.92 corre (255,255,255) a tonos
+// (252-254, 254, 255) por chroma subsampling, y eso le pide al driver una
+// pizca de tinta cyan en el papel. Ademas snappeamos near-whites despues
+// del render por si pdfjs introduce artifacts de antialiasing.
+export async function renderPdfBytesToImages(bytes, dpi = 240) {
   const doc = await pdfjsLib.getDocument({ data: bytes }).promise;
   try {
     const out = [];
@@ -33,7 +38,25 @@ export async function renderPdfBytesToImages(bytes, dpi = 240, quality = 0.92) {
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       await page.render({ canvasContext: ctx, viewport }).promise;
-      out.push(canvas.toDataURL('image/jpeg', quality));
+      // Snap near-whites a blanco puro (mismo criterio que normalizeImageToSrgb).
+      const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const px = data.data;
+      const SNAP_MIN = 253;
+      const SNAP_DEV = 2;
+      for (let p = 0; p < px.length; p += 4) {
+        const r = px[p];
+        const g = px[p + 1];
+        const b = px[p + 2];
+        const min = r < g ? (r < b ? r : b) : (g < b ? g : b);
+        const max = r > g ? (r > b ? r : b) : (g > b ? g : b);
+        if (min >= SNAP_MIN && max - min <= SNAP_DEV) {
+          px[p] = 255;
+          px[p + 1] = 255;
+          px[p + 2] = 255;
+        }
+      }
+      ctx.putImageData(data, 0, 0);
+      out.push(canvas.toDataURL('image/png'));
     }
     return out;
   } finally {

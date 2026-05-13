@@ -74,8 +74,9 @@ export function extendImageToSize(dataUrl, originalSizeMm, targetSizeMm) {
         // queda parcialmente fuera del canvas (caso target < original).
         ctx.drawImage(img, drawX, drawY, drawW, drawH);
 
+        // PNG para preservar el snap-a-blanco-puro de normalizeImageToSrgb.
         resolve({
-          dataUrl: canvas.toDataURL('image/jpeg', 0.95),
+          dataUrl: canvas.toDataURL('image/png'),
           width: canvasW,
           height: canvasH,
           sizeMm: { w: targetSizeMm.w, h: targetSizeMm.h },
