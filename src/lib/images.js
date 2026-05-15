@@ -45,7 +45,8 @@ function normalizeImageToSrgb(img) {
   return canvas.toDataURL('image/png');
 }
 
-export async function readImageFile(file) {
+export async function readImageFile(file, opts = {}) {
+  const { physicalSizeMmOverride } = opts;
   // createImageBitmap con colorSpaceConversion:'none' impide que Chromium
   // aplique la conversion ICC (Adobe RGB -> sRGB) que correria los blancos
   // (255,255,254) a (252,254,255). Asi los bytes del JPG entran intactos.
@@ -62,16 +63,28 @@ export async function readImageFile(file) {
 
   const faces = await detectFaces(normalizedDataUrl);
   let physicalSizeMm = null;
-  try {
-    const dpi = await readImageDpi(file);
-    if (dpi && dpi.xDpi > 0 && dpi.yDpi > 0) {
-      physicalSizeMm = {
-        w: (w / dpi.xDpi) * 25.4,
-        h: (h / dpi.yDpi) * 25.4,
-      };
+  // Si el caller pasa un override (ej: tamano fisico de la imagen en el PDF
+  // de donde se extrajo), ese gana. El DPI del archivo embebido tipicamente
+  // no refleja el uso real.
+  if (physicalSizeMmOverride
+      && Number.isFinite(physicalSizeMmOverride.w) && physicalSizeMmOverride.w > 0
+      && Number.isFinite(physicalSizeMmOverride.h) && physicalSizeMmOverride.h > 0) {
+    physicalSizeMm = {
+      w: physicalSizeMmOverride.w,
+      h: physicalSizeMmOverride.h,
+    };
+  } else {
+    try {
+      const dpi = await readImageDpi(file);
+      if (dpi && dpi.xDpi > 0 && dpi.yDpi > 0) {
+        physicalSizeMm = {
+          w: (w / dpi.xDpi) * 25.4,
+          h: (h / dpi.yDpi) * 25.4,
+        };
+      }
+    } catch (err) {
+      // Si falla el parser, seguimos sin tamanio fisico.
     }
-  } catch (err) {
-    // Si falla el parser, seguimos sin tamanio fisico.
   }
   return {
     id: `img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,

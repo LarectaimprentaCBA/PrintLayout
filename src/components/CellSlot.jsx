@@ -8,6 +8,11 @@ export default function CellSlot({
   objectPosition,
   style,
   onClick,
+  onContextMenu,
+  cutShape = 'rect',
+  cellWmm = 0,
+  cellHmm = 0,
+  cutMarginMm = 0,
 }) {
   const draggable = useDraggable({
     id: `cell:${cellIdx}`,
@@ -49,12 +54,38 @@ export default function CellSlot({
       ? { objectPosition: `${objectPosition.x}% ${objectPosition.y}%` }
       : undefined;
 
+  // Para cutShape='circle': dibujamos un circulo punteado centrado, inscripto
+  // en min(w,h) y con el cutMarginMm aplicado, igual que el corte real.
+  // Asi el usuario ve la zona que va a quedar redonda despues del corte.
+  const isCircle = cutShape === 'circle';
+  let circleOverlay = null;
+  if (isCircle && cellWmm > 0 && cellHmm > 0) {
+    const diamMm = Math.max(0, Math.min(cellWmm, cellHmm) - 2 * (cutMarginMm || 0));
+    if (diamMm > 0) {
+      const sizePctW = (diamMm / cellWmm) * 100;
+      const sizePctH = (diamMm / cellHmm) * 100;
+      circleOverlay = (
+        <div
+          className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-accent-500/80"
+          style={{ width: `${sizePctW}%`, height: `${sizePctH}%` }}
+          aria-hidden
+        />
+      );
+    }
+  }
+
   return (
     <div
       ref={setRefs}
       onClick={(e) => {
         e.stopPropagation();
         onClick?.(cellIdx);
+      }}
+      onContextMenu={(e) => {
+        if (!image) return;
+        e.preventDefault();
+        e.stopPropagation();
+        onContextMenu?.(cellIdx, image);
       }}
       className={`absolute flex cursor-pointer items-center justify-center overflow-hidden text-accent-500/70 transition ${outline} ${
         isDragging ? 'opacity-30' : ''
@@ -74,6 +105,7 @@ export default function CellSlot({
       ) : (
         <span className="pointer-events-none text-2xl font-light">+</span>
       )}
+      {circleOverlay}
     </div>
   );
 }

@@ -92,6 +92,7 @@ function hashTemplateContent(tpl) {
     doubleSided: !!tpl.doubleSided,
     singlePage: !!tpl.singlePage,
     categoria: tpl.categoria || '',
+    safetyMm: Number.isFinite(tpl.safetyMm) ? tpl.safetyMm : null,
   };
   return crypto
     .createHash('sha256')

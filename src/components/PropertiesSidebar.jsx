@@ -1,7 +1,41 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { totalCells, hasCuts, findCellPageInfo } from '../lib/templates.js';
 import { readImageFiles } from '../lib/images.js';
 import SidebarImageItem from './SidebarImageItem.jsx';
+
+// Input mm inline para Properties: edita un valor numerico, valida en blur o
+// Enter. No emite mientras escribis para no regenerar cortes en cada tecla.
+function NumberMmInput({ value, onChange, title }) {
+  const [text, setText] = useState(String(value ?? 0));
+  useEffect(() => { setText(String(value ?? 0)); }, [value]);
+  const commit = () => {
+    const n = parseFloat(String(text).replace(',', '.'));
+    if (!Number.isFinite(n) || n < 0) {
+      setText(String(value ?? 0));
+      return;
+    }
+    const clamped = Math.min(50, Math.max(0, n));
+    if (Math.abs(clamped - (value ?? 0)) > 1e-6) onChange?.(clamped);
+    else setText(String(value ?? 0));
+  };
+  return (
+    <span className="inline-flex items-center gap-1" title={title}>
+      <input
+        type="text"
+        inputMode="decimal"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+          if (e.key === 'Escape') { setText(String(value ?? 0)); e.currentTarget.blur(); }
+        }}
+        className="w-12 rounded border border-ink-700 bg-ink-800 px-1.5 py-0.5 text-right text-xs text-ink-100 outline-none focus:border-accent-500"
+      />
+      <span className="text-[10px] text-ink-500">mm</span>
+    </span>
+  );
+}
 
 export default function PropertiesSidebar({
   template,
@@ -14,6 +48,8 @@ export default function PropertiesSidebar({
   sharing,
   onShare,
   onEditMargin,
+  onUpdateTemporal,
+  onSaveTemporal,
   onRenameTemplate,
   onSetCategoria,
   categoriasList = [],
@@ -363,17 +399,70 @@ export default function PropertiesSidebar({
             <div className="flex items-center justify-between">
               <dt className="text-ink-400">Margen marcas</dt>
               <dd className="flex items-center gap-2">
-                <span>{template.markMarginMm ?? 10} mm</span>
-                {onEditMargin && (
-                  <button
-                    onClick={onEditMargin}
-                    className="rounded border border-ink-700 px-1.5 py-0.5 text-[10px] text-ink-300 hover:bg-ink-800"
-                  >
-                    Editar
-                  </button>
+                {template.temporal && onUpdateTemporal ? (
+                  <NumberMmInput
+                    value={template.markMarginMm ?? 0}
+                    onChange={(v) => onUpdateTemporal({ markMarginMm: v })}
+                    title="Distancia desde el borde de la hoja a las marcas L. 0 = sin marcas (no se puede cortar)."
+                  />
+                ) : (
+                  <>
+                    <span>{template.markMarginMm ?? 10} mm</span>
+                    {onEditMargin && (
+                      <button
+                        onClick={onEditMargin}
+                        className="rounded border border-ink-700 px-1.5 py-0.5 text-[10px] text-ink-300 hover:bg-ink-800"
+                      >
+                        Editar
+                      </button>
+                    )}
+                  </>
                 )}
               </dd>
             </div>
+            {template.temporal && onUpdateTemporal && (
+              <>
+                <div className="flex items-center justify-between">
+                  <dt className="text-ink-400">Margen corte</dt>
+                  <dd className="flex items-center gap-2">
+                    <NumberMmInput
+                      value={template.cutMarginMm ?? 0}
+                      onChange={(v) => onUpdateTemporal({ cutMarginMm: v })}
+                      title="Cuanto se mete la cuchilla hacia adentro de la celda. 0 = corta justo en el borde."
+                    />
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between">
+                  <dt className="text-ink-400">Forma corte</dt>
+                  <dd>
+                    <div className="flex gap-0.5 rounded border border-ink-700 bg-ink-800 p-0.5">
+                      <button
+                        type="button"
+                        onClick={() => onUpdateTemporal({ cutShape: 'rect' })}
+                        className={`rounded px-2 py-0.5 text-[10px] ${
+                          (template.cutShape ?? 'rect') === 'rect'
+                            ? 'bg-accent-600 text-white'
+                            : 'text-ink-300 hover:bg-ink-700'
+                        }`}
+                      >
+                        Rect
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onUpdateTemporal({ cutShape: 'circle' })}
+                        className={`rounded px-2 py-0.5 text-[10px] ${
+                          template.cutShape === 'circle'
+                            ? 'bg-accent-600 text-white'
+                            : 'text-ink-300 hover:bg-ink-700'
+                        }`}
+                      >
+                        Círculo
+                      </button>
+                    </div>
+                  </dd>
+                </div>
+              </>
+            )}
             <div className="flex items-center justify-between">
               <dt className="text-ink-400">Doble faz</dt>
               <dd className={template.doubleSided ? 'text-accent-400' : 'text-ink-500'}>
@@ -413,8 +502,19 @@ export default function PropertiesSidebar({
               </>
             )}
             {template.temporal && (
-              <div className="rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-[11px] text-amber-200">
-                Grilla temporal — vive solo en esta sesión.
+              <div className="space-y-2">
+                <div className="rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-[11px] text-amber-200">
+                  Grilla temporal — vive solo en esta sesión.
+                </div>
+                {onSaveTemporal && (
+                  <button
+                    type="button"
+                    onClick={() => onSaveTemporal(template)}
+                    className="w-full rounded border border-accent-500/40 bg-accent-500/10 px-2 py-1.5 text-[11px] font-medium text-accent-200 hover:bg-accent-500/20"
+                  >
+                    Guardar plantilla…
+                  </button>
+                )}
               </div>
             )}
           </dl>

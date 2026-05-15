@@ -67,6 +67,30 @@ def count_placements(doc, xref):
     return total
 
 
+# Tamano fisico (mm) de la imagen tal como aparece posada en la pagina.
+# El DPI del archivo embebido no refleja como se usa en el PDF — la
+# posicion en la pagina si.
+# Devuelve la posicion mas grande encontrada (en caso de placements
+# multiples del mismo xref con tamanios distintos).
+def best_placement_mm(doc, xref):
+    PT_TO_MM = 25.4 / 72.0
+    best = None
+    best_area = -1.0
+    for page in doc:
+        try:
+            rects = page.get_image_rects(xref)
+        except Exception:
+            continue
+        for rect in rects:
+            w_mm = rect.width * PT_TO_MM
+            h_mm = rect.height * PT_TO_MM
+            area = w_mm * h_mm
+            if area > best_area:
+                best_area = area
+                best = {"w": round(w_mm, 2), "h": round(h_mm, 2)}
+    return best
+
+
 def main():
     if len(sys.argv) < 3:
         print(json.dumps({"ok": False, "error": "Uso: extract_pdf_images.py <pdf> <out_dir>"}))
@@ -130,6 +154,7 @@ def main():
                 thumb_b64 = ""
 
             placements = count_placements(doc, xref)
+            placement_mm = best_placement_mm(doc, xref)
 
             results.append({
                 "xref": xref,
@@ -139,6 +164,7 @@ def main():
                 "path": file_path,
                 "thumbBase64": thumb_b64,
                 "placements": placements,
+                "placementMm": placement_mm,
                 "sizeBytes": len(img_bytes),
             })
 

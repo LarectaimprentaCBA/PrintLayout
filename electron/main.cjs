@@ -343,7 +343,6 @@ function ensurePrintWindow(parentWin) {
   });
   printWin.on('closed', () => {
     printWin = null;
-    // Borrar todos los tmp dirs que hayan quedado.
     for (const d of printTmpDirs) {
       try { fs.rmSync(d, { recursive: true, force: true }); } catch {}
     }

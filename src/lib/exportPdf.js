@@ -1,4 +1,4 @@
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, rgb } from 'pdf-lib';
 import {
   cellPositions,
   cellsForPage,
@@ -40,6 +40,63 @@ function fitContain(cellW, cellH, imgW, imgH) {
   const dx = (cellW - drawW) / 2;
   const dy = (cellH - drawH) / 2;
   return { drawW, drawH, dx, dy };
+}
+
+// 4 marcas L vectoriales en las esquinas del area de la plantilla. Las usa el
+// plotter A3 Max 4 Pro para alinear el corte opticamente. Se dibujan solo
+// cuando la plantilla no tiene fondo propio (grilla rapida, auto-pack) y
+// `markMarginMm > 0`.
+//
+// El brazo de cada L apunta hacia adentro del area de corte: la esquina
+// interior de la L coincide con la esquina de la ventana de corte (es decir,
+// la posicion que el plotter espera). Brazo 10 mm, trazo 0.3 mm, color negro.
+function drawCornerMarks(page, {
+  offsetXpt, offsetYpt, templateWpt, templateHpt, markMarginMm,
+}) {
+  if (!markMarginMm || markMarginMm <= 0) return;
+  const m = markMarginMm * MM_TO_PT;
+  const arm = 10 * MM_TO_PT;
+  const thickness = 0.3 * MM_TO_PT;
+  const color = rgb(0, 0, 0);
+
+  // En coords PDF (Y arriba). top = Y alta, bottom = Y baja.
+  const left = offsetXpt + m;
+  const right = offsetXpt + templateWpt - m;
+  const top = offsetYpt + templateHpt - m;
+  const bottom = offsetYpt + m;
+
+  if (right <= left || top <= bottom) return;
+
+  const line = (x1, y1, x2, y2) => page.drawLine({
+    start: { x: x1, y: y1 },
+    end: { x: x2, y: y2 },
+    thickness,
+    color,
+  });
+
+  // Top-left: brazos a la derecha y hacia abajo.
+  line(left, top, left + arm, top);
+  line(left, top, left, top - arm);
+  // Top-right: brazos a la izquierda y hacia abajo.
+  line(right, top, right - arm, top);
+  line(right, top, right, top - arm);
+  // Bottom-left: brazos a la derecha y hacia arriba.
+  line(left, bottom, left + arm, bottom);
+  line(left, bottom, left, bottom + arm);
+  // Bottom-right: brazos a la izquierda y hacia arriba.
+  line(right, bottom, right - arm, bottom);
+  line(right, bottom, right, bottom + arm);
+
+  // Punto guia centrado entre las 2 L de arriba. Indica al operador cual es
+  // el "frente" de la hoja al ponerla en el plotter. Esta sobre la misma
+  // linea horizontal que las L y bien adentro de la ventana, asi el plotter
+  // no lo confunde con una marca de registro (esas las espera en esquinas).
+  page.drawCircle({
+    x: (left + right) / 2,
+    y: top,
+    size: 1 * MM_TO_PT,
+    color,
+  });
 }
 
 function base64ToBytes(base64) {
@@ -139,6 +196,27 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
         y: offsetYpt,
         width: templateWpt,
         height: templateHpt,
+      });
+    } else if (
+      typeof template.markMarginMm === 'number'
+      && template.markMarginMm > 0
+      && Array.isArray(template.cortes)
+      && template.cortes.length > 0
+      && !(template.doubleSided && face === 'back')
+    ) {
+      // Plantillas sin fondo propio que SI van a cortarse en plotter (grilla
+      // rapida con cortes generados): dibujamos las marcas L para que el
+      // plotter pueda escanearlas. La negacion del dorso doble-faz evita
+      // dibujarlas dos veces (el frente de doble-faz ya las trae embebidas
+      // en el PDF original). En grillas no doubleSided el face default cae
+      // en 'back' por la logica vieja, pero como NO hay distincion de caras,
+      // igual queremos las marcas.
+      drawCornerMarks(page, {
+        offsetXpt,
+        offsetYpt,
+        templateWpt,
+        templateHpt,
+        markMarginMm: template.markMarginMm,
       });
     }
 

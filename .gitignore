@@ -13,6 +13,9 @@ Thumbs.db
 python-runtime/
 get-pip.py
 
+# Cache de Python (bytecode local)
+__pycache__/
+
 # Sample images del repo viejo que no van versionadas
 fotosPolaroid95x95 (1).jpg
 

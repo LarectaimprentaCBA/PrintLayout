@@ -22,6 +22,7 @@ export default function LayoutCanvas({
   currentPage,
   onPageChange,
   onCellClick,
+  onCellContextMenu,
   showBackground = true,
   showCuts = false,
   face = 'front',
@@ -209,7 +210,12 @@ export default function LayoutCanvas({
                   fitMode={fitMode}
                   objectPosition={objectPosition}
                   onClick={onCellClick}
+                  onContextMenu={onCellContextMenu}
                   style={{ left: x, top: y, width: w, height: h }}
+                  cutShape={template.cutShape ?? 'rect'}
+                  cellWmm={cell.w}
+                  cellHmm={cell.h}
+                  cutMarginMm={template.cutMarginMm ?? 0}
                 />
               );
             })}

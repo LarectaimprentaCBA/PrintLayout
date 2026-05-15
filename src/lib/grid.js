@@ -93,6 +93,63 @@ export function distributeEvenly(targetCellIndices, imageIds) {
   return result;
 }
 
+// Dado un array de celdas (top-left origin, mm), devuelve polilineas rectangulares
+// listas para guardar en template.cortes. Cada polilinea va clockwise y cerrada
+// (primer punto repetido al final), mismo formato que produce parse_template.py
+// para rectangulos vectoriales en la pagina de cortes.
+//
+// cutMarginMm achica el rectangulo de corte hacia adentro de la celda. Es decir,
+// la imagen se imprime al tamano de la celda y la cuchilla corta cutMarginMm
+// adentro en cada lado. Si la celda queda demasiado chica (<=0 en algun lado),
+// se descarta.
+export function cellsToCuts(cells, { cutMarginMm = 0 } = {}) {
+  const m = Math.max(0, Number(cutMarginMm) || 0);
+  const polylines = [];
+  for (const c of cells) {
+    const x0 = c.x + m;
+    const y0 = c.y + m;
+    const x1 = c.x + c.w - m;
+    const y1 = c.y + c.h - m;
+    if (x1 - x0 <= 0 || y1 - y0 <= 0) continue;
+    polylines.push([
+      [x0, y0],
+      [x1, y0],
+      [x1, y1],
+      [x0, y1],
+      [x0, y0],
+    ]);
+  }
+  return polylines;
+}
+
+// Como cellsToCuts pero genera circunferencias (sampleadas como polilineas).
+// El circulo va inscripto en la celda y centrado; radio = min(w,h)/2 - margen.
+// 64 segmentos = paso angular de 5.6 grados, suficiente para que el plotter
+// haga la curva sin escalones visibles a tamano sticker.
+export function cellsToCircleCuts(cells, { cutMarginMm = 0, segments = 64 } = {}) {
+  const m = Math.max(0, Number(cutMarginMm) || 0);
+  const polylines = [];
+  for (const c of cells) {
+    const cx = c.x + c.w / 2;
+    const cy = c.y + c.h / 2;
+    const r = Math.min(c.w, c.h) / 2 - m;
+    if (r <= 0) continue;
+    const poly = [];
+    for (let i = 0; i <= segments; i++) {
+      const a = (i / segments) * Math.PI * 2;
+      poly.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+    }
+    polylines.push(poly);
+  }
+  return polylines;
+}
+
+// Dispatcher: forma 'rect' (default) usa cellsToCuts, 'circle' usa cellsToCircleCuts.
+export function generateCuts(cells, { cutShape = 'rect', cutMarginMm = 0 } = {}) {
+  if (cutShape === 'circle') return cellsToCircleCuts(cells, { cutMarginMm });
+  return cellsToCuts(cells, { cutMarginMm });
+}
+
 export const PAPER_PRESETS = [
   { id: 'a4', label: 'A4 (210×297)', w: 210, h: 297 },
   { id: 'a3', label: 'A3 (297×420)', w: 297, h: 420 },

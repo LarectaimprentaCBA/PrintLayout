@@ -143,6 +143,111 @@ export function imageOrientation(image) {
   return 'square';
 }
 
+// Bounding box de una polilinea de corte.
+function polyBBox(poly) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const pt of poly) {
+    const x = pt[0], y = pt[1];
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  if (!Number.isFinite(minX)) return null;
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+function polyCentroid(poly) {
+  let sx = 0, sy = 0, n = 0;
+  for (const pt of poly) { sx += pt[0]; sy += pt[1]; n++; }
+  return n > 0 ? { x: sx / n, y: sy / n } : null;
+}
+
+function pointInRect(pt, rect) {
+  return pt.x >= rect.x && pt.x <= rect.x + rect.w
+      && pt.y >= rect.y && pt.y <= rect.y + rect.h;
+}
+
+// Devuelve el rect de corte (en mm, top-left origin) asociado a una celda.
+//
+// Estrategia:
+//   1. Primero busca polilineas cuyo centroide caiga DENTRO de la celda
+//      (caso tipico: el corte esta interior, la celda incluye sangrado).
+//   2. Si no hay, busca el centroide mas cercano al centro de la celda dentro
+//      de un radio = max(cell.w, cell.h). Esto cubre cortes ligeramente fuera.
+//   3. Si nada match, devuelve null.
+//
+// Si hay multiples polilineas candidatas, devuelve la de mayor area (caso
+// PDFs con marcas de corte redundantes).
+export function cutRectForCell(template, cell) {
+  if (!template || !cell) return null;
+  const cortes = template.cortes ?? [];
+  if (cortes.length === 0) return null;
+  const inside = [];
+  for (const poly of cortes) {
+    const bb = polyBBox(poly);
+    const c = polyCentroid(poly);
+    if (!bb || !c) continue;
+    if (pointInRect(c, cell)) inside.push(bb);
+  }
+  if (inside.length > 0) {
+    inside.sort((a, b) => (b.w * b.h) - (a.w * a.h));
+    return inside[0];
+  }
+  // Fallback: el corte mas cercano dentro de un radio razonable.
+  const cellCx = cell.x + cell.w / 2;
+  const cellCy = cell.y + cell.h / 2;
+  const maxR = Math.max(cell.w, cell.h);
+  let best = null;
+  let bestDist = Infinity;
+  for (const poly of cortes) {
+    const bb = polyBBox(poly);
+    const c = polyCentroid(poly);
+    if (!bb || !c) continue;
+    const d = Math.hypot(c.x - cellCx, c.y - cellCy);
+    if (d < bestDist && d < maxR) {
+      bestDist = d;
+      best = bb;
+    }
+  }
+  return best;
+}
+
+// Bleed por lado en mm. Positivo = el corte esta INTERIOR (la celda incluye
+// sangrado); negativo = el corte esta FUERA (la imagen impresa excede la
+// celda). Devuelve null si no se detecta corte para esa celda.
+export function bleedMmForCell(template, cell) {
+  if (!template || !cell) return null;
+  const cut = cutRectForCell(template, cell);
+  if (!cut) return null;
+  return {
+    top: cut.y - cell.y,
+    right: (cell.x + cell.w) - (cut.x + cut.w),
+    bottom: (cell.y + cell.h) - (cut.y + cut.h),
+    left: cut.x - cell.x,
+  };
+}
+
+// Zona segura interior al corte, en mm. Sale de template.safetyMm si esta;
+// default 3 mm.
+export function safetyMm(template) {
+  const v = parseFloat(template?.safetyMm);
+  return Number.isFinite(v) && v >= 0 ? v : 3;
+}
+
+// Devuelve true si la primera celda y todas las restantes tienen el mismo
+// tamano. El editor lo usa para saber si puede tomar la primera celda como
+// referencia universal (caso comun en plantillas de tarjetas).
+export function cellsHomogeneous(template) {
+  const cells = template?.celdas ?? [];
+  if (cells.length === 0) return false;
+  const ref = cells[0];
+  const EPS = 0.1;
+  return cells.every(
+    (c) => Math.abs(c.w - ref.w) < EPS && Math.abs(c.h - ref.h) < EPS,
+  );
+}
+
 // Para mostrar en la sidebar, agrupamos celdas en filas para describir la
 // distribución sin pretender que sea una grilla regular.
 export function describeCells(template) {

@@ -15,10 +15,12 @@ import PdfUploadModal from './components/PdfUploadModal.jsx';
 import PdfImageExtractModal from './components/PdfImageExtractModal.jsx';
 import GridUploadModal from './components/GridUploadModal.jsx';
 import ImagePackModal from './components/ImagePackModal.jsx';
+import ImageCountPackModal from './components/ImageCountPackModal.jsx';
 import ImageEditorModal from './components/ImageEditorModal.jsx';
+import SaveTemplateModal from './components/SaveTemplateModal.jsx';
 import { useTemplates } from './hooks/useTemplates.js';
 import { useLayoutEditor } from './hooks/useLayoutEditor.js';
-import { readImageFiles } from './lib/images.js';
+import { readImageFiles, readImageFile } from './lib/images.js';
 import {
   exportLayoutToPdf,
   exportDoubleSidedLayoutToPdf,
@@ -33,6 +35,7 @@ import {
   pageStartOffset,
   findCellPageInfo,
 } from './lib/templates.js';
+import { generateCuts } from './lib/grid.js';
 import { facesBoundingBox } from './lib/faceDetection.js';
 import { cropImageDataUrl } from './lib/imageCrop.js';
 import { rotateImageDataUrl90CW, rotateFaces90CW } from './lib/imageRotate.js';
@@ -128,6 +131,7 @@ export default function App() {
   const [activeDrag, setActiveDrag] = useState(null);
   const [exporting, setExporting] = useState(false);
   const [printing, setPrinting] = useState(false);
+  const [saveTemplatePrompt, setSaveTemplatePrompt] = useState(null); // template temporal | null
   const [uploading, setUploading] = useState(false);
   const [cutting, setCutting] = useState(false);
   const [toast, setToast] = useState(null);
@@ -200,6 +204,8 @@ export default function App() {
   const [pdfExtract, setPdfExtract] = useState(null); // { fileName, tmpDir, images }
   // Auto-acomodar imagenes.
   const [autoPackFiles, setAutoPackFiles] = useState(null);
+  // Acomodar por cantidad (N por hoja, maximo tamano).
+  const [countPackFiles, setCountPackFiles] = useState(null);
   // Imagenes precargadas que se asignan a una plantilla recien creada.
   const [pendingAutoAssign, setPendingAutoAssign] = useState(null); // { templateId, images }
 
@@ -242,6 +248,23 @@ export default function App() {
     setMarginPrompt({ defaultValue: String(selected.markMarginMm ?? 10) });
   };
 
+  // Aplica updates parciales a la plantilla temporal (grilla rapida) y
+  // regenera los cortes en base a cutMarginMm + markMarginMm + cutShape.
+  // Si markMarginMm <= 0 quedan sin cortes (no se puede cortar sin marcas).
+  const handleUpdateTemporalTemplate = (updates) => {
+    setDynamicTemplate((prev) => {
+      if (!prev || !prev.temporal) return prev;
+      const next = { ...prev, ...updates };
+      const cutM = next.cutMarginMm ?? 0;
+      const markM = next.markMarginMm ?? 0;
+      const shape = next.cutShape ?? 'rect';
+      next.cortes = markM > 0
+        ? generateCuts(next.celdas ?? [], { cutShape: shape, cutMarginMm: cutM })
+        : [];
+      return next;
+    });
+  };
+
   const handleRenameTemplate = async (template, newName) => {
     const trimmed = (newName || '').trim();
     if (!trimmed || trimmed === template.name) return;
@@ -260,8 +283,43 @@ export default function App() {
     await update({ ...template, categoria: trimmed || undefined });
   };
 
-  const handleCreateGrid = ({ paperWidthMm, paperHeightMm, cells }) => {
+  // Convierte una grilla temporal en plantilla permanente. Quita `temporal`
+  // del objeto, le pone nombre+categoria y la persiste via templates.save.
+  // El id se mantiene para preservar las asignaciones de imagenes en curso.
+  const submitSaveTemplate = async ({ name, categoria }) => {
+    const tpl = saveTemplatePrompt;
+    setSaveTemplatePrompt(null);
+    if (!tpl) return;
+    try {
+      const { temporal: _t, ...rest } = tpl;
+      const saved = await update({
+        ...rest,
+        name,
+        categoria: categoria || undefined,
+      });
+      setDynamicTemplate(null);
+      setSelectedId(saved.id);
+      setToast({ kind: 'success', text: `Plantilla "${saved.name}" guardada.` });
+    } catch (err) {
+      console.error(err);
+      setToast({ kind: 'error', text: `No se pudo guardar: ${err.message}` });
+    }
+  };
+
+  const handleCreateGrid = ({
+    paperWidthMm,
+    paperHeightMm,
+    cells,
+    cutMarginMm = 0,
+    markMarginMm = 0,
+    cutShape = 'rect',
+  }) => {
     const id = `tpl_dyn_${Date.now().toString(36)}`;
+    // Solo generamos cortes si va a poder usarlos (necesita marcas L para
+    // que el plotter alinee). Con markMarginMm=0 la grilla es sin corte.
+    const cortes = markMarginMm > 0
+      ? generateCuts(cells, { cutShape, cutMarginMm })
+      : [];
     const tpl = {
       id,
       name: 'Grilla rápida',
@@ -271,8 +329,10 @@ export default function App() {
       pageCount: 1,
       celdas: cells,
       celdasDorso: [],
-      cortes: [],
-      markMarginMm: 0,
+      cortes,
+      cutMarginMm,
+      markMarginMm,
+      cutShape,
       doubleSided: false,
       singlePage: true,
       temporal: true,
@@ -364,7 +424,9 @@ export default function App() {
       return;
     }
     try {
-      const files = [];
+      // Cada entry: { file, placementMm }. placementMm prevalece sobre el DPI
+      // del archivo embebido (el DPI casi nunca refleja el uso real en el PDF).
+      const filesWithMeta = [];
       let counter = 1;
       for (const img of chosen) {
         const r = await window.printlayout.pdf.readExtractedImage(img.path);
@@ -375,15 +437,28 @@ export default function App() {
           const suffix = copies > 1 ? ` (${i + 1})` : '';
           const baseName = (ctx.fileName || 'pdf').replace(/\.pdf$/i, '');
           const fileName = `${baseName} - ${counter}${suffix}.${img.ext === 'png' ? 'png' : 'jpg'}`;
-          files.push(new File([r.bytes], fileName, { type: mime }));
+          filesWithMeta.push({
+            file: new File([r.bytes], fileName, { type: mime }),
+            placementMm: img.placementMm ?? null,
+          });
         }
         counter++;
       }
-      if (files.length === 0) {
+      if (filesWithMeta.length === 0) {
         setToast({ kind: 'error', text: 'No se pudo leer ninguna imagen extraída.' });
         return;
       }
-      const loaded = await readImageFiles(files);
+      const loaded = [];
+      for (const item of filesWithMeta) {
+        try {
+          const img = await readImageFile(item.file, {
+            physicalSizeMmOverride: item.placementMm,
+          });
+          loaded.push(img);
+        } catch (err) {
+          console.warn('No se pudo cargar imagen extraida:', err);
+        }
+      }
       if (loaded.length === 0) {
         setToast({ kind: 'error', text: 'Las imágenes extraídas no se pudieron cargar.' });
         return;
@@ -406,6 +481,57 @@ export default function App() {
   const handleStartAutoPack = (files) => {
     if (!files?.length) return;
     setAutoPackFiles(files);
+  };
+
+  const handleStartCountPack = (files) => {
+    if (!files?.length) return;
+    setCountPackFiles(files);
+  };
+
+  const submitCountPack = async ({
+    paperWidthMm, paperHeightMm, pages, files, cellMapping,
+    totalCells, uniqueUsed, totalInput, pageCount, countPerPage,
+  }) => {
+    setCountPackFiles(null);
+    if (!files?.length) return;
+    try {
+      const loaded = await readImageFiles(files);
+      if (loaded.length === 0) {
+        setToast({ kind: 'error', text: 'No se pudieron leer las imágenes.' });
+        return;
+      }
+      const id = `tpl_dyn_${Date.now().toString(36)}`;
+      const tpl = {
+        id,
+        name: pageCount > 1
+          ? `Por cantidad (${countPerPage}/hoja · ${pageCount} hojas)`
+          : `Por cantidad (${countPerPage} en hoja)`,
+        pdfBase64: null,
+        pageWidthMm: paperWidthMm,
+        pageHeightMm: paperHeightMm,
+        pageCount,
+        celdas: pages[0]?.celdas ?? [],
+        pages,
+        celdasDorso: [],
+        cortes: [],
+        markMarginMm: 0,
+        doubleSided: false,
+        singlePage: true,
+        temporal: true,
+      };
+      setDynamicTemplate(tpl);
+      setSelectedId(id);
+      setPendingAutoAssign({ templateId: id, images: loaded, cellMapping });
+      setToast({
+        kind: 'success',
+        text: pageCount > 1
+          ? `Plantilla creada: ${uniqueUsed} imágenes en ${pageCount} hojas (${countPerPage} por hoja).`
+          : `Plantilla creada: ${countPerPage} celdas, ${uniqueUsed} imagen${uniqueUsed === 1 ? '' : 'es'}.`,
+      });
+    } catch (err) {
+      console.error(err);
+      setToast({ kind: 'error', text: `Error en acomodar por cantidad: ${err.message}` });
+    }
   };
 
   const submitAutoPack = async ({
@@ -587,6 +713,9 @@ export default function App() {
             width: r.width,
             height: r.height,
             faces: rotateFaces90CW(img.faces, img.width, img.height),
+            physicalSizeMm: img.physicalSizeMm
+              ? { w: img.physicalSizeMm.h, h: img.physicalSizeMm.w }
+              : null,
           });
           rotatedCount++;
         } catch (err) {
@@ -616,6 +745,9 @@ export default function App() {
         width: rotated.width,
         height: rotated.height,
         faces: rotateFaces90CW(img.faces, img.width, img.height),
+        physicalSizeMm: img.physicalSizeMm
+          ? { w: img.physicalSizeMm.h, h: img.physicalSizeMm.w }
+          : null,
         autoZoomed: false,
       });
     } catch (err) {
@@ -906,6 +1038,7 @@ export default function App() {
             onSync={() => runSyncWithToast()}
             onCreateGrid={() => setGridModalOpen(true)}
             onAutoPack={handleStartAutoPack}
+            onCountPack={handleStartCountPack}
           />
           <LayoutCanvas
             template={selected}
@@ -924,6 +1057,9 @@ export default function App() {
               layout.setSelectedCell(null);
             }}
             onCellClick={handleCellClick}
+            onCellContextMenu={(_cellIdx, img) => {
+              if (img?.id) setEditingImageId(img.id);
+            }}
             onUploadPdfClick={() => blankPdfInputRef.current?.click()}
             onCreateGridClick={() => setGridModalOpen(true)}
           />
@@ -941,6 +1077,8 @@ export default function App() {
             onSetCategoria={handleSetCategoria}
             categoriasList={categoriasList}
             onEditMargin={handleEditMargin}
+            onUpdateTemporal={handleUpdateTemporalTemplate}
+            onSaveTemporal={(tpl) => setSaveTemplatePrompt(tpl)}
             onAddImages={handleAddImages}
             onImportPdfImages={handleImportPdfImages}
             extractingPdf={extractingPdf}
@@ -1031,6 +1169,23 @@ export default function App() {
           onCancel={() => setAutoPackFiles(null)}
         />
 
+        <ImageCountPackModal
+          open={!!countPackFiles}
+          files={countPackFiles ?? []}
+          onConfirm={submitCountPack}
+          onCancel={() => setCountPackFiles(null)}
+        />
+
+        <SaveTemplateModal
+          open={!!saveTemplatePrompt}
+          defaultName={saveTemplatePrompt?.name || ''}
+          defaultCategoria={saveTemplatePrompt?.categoria || ''}
+          existingCategories={categoriasList}
+          onConfirm={submitSaveTemplate}
+          onCancel={() => setSaveTemplatePrompt(null)}
+        />
+
+
         <input
           ref={blankPdfInputRef}
           type="file"
@@ -1052,8 +1207,18 @@ export default function App() {
             <ImageEditorModal
               open
               image={editingImage}
+              template={selected}
               onSave={(updates) => layout.updateImage(editingImageId, updates)}
               onClose={() => setEditingImageId(null)}
+              onTemplateSafetyChange={async (mm) => {
+                if (!selected || selected.temporal) return;
+                if (Math.abs((selected.safetyMm ?? 3) - mm) < 0.01) return;
+                try {
+                  await update({ ...selected, safetyMm: mm });
+                } catch (err) {
+                  console.warn('No se pudo guardar safetyMm:', err);
+                }
+              }}
             />
           );
         })()}
