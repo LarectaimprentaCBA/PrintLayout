@@ -16,6 +16,9 @@ get-pip.py
 # Cache de Python (bytecode local)
 __pycache__/
 
+# Certificado privado de code signing (el .cer publico SI va commiteado)
+build/codesign.pfx
+
 # Sample images del repo viejo que no van versionadas
 fotosPolaroid95x95 (1).jpg
 

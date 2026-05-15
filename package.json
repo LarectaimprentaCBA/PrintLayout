@@ -1,9 +1,14 @@
 {
   "name": "printlayout",
-  "version": "0.1.19",
-  "description": "Desktop app to arrange photos, cards and stickers on print-ready templates",
+  "version": "0.1.20",
+  "description": "PrintLayout — herramienta de imposición de fotos, tarjetas y stickers para impresión y corte. Desarrollada por La Recta Imprenta (Córdoba, AR) para uso interno.",
   "type": "module",
   "main": "electron/main.cjs",
+  "author": {
+    "name": "La Recta Imprenta",
+    "email": "info@larectaimprenta.com.ar"
+  },
+  "homepage": "https://github.com/LarectaimprentaCBA/PrintLayout",
   "scripts": {
     "dev:vite": "vite",
     "dev:electron": "wait-on tcp:5174 && cross-env NODE_ENV=development electron .",
@@ -42,8 +47,9 @@
     "wait-on": "^7.2.0"
   },
   "build": {
-    "appId": "com.printlayout.app",
+    "appId": "com.larectaimprenta.printlayout",
     "productName": "PrintLayout",
+    "copyright": "Copyright (c) 2026 La Recta Imprenta",
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -79,7 +85,12 @@
           ]
         }
       ],
-      "artifactName": "PrintLayout-Setup-${version}.${ext}"
+      "artifactName": "PrintLayout-Setup-${version}.${ext}",
+      "certificateFile": "build/codesign.pfx",
+      "certificatePassword": "PrintLayoutLR2026",
+      "signingHashAlgorithms": ["sha256"],
+      "publisherName": "La Recta Imprenta",
+      "verifyUpdateCodeSignature": false
     },
     "nsis": {
       "oneClick": true,
