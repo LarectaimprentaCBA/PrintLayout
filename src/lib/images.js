@@ -63,6 +63,11 @@ export async function readImageFile(file, opts = {}) {
 
   const faces = await detectFaces(normalizedDataUrl);
   let physicalSizeMm = null;
+  // physicalSizeMmTrusted: true cuando el tamano viene de una fuente confiable
+  // (ej: rasterizacion de paginas de PDF, donde sabemos el tamano exacto).
+  // Diferencia de cuando viene del DPI del JPG embebido, que tipicamente no
+  // refleja el uso real y el editor tiene que aplicar heuristicas.
+  let physicalSizeMmTrusted = false;
   // Si el caller pasa un override (ej: tamano fisico de la imagen en el PDF
   // de donde se extrajo), ese gana. El DPI del archivo embebido tipicamente
   // no refleja el uso real.
@@ -73,6 +78,7 @@ export async function readImageFile(file, opts = {}) {
       w: physicalSizeMmOverride.w,
       h: physicalSizeMmOverride.h,
     };
+    physicalSizeMmTrusted = true;
   } else {
     try {
       const dpi = await readImageDpi(file);
@@ -95,6 +101,7 @@ export async function readImageFile(file, opts = {}) {
     mime: 'image/png',
     faces,
     physicalSizeMm,
+    physicalSizeMmTrusted,
   };
 }
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   totalCells,
   cellsCountOnPage,
@@ -23,6 +23,10 @@ export function useLayoutEditor(template, face = 'front') {
   const [assignmentsFront, setAssignmentsFront] = useState([]);
   const [assignmentsBack, setAssignmentsBack] = useState([]);
   const [selectedCell, setSelectedCell] = useState(null);
+  // Piso de hojas para legacy: si el usuario pide N, hay al menos N hojas
+  // (con celdas vacias rellenadas) aunque las imagenes carguen menos. Si
+  // carga mas, el array sigue creciendo igual que antes.
+  const [minPages, setMinPagesState] = useState(1);
 
   const isMultiPage = fixedPageCount(template) !== null;
   // cellsPerPage tiene el significado legacy (cantidad por hoja, constante).
@@ -37,6 +41,7 @@ export function useLayoutEditor(template, face = 'front') {
     setAssignmentsFront(totalCellsCount > 0 ? Array(totalCellsCount).fill(null) : []);
     setAssignmentsBack(totalCellsCount > 0 ? Array(totalCellsCount).fill(null) : []);
     setSelectedCell(null);
+    setMinPagesState(1);
   }, [template?.id, totalCellsCount]);
 
   const isFront = face !== 'back';
@@ -44,7 +49,9 @@ export function useLayoutEditor(template, face = 'front') {
 
   const pageCount = isMultiPage
     ? fixedPageCount(template)
-    : (cellsPerPage > 0 ? Math.max(1, assignmentsFront.length / cellsPerPage) : 0);
+    : (cellsPerPage > 0
+      ? Math.max(minPages, assignmentsFront.length / cellsPerPage)
+      : 0);
 
   const imageMap = useMemo(() => {
     const m = new Map();
@@ -52,16 +59,22 @@ export function useLayoutEditor(template, face = 'front') {
     return m;
   }, [images]);
 
+  // Piso de celdas en legacy: minPages hojas * cellsPerPage celdas por hoja.
+  // En multi-page no aplica (total fijo).
+  const minCellsFloor = isMultiPage
+    ? 0
+    : cellsPerPage * Math.max(1, minPages);
+
   // Garantiza que ambos arrays tengan la misma longitud. En modo multi-page,
   // la longitud es fija (totalCellsCount); en legacy se redondea a multiplo
-  // de cellsPerPage.
+  // de cellsPerPage y se respeta el piso de minPages.
   const matchLength = useCallback(
     (front, back, targetLen) => {
       let want;
       if (isMultiPage) {
         want = totalCellsCount;
       } else {
-        want = Math.max(targetLen, cellsPerPage);
+        want = Math.max(targetLen, cellsPerPage, minCellsFloor);
       }
       const padded = (arr) =>
         arr.length >= want
@@ -69,7 +82,7 @@ export function useLayoutEditor(template, face = 'front') {
           : arr.concat(Array(want - arr.length).fill(null));
       return [padded(front), padded(back)];
     },
-    [cellsPerPage, isMultiPage, totalCellsCount],
+    [cellsPerPage, isMultiPage, totalCellsCount, minCellsFloor],
   );
 
   // Pure helpers que aplican una mutacion al array de la cara activa
@@ -87,10 +100,12 @@ export function useLayoutEditor(template, face = 'front') {
           [nextFront, nextBack] = matchLength(prevFront, nextBack, nextBack.length);
         }
         // Compact trailing pages solo en modo legacy (las hojas son virtuales).
-        // En multi-page la cantidad es fija — no se compacta.
+        // En multi-page la cantidad es fija — no se compacta. Nunca baja
+        // del piso minCellsFloor (asegura las hojas pedidas a mano).
         if (!isMultiPage && cellsPerPage > 0) {
+          const floor = Math.max(cellsPerPage, minCellsFloor);
           while (
-            nextFront.length > cellsPerPage &&
+            nextFront.length > floor &&
             nextFront.slice(-cellsPerPage).every((id) => id === null) &&
             nextBack.slice(-cellsPerPage).every((id) => id === null)
           ) {
@@ -102,8 +117,24 @@ export function useLayoutEditor(template, face = 'front') {
         return nextFront;
       });
     },
-    [isFront, assignmentsBack, matchLength, cellsPerPage, isMultiPage],
+    [isFront, assignmentsBack, matchLength, cellsPerPage, isMultiPage, minCellsFloor],
   );
+
+  // Reaccionar a cambios de minPages: dispara una pasada por matchLength +
+  // compactacion para crecer/podar trailing pages segun el nuevo piso. Usamos
+  // un ref a applyMutation para evitar que el effect se redispare por la
+  // re-creacion del callback.
+  const applyMutationRef = useRef(applyMutation);
+  useEffect(() => { applyMutationRef.current = applyMutation; }, [applyMutation]);
+  useEffect(() => {
+    if (isMultiPage || cellsPerPage === 0) return;
+    applyMutationRef.current((arr) => arr);
+  }, [minPages, isMultiPage, cellsPerPage]);
+
+  const setMinPages = useCallback((n) => {
+    const v = Math.max(1, Math.floor(Number(n) || 1));
+    setMinPagesState(v);
+  }, []);
 
   const addImages = useCallback(
     (newImages) => {
@@ -299,8 +330,9 @@ export function useLayoutEditor(template, face = 'front') {
         let nb = assignmentsBack.map((id) => (id === imageId ? null : id));
         [nf, nb] = matchLength(nf, nb, nf.length);
         if (!isMultiPage && cellsPerPage > 0) {
+          const floor = Math.max(cellsPerPage, minCellsFloor);
           while (
-            nf.length > cellsPerPage &&
+            nf.length > floor &&
             nf.slice(-cellsPerPage).every((id) => id === null) &&
             nb.slice(-cellsPerPage).every((id) => id === null)
           ) {
@@ -312,7 +344,7 @@ export function useLayoutEditor(template, face = 'front') {
         return nf;
       });
     },
-    [assignmentsBack, matchLength, cellsPerPage, isMultiPage],
+    [assignmentsBack, matchLength, cellsPerPage, isMultiPage, minCellsFloor],
   );
 
   const updateImage = useCallback((imageId, updates) => {
@@ -323,12 +355,14 @@ export function useLayoutEditor(template, face = 'front') {
 
   const clearAll = useCallback(() => {
     setImages([]);
-    const size = isMultiPage ? totalCellsCount : cellsPerPage;
+    const size = isMultiPage
+      ? totalCellsCount
+      : Math.max(cellsPerPage, minCellsFloor);
     const empty = size > 0 ? Array(size).fill(null) : [];
     setAssignmentsFront(empty);
     setAssignmentsBack([...empty]);
     setSelectedCell(null);
-  }, [cellsPerPage, isMultiPage, totalCellsCount]);
+  }, [cellsPerPage, isMultiPage, totalCellsCount, minCellsFloor]);
 
   return {
     images,
@@ -341,6 +375,8 @@ export function useLayoutEditor(template, face = 'front') {
     cellsPerPage,
     totalCellsCount,
     pageCount,
+    minPages,
+    setMinPages,
     addImages,
     loadImagesWithMapping,
     addImageToCell,

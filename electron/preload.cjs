@@ -12,6 +12,14 @@ contextBridge.exposeInMainWorld('printlayout', {
     syncPull: () => ipcRenderer.invoke('templates:sync-pull'),
     share: (template) => ipcRenderer.invoke('templates:share', template),
   },
+  paperPresets: {
+    list: () => ipcRenderer.invoke('paper-presets:list'),
+    save: (preset) => ipcRenderer.invoke('paper-presets:save', preset),
+    delete: (id) => ipcRenderer.invoke('paper-presets:delete', id),
+    canSync: () => ipcRenderer.invoke('paper-presets:can-sync'),
+    syncPull: () => ipcRenderer.invoke('paper-presets:sync-pull'),
+    syncPush: () => ipcRenderer.invoke('paper-presets:sync-push'),
+  },
   plotter: {
     sendCut: (payload) => ipcRenderer.invoke('plotter:send-cut', payload),
   },

@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { totalCells, hasCuts, findCellPageInfo } from '../lib/templates.js';
+import {
+  totalCells,
+  hasCuts,
+  findCellPageInfo,
+  cellsHomogeneous,
+  fixedPageCount,
+} from '../lib/templates.js';
 import { readImageFiles } from '../lib/images.js';
 import SidebarImageItem from './SidebarImageItem.jsx';
 
@@ -37,6 +43,37 @@ function NumberMmInput({ value, onChange, title }) {
   );
 }
 
+// Input entero >= 1 con state local + commit en blur/Enter. Soluciona el
+// problema clasico de inputs controlados type="number": si el usuario borra
+// todo para retipear, parseInt('')=NaN y el input "salta" al valor previo.
+function IntInput({ value, onChange, min = 1 }) {
+  const [text, setText] = useState(String(value ?? min));
+  useEffect(() => { setText(String(value ?? min)); }, [value, min]);
+  const commit = () => {
+    const n = parseInt(text, 10);
+    if (!Number.isFinite(n) || n < min) {
+      setText(String(value ?? min));
+      return;
+    }
+    if (n !== value) onChange?.(n);
+    else setText(String(value ?? min));
+  };
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      value={text}
+      onChange={(e) => setText(e.target.value.replace(/[^0-9]/g, ''))}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+        if (e.key === 'Escape') { setText(String(value ?? min)); e.currentTarget.blur(); }
+      }}
+      className="w-10 rounded border border-ink-700 bg-ink-800 px-1 py-0.5 text-center text-xs text-ink-100 outline-none focus:border-accent-500"
+    />
+  );
+}
+
 export default function PropertiesSidebar({
   template,
   images,
@@ -46,6 +83,8 @@ export default function PropertiesSidebar({
   viewingFace,
   canShare,
   sharing,
+  minPages,
+  onChangeMinPages,
   onShare,
   onEditMargin,
   onUpdateTemporal,
@@ -67,6 +106,13 @@ export default function PropertiesSidebar({
   onCycleFit,
   onSelectImage,
 }) {
+  // Mostrar control "Hojas" solo en plantillas legacy con celdas homogeneas:
+  // ahi tiene sentido pedir N hojas iguales para posar a mano.
+  const showHojasControl =
+    !!template
+    && fixedPageCount(template) === null
+    && cellsHomogeneous(template)
+    && typeof onChangeMinPages === 'function';
   const multiInputRef = useRef(null);
   const singleInputRef = useRef(null);
   const pdfInputRef = useRef(null);
@@ -383,6 +429,35 @@ export default function PropertiesSidebar({
               <dt className="text-ink-400">Celdas</dt>
               <dd>{totalCells(template)}</dd>
             </div>
+            {showHojasControl && (
+              <div className="flex items-center justify-between">
+                <dt className="text-ink-400">Hojas</dt>
+                <dd className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => onChangeMinPages(Math.max(1, (minPages ?? 1) - 1))}
+                    disabled={(minPages ?? 1) <= 1}
+                    title="Quitar una hoja (solo se quitan vacías)"
+                    className="rounded border border-ink-700 px-1.5 py-0.5 text-xs text-ink-200 hover:bg-ink-800 disabled:opacity-40"
+                  >
+                    −
+                  </button>
+                  <IntInput
+                    value={minPages ?? 1}
+                    onChange={onChangeMinPages}
+                    min={1}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => onChangeMinPages((minPages ?? 1) + 1)}
+                    title="Agregar una hoja para posar a mano"
+                    className="rounded border border-ink-700 px-1.5 py-0.5 text-xs text-ink-200 hover:bg-ink-800"
+                  >
+                    +
+                  </button>
+                </dd>
+              </div>
+            )}
             <div className="flex justify-between">
               <dt className="text-ink-400">Cortes</dt>
               <dd>

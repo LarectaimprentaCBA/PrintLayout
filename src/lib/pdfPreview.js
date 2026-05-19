@@ -22,6 +22,48 @@ function base64ToBytes(base64) {
 // (252-254, 254, 255) por chroma subsampling, y eso le pide al driver una
 // pizca de tinta cyan en el papel. Ademas snappeamos near-whites despues
 // del render por si pdfjs introduce artifacts de antialiasing.
+// Rasteriza todas las paginas de un PDF y devuelve, ademas del dataURL, el
+// tamano fisico de cada pagina en mm. Util para importar PDFs "a curvas"
+// (vectoriales puros, sin imagenes raster embebidas) como imagenes regulares
+// del flujo: el placementMm permite que el editor y el auto-pack sepan el
+// tamano objetivo, sin depender del DPI del archivo (que ni existe en un PDF
+// vectorial).
+export async function rasterizePdfPages(bytes, dpi = 300) {
+  const doc = await pdfjsLib.getDocument({ data: bytes }).promise;
+  try {
+    const out = [];
+    const PT_TO_MM = 25.4 / 72;
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i);
+      const vp1 = page.getViewport({ scale: 1 }); // unidades = pt
+      const widthMm = vp1.width * PT_TO_MM;
+      const heightMm = vp1.height * PT_TO_MM;
+      const viewport = page.getViewport({ scale: dpi / 72 });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      const ctx = canvas.getContext('2d');
+      // Fondo blanco: muchos PDFs vienen transparentes y la celda quedaria
+      // gris/transparente al imprimir.
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      const dataUrl = canvas.toDataURL('image/png');
+      out.push({
+        dataUrl,
+        widthPx: canvas.width,
+        heightPx: canvas.height,
+        widthMm,
+        heightMm,
+        pageIndex: i,
+      });
+    }
+    return out;
+  } finally {
+    doc.destroy();
+  }
+}
+
 export async function renderPdfBytesToImages(bytes, dpi = 240) {
   const doc = await pdfjsLib.getDocument({ data: bytes }).promise;
   try {

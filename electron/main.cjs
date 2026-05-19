@@ -6,6 +6,8 @@ const { spawn } = require('node:child_process');
 const { autoUpdater } = require('electron-updater');
 const templatesStore = require('./templates-store.cjs');
 const templatesSync = require('./templates-sync.cjs');
+const paperPresetsStore = require('./paper-presets-store.cjs');
+const paperPresetsSync = require('./paper-presets-sync.cjs');
 
 autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
@@ -198,6 +200,79 @@ ipcMain.handle('templates:share', async (_evt, template) => {
       sharedHash: r.hash,
     });
     return { ok: true, template: updated };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// Paper presets: store local CRUD.
+ipcMain.handle('paper-presets:list', () => paperPresetsStore.list());
+ipcMain.handle('paper-presets:save', (_evt, preset) => paperPresetsStore.save(preset));
+ipcMain.handle('paper-presets:delete', (_evt, id) => paperPresetsStore.remove(id));
+
+// Sync con GitHub (mismo repo que plantillas, archivo paper-presets.json).
+ipcMain.handle('paper-presets:can-sync', () => paperPresetsSync.hasToken());
+
+ipcMain.handle('paper-presets:sync-pull', async () => {
+  try {
+    const remote = await paperPresetsSync.listRemote();
+    const local = paperPresetsStore.list();
+    const localById = new Map(local.map((p) => [p.id, p]));
+
+    const added = [];
+    const updated = [];
+    const errors = [];
+
+    for (const entry of remote) {
+      const localP = localById.get(entry.id);
+      // Si ya existe local con mismo hash, no hacer nada.
+      if (localP && localP.sharedHash === entry.hash) continue;
+      try {
+        const merged = {
+          id: entry.id,
+          label: entry.label,
+          w: Number(entry.w),
+          h: Number(entry.h),
+          sharedAt: entry.updatedAt,
+          sharedHash: entry.hash,
+        };
+        const saved = paperPresetsStore.save(merged);
+        if (localP) updated.push({ id: saved.id, label: saved.label });
+        else added.push({ id: saved.id, label: saved.label });
+      } catch (err) {
+        errors.push({ id: entry.id, label: entry.label, error: err.message });
+      }
+    }
+
+    // No borramos locales que no esten en remote: el usuario puede tener presets
+    // privados que nunca subio. La conciliacion final es responsabilidad del push.
+
+    return { ok: true, added, updated, errors };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('paper-presets:sync-push', async () => {
+  try {
+    if (!paperPresetsSync.hasToken()) {
+      return { ok: false, error: 'Token no configurado en este build.' };
+    }
+    const local = paperPresetsStore.list();
+    const r = await paperPresetsSync.pushAll(local);
+    if (!r.ok) return r;
+    // Marcar cada local con sharedAt + sharedHash segun lo que subio el sync.
+    const byId = new Map(r.entries.map((e) => [e.id, e]));
+    for (const p of local) {
+      const e = byId.get(p.id);
+      if (!e) continue;
+      paperPresetsStore.save({
+        ...p,
+        sharedAt: e.updatedAt,
+        sharedHash: e.hash,
+      });
+    }
+    return { ok: true, count: r.count };
   } catch (err) {
     return { ok: false, error: err.message };
   }

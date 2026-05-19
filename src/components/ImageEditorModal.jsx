@@ -47,6 +47,28 @@ export default function ImageEditorModal({
   const debounceRef = useRef(null);
   const safetyDebounceRef = useRef(null);
   const previewBoxRef = useRef(null);
+  // Tamano disponible del area del preview (el flex container con bg-ink-950).
+  // Lo medimos en JS porque CSS aspect-ratio + max-width/max-height no resuelve
+  // bien el caso "fit-to-container preservando ratio" para divs (a diferencia de
+  // <img> con object-fit:contain). Versiones anteriores intentaban combinar
+  // width:100% + height:auto + max-height:100%, pero cuando el contenedor era
+  // mas ancho que alto y el target era cuadrado/portrait, el width quedaba al
+  // 100% y la altura se clampeaba — frame deformado.
+  const previewAreaRef = useRef(null);
+  const [previewArea, setPreviewArea] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    if (!open) return;
+    const el = previewAreaRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const cr = entries[0]?.contentRect;
+      if (cr) setPreviewArea({ w: cr.width, h: cr.height });
+    });
+    ro.observe(el);
+    const rect = el.getBoundingClientRect();
+    setPreviewArea({ w: rect.width, h: rect.height });
+    return () => ro.disconnect();
+  }, [open]);
 
   // Datos derivados de la plantilla.
   const refCell = template?.celdas?.[0] ?? null;
@@ -65,14 +87,19 @@ export default function ImageEditorModal({
   // Inicializar al abrir.
   useEffect(() => {
     if (!open || !image) return;
-    // physicalSizeMm es confiable cuando es cercano al tamano de celda (caso
-    // JPG con DPI valido). Si excede al target por > 50%, viene de un PDF que
-    // tenia la imagen renderizada a tamano gigante — no representa la tarjeta.
+    // physicalSizeMm es confiable en dos casos:
+    //   1) Trusted (vino de override del caller, ej. pagina rasterizada de
+    //      PDF, donde sabemos el tamano exacto). En ese caso lo respetamos
+    //      siempre, sin importar la relacion con la celda.
+    //   2) Heuristica: cuando es cercano al tamano de celda (caso JPG con
+    //      DPI valido). Si excede al target por > 50%, viene de un PDF con
+    //      la imagen renderizada a tamano gigante — no representa la tarjeta.
     const phys = image.physicalSizeMm;
+    const physTrusted = !!image.physicalSizeMmTrusted && phys;
     const physReasonable = phys && refCell
       && phys.w <= refCell.w * 1.5
       && phys.h <= refCell.h * 1.5;
-    if (physReasonable) {
+    if (physTrusted || physReasonable) {
       setActualW(phys.w.toFixed(1));
       setActualH(phys.h.toFixed(1));
     } else if (cutRect) {
@@ -91,6 +118,11 @@ export default function ImageEditorModal({
       setActualW(defaultW.toFixed(1));
       setActualH(defaultH.toFixed(1));
     }
+    // Target = celda (incluso con physTrusted): asi el frame del preview tiene
+    // el aspect ratio de la tarjeta y se muestran las guias de corte/zona
+    // segura sobre la celda. La imagen se fitea adentro via fitScale. Lo que
+    // evita la deformacion no es cambiar el target — es el method default
+    // (ver bloque siguiente: physTrusted => mirror, no shrinkBleed).
     if (refCell) {
       setTargetW(refCell.w.toFixed(1));
       setTargetH(refCell.h.toFixed(1));
@@ -104,7 +136,15 @@ export default function ImageEditorModal({
     // Snap a corte por defecto: si hay cutRect detectado, abrimos en modo
     // shrinkBleed con el % calculado para que el contenido caiga sobre el corte.
     // Si no hay corte, default a mirror (mas natural para fotos sin plantilla).
-    if (cutRect && refCell) {
+    // EXCEPCION: si el tamano fisico es confiable (ej. pagina de PDF
+    // rasterizada), la imagen ya es lo que el cliente diseno —no le metemos
+    // shrinkBleed automatico porque deformaria su arte con franja espejada
+    // en los bordes. Default a mirror, que con src=target es no-op.
+    if (physTrusted) {
+      setMethod('mirror');
+      setShrinkPercent(100);
+      setShrinkFillMode('mirror');
+    } else if (cutRect && refCell) {
       const snapPct = Math.max(cutRect.w / refCell.w, cutRect.h / refCell.h) * 100;
       setMethod('shrinkBleed');
       setShrinkPercent(Math.round(snapPct));
@@ -142,7 +182,10 @@ export default function ImageEditorModal({
     });
   }, [method, aw, ah, centerRectMm]);
 
-  // Generar preview con debounce.
+  // Generar preview con debounce. 450ms da margen suficiente para que el user
+  // termine de tipear antes de arrancar el procesado de canvas (que es sync e
+  // intensivo en imagenes grandes y a veces bloquea el thread principal, lo
+  // que hace que las siguientes teclas tipeadas en otros inputs se pierdan).
   useEffect(() => {
     if (!open || !image) return;
     if (aw <= 0 || ah <= 0 || tw <= 0 || th <= 0) return;
@@ -165,7 +208,7 @@ export default function ImageEditorModal({
       } finally {
         setBusy(false);
       }
-    }, 200);
+    }, 450);
     return () => debounceRef.current && clearTimeout(debounceRef.current);
   }, [open, image, aw, ah, tw, th, method, stripPx, color, shrinkPercent, shrinkFillMode, centerRectMm, cropPercent]);
 
@@ -400,18 +443,36 @@ export default function ImageEditorModal({
 
         <div className="flex flex-1 overflow-hidden">
           {/* Preview */}
-          <div className="flex flex-1 items-center justify-center bg-ink-950 p-6">
-            {previewUrl && tw > 0 && th > 0 ? (
+          <div
+            ref={previewAreaRef}
+            className="flex min-w-0 min-h-0 flex-1 items-center justify-center bg-ink-950 p-6"
+          >
+            {(() => {
+              if (!previewUrl || tw <= 0 || th <= 0 || previewArea.w <= 0 || previewArea.h <= 0) {
+                return <span className="text-xs text-ink-400">Generando preview…</span>;
+              }
+              // Fit-to-area preservando aspect: ancho/alto explicitos en px
+              // calculados del area medida. CSS aspect-ratio + max-w/max-h
+              // no resuelve este caso bien para divs.
+              const areaAR = previewArea.w / previewArea.h;
+              const targetAR = tw / th;
+              let frameW;
+              let frameH;
+              if (targetAR > areaAR) {
+                frameW = previewArea.w;
+                frameH = previewArea.w / targetAR;
+              } else {
+                frameH = previewArea.h;
+                frameW = previewArea.h * targetAR;
+              }
+              return (
               <div
                 className="relative shadow-2xl overflow-hidden"
                 onWheel={onWheel}
                 onPointerDown={onPanStart}
                 style={{
-                  aspectRatio: `${tw} / ${th}`,
-                  maxHeight: '100%',
-                  maxWidth: '100%',
-                  height: '100%',
-                  width: 'auto',
+                  width: `${frameW}px`,
+                  height: `${frameH}px`,
                   cursor: pickingColor
                     ? 'crosshair'
                     : isPanning
@@ -482,10 +543,11 @@ export default function ImageEditorModal({
                       </svg>
                     )}
 
-                    {/* Zona segura (corte − safetyMm) */}
+                    {/* Zona segura (corte − safetyMm). Verde (green-400) en vez
+                        de amarillo: el amarillo se perdia sobre fondos claros. */}
                     {showCutOverlay && !isCircleCut && safetyOk && sVal > 0 && (
                       <div
-                        className="pointer-events-none absolute border border-dashed border-yellow-300"
+                        className="pointer-events-none absolute border border-dashed border-green-400"
                         style={{
                           left: `${pct(cutInsetL + sVal, tw)}%`,
                           top: `${pct(cutInsetT + sVal, th)}%`,
@@ -506,7 +568,7 @@ export default function ImageEditorModal({
                           rx={safetyCircleRadiusMm}
                           ry={safetyCircleRadiusMm}
                           fill="none"
-                          stroke="#fde047"
+                          stroke="#4ade80"
                           strokeWidth={0.25}
                           strokeDasharray="0.8 0.8"
                           vectorEffect="non-scaling-stroke"
@@ -583,9 +645,8 @@ export default function ImageEditorModal({
                   )}
                 </div>
               </div>
-            ) : (
-              <span className="text-xs text-ink-400">Generando preview…</span>
-            )}
+              );
+            })()}
           </div>
 
           {/* Panel de controles */}
@@ -905,7 +966,7 @@ export default function ImageEditorModal({
                   <span className="inline-block h-2 w-3 border-2 border-red-500" /> Línea de corte
                 </div>
                 <div className="flex items-center gap-1">
-                  <span className="inline-block h-2 w-3 border border-dashed border-yellow-300" /> Zona segura
+                  <span className="inline-block h-2 w-3 border border-dashed border-green-400" /> Zona segura
                 </div>
               </div>
             )}

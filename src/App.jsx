@@ -18,7 +18,10 @@ import ImagePackModal from './components/ImagePackModal.jsx';
 import ImageCountPackModal from './components/ImageCountPackModal.jsx';
 import ImageEditorModal from './components/ImageEditorModal.jsx';
 import SaveTemplateModal from './components/SaveTemplateModal.jsx';
+import PaperPresetsModal from './components/PaperPresetsModal.jsx';
 import { useTemplates } from './hooks/useTemplates.js';
+import { usePaperPresets } from './hooks/usePaperPresets.js';
+import { BUILTIN_PAPER_PRESETS } from './lib/grid.js';
 import { useLayoutEditor } from './hooks/useLayoutEditor.js';
 import { readImageFiles, readImageFile } from './lib/images.js';
 import {
@@ -36,6 +39,7 @@ import {
   findCellPageInfo,
 } from './lib/templates.js';
 import { generateCuts } from './lib/grid.js';
+import { rasterizePdfPages } from './lib/pdfPreview.js';
 import { facesBoundingBox } from './lib/faceDetection.js';
 import { cropImageDataUrl } from './lib/imageCrop.js';
 import { rotateImageDataUrl90CW, rotateFaces90CW } from './lib/imageRotate.js';
@@ -51,9 +55,19 @@ export default function App() {
     share,
     syncPull,
   } = useTemplates();
+  const {
+    allPresets: paperPresetList,
+    customPresets: customPaperPresets,
+    canSync: canSyncPresets,
+    save: savePaperPreset,
+    remove: removePaperPreset,
+    syncPull: syncPullPaperPresets,
+    syncPush: syncPushPaperPresets,
+  } = usePaperPresets();
   const [selectedId, setSelectedId] = useState(null);
   const [sharing, setSharing] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [presetsModalOpen, setPresetsModalOpen] = useState(false);
 
   const runSyncWithToast = async ({ silent = false } = {}) => {
     setSyncing(true);
@@ -154,7 +168,9 @@ export default function App() {
     if (templatesLoading || syncedOnceRef.current) return;
     syncedOnceRef.current = true;
     runSyncWithToast({ silent: true });
-  }, [templatesLoading, syncPull]);
+    // Tambien pulleamos presets de hoja en silencio. No avisa nada si falla.
+    syncPullPaperPresets().catch(() => {});
+  }, [templatesLoading, syncPull, syncPullPaperPresets]);
 
   const handleShare = async (template) => {
     if (!template || sharing) return;
@@ -377,6 +393,31 @@ export default function App() {
     }
   };
 
+  // Rasteriza un PDF a 300dpi y devuelve entries con el shape que espera
+  // PdfImageExtractModal (mismas claves que extract_pdf_images, con dataUrl
+  // en vez de path). Lo usan dos flujos: fallback automatico cuando no hay
+  // imagenes embebidas (PDF "a curvas") y el boton "Usar paginas enteras"
+  // cuando las imagenes embebidas son tiles que no representan lo que se ve.
+  const rasterizeBytesToImageEntries = async (bytes) => {
+    const pages = await rasterizePdfPages(new Uint8Array(bytes), 300);
+    if (!pages || pages.length === 0) return null;
+    return pages.map((p) => {
+      const base64 = p.dataUrl.slice(p.dataUrl.indexOf(',') + 1);
+      return {
+        xref: `page_${p.pageIndex}`,
+        ext: 'png',
+        width: p.widthPx,
+        height: p.heightPx,
+        dataUrl: p.dataUrl,
+        thumbBase64: base64,
+        placements: 1,
+        sizeBytes: 0,
+        placementMm: { w: p.widthMm, h: p.heightMm },
+        pageIndex: p.pageIndex,
+      };
+    });
+  };
+
   const handleImportPdfImages = async (file) => {
     if (!file || extractingPdf) return;
     setExtractingPdf(true);
@@ -391,24 +432,82 @@ export default function App() {
         });
         return;
       }
-      if (!result.images || result.images.length === 0) {
+      if (result.images && result.images.length > 0) {
+        // Guardamos bytes en el ctx para poder ofrecer "Usar paginas enteras"
+        // sin pedir el archivo de nuevo si las imagenes embebidas no sirven.
+        setPdfExtract({
+          fileName: file.name,
+          tmpDir: result.tmpDir,
+          images: result.images,
+          mode: 'embedded',
+          pdfBytes: bytes,
+        });
+        return;
+      }
+      // No hay imagenes embebidas: probable PDF "a curvas" (vectorial puro).
+      // Fallback: rasterizar cada pagina a 300dpi y ofrecerlas como imagenes.
+      if (result.tmpDir) {
+        try { await window.printlayout.pdf.cleanupExtracted(result.tmpDir); } catch {}
+      }
+      let images;
+      try {
+        images = await rasterizeBytesToImageEntries(bytes);
+      } catch (err) {
+        console.error(err);
         setToast({
           kind: 'error',
-          text: 'No se encontraron imágenes embebidas en ese PDF.',
+          text: `No se pudo rasterizar el PDF: ${err.message}`,
         });
-        if (result.tmpDir) {
-          try { await window.printlayout.pdf.cleanupExtracted(result.tmpDir); } catch {}
-        }
+        return;
+      }
+      if (!images) {
+        setToast({
+          kind: 'error',
+          text: 'El PDF no tiene páginas legibles.',
+        });
         return;
       }
       setPdfExtract({
         fileName: file.name,
-        tmpDir: result.tmpDir,
-        images: result.images,
+        tmpDir: null,
+        images,
+        mode: 'rasterized',
+        pdfBytes: bytes,
       });
     } catch (err) {
       console.error(err);
       setToast({ kind: 'error', text: `Error extrayendo imágenes: ${err.message}` });
+    } finally {
+      setExtractingPdf(false);
+    }
+  };
+
+  // Si las imagenes embebidas no sirven (PDF con capas/overlay/fondo), el
+  // usuario aprieta "Usar paginas enteras" en el modal y reabrimos en modo
+  // rasterizado usando los bytes ya cargados.
+  const handleSwitchToRasterized = async () => {
+    const ctx = pdfExtract;
+    if (!ctx?.pdfBytes || extractingPdf) return;
+    setExtractingPdf(true);
+    try {
+      const images = await rasterizeBytesToImageEntries(ctx.pdfBytes);
+      if (!images) {
+        setToast({ kind: 'error', text: 'El PDF no tiene páginas legibles.' });
+        return;
+      }
+      if (ctx.tmpDir) {
+        try { await window.printlayout.pdf.cleanupExtracted(ctx.tmpDir); } catch {}
+      }
+      setPdfExtract({
+        fileName: ctx.fileName,
+        tmpDir: null,
+        images,
+        mode: 'rasterized',
+        pdfBytes: ctx.pdfBytes,
+      });
+    } catch (err) {
+      console.error(err);
+      setToast({ kind: 'error', text: `No se pudo rasterizar: ${err.message}` });
     } finally {
       setExtractingPdf(false);
     }
@@ -426,19 +525,34 @@ export default function App() {
     try {
       // Cada entry: { file, placementMm }. placementMm prevalece sobre el DPI
       // del archivo embebido (el DPI casi nunca refleja el uso real en el PDF).
+      // Si img.dataUrl existe (paginas rasterizadas de PDF a curvas), se usa
+      // directo en vez de leer del tmpDir; si no, se lee el archivo extraido.
       const filesWithMeta = [];
       let counter = 1;
       for (const img of chosen) {
-        const r = await window.printlayout.pdf.readExtractedImage(img.path);
-        if (!r?.ok || !r.bytes) continue;
+        let bytes;
+        if (img.dataUrl) {
+          const base64 = img.dataUrl.slice(img.dataUrl.indexOf(',') + 1);
+          const bin = atob(base64);
+          bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        } else {
+          const r = await window.printlayout.pdf.readExtractedImage(img.path);
+          if (!r?.ok || !r.bytes) continue;
+          bytes = r.bytes;
+        }
         const mime = img.ext === 'png' ? 'image/png' : 'image/jpeg';
         const copies = Math.max(1, img.copies || 1);
         for (let i = 0; i < copies; i++) {
           const suffix = copies > 1 ? ` (${i + 1})` : '';
           const baseName = (ctx.fileName || 'pdf').replace(/\.pdf$/i, '');
-          const fileName = `${baseName} - ${counter}${suffix}.${img.ext === 'png' ? 'png' : 'jpg'}`;
+          // Para paginas rasterizadas: nombrar por pagina (mas legible).
+          const label = img.pageIndex
+            ? `pag ${img.pageIndex}`
+            : `${counter}`;
+          const fileName = `${baseName} - ${label}${suffix}.${img.ext === 'png' ? 'png' : 'jpg'}`;
           filesWithMeta.push({
-            file: new File([r.bytes], fileName, { type: mime }),
+            file: new File([bytes], fileName, { type: mime }),
             placementMm: img.placementMm ?? null,
           });
         }
@@ -1072,6 +1186,8 @@ export default function App() {
             viewingFace={viewingFace}
             canShare={canShare}
             sharing={sharing}
+            minPages={layout.minPages}
+            onChangeMinPages={layout.setMinPages}
             onShare={handleShare}
             onRenameTemplate={handleRenameTemplate}
             onSetCategoria={handleSetCategoria}
@@ -1152,14 +1268,31 @@ export default function App() {
           open={gridModalOpen}
           onConfirm={handleCreateGrid}
           onCancel={() => setGridModalOpen(false)}
+          presets={paperPresetList}
+          onOpenPresetsEditor={() => setPresetsModalOpen(true)}
+        />
+
+        <PaperPresetsModal
+          open={presetsModalOpen}
+          builtinPresets={BUILTIN_PAPER_PRESETS}
+          customPresets={customPaperPresets}
+          canSync={canSyncPresets}
+          onSave={savePaperPreset}
+          onDelete={removePaperPreset}
+          onSyncPull={syncPullPaperPresets}
+          onSyncPush={syncPushPaperPresets}
+          onClose={() => setPresetsModalOpen(false)}
         />
 
         <PdfImageExtractModal
           open={!!pdfExtract}
           fileName={pdfExtract?.fileName}
           images={pdfExtract?.images ?? []}
+          mode={pdfExtract?.mode ?? 'embedded'}
+          busy={extractingPdf}
           onConfirm={submitPdfExtract}
           onCancel={cancelPdfExtract}
+          onSwitchToRasterized={handleSwitchToRasterized}
         />
 
         <ImagePackModal

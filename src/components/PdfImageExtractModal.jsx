@@ -17,8 +17,11 @@ export default function PdfImageExtractModal({
   open,
   fileName,
   images = [],
+  mode = 'embedded', // 'embedded' | 'rasterized'
+  busy = false,
   onConfirm,
   onCancel,
+  onSwitchToRasterized,
 }) {
   const [selected, setSelected] = useState(() => new Set());
   const [includeDuplicates, setIncludeDuplicates] = useState(false);
@@ -91,7 +94,9 @@ export default function PdfImageExtractModal({
       >
         <div className="border-b border-ink-700 p-4">
           <h3 className="text-sm font-semibold text-ink-100">
-            Importar imágenes desde PDF
+            {mode === 'rasterized'
+              ? 'Importar páginas del PDF (a curvas)'
+              : 'Importar imágenes desde PDF'}
           </h3>
           {fileName && (
             <p className="mt-1 truncate text-xs text-ink-400" title={fileName}>
@@ -101,8 +106,22 @@ export default function PdfImageExtractModal({
           <p className="mt-1 text-xs text-ink-400">
             {images.length === 0
               ? 'No se encontraron imágenes embebidas en este PDF.'
-              : `${images.length} imágenes encontradas. Elegí las que querés importar.`}
+              : mode === 'rasterized'
+                ? `${images.length} página${images.length === 1 ? '' : 's'} del PDF rasterizadas a 300dpi. Elegí cuáles importar.`
+                : `${images.length} imágenes encontradas. Elegí las que querés importar.`}
           </p>
+
+          {mode === 'embedded' && onSwitchToRasterized && (
+            <button
+              type="button"
+              onClick={onSwitchToRasterized}
+              disabled={busy}
+              title="Usar cada página completa como una sola imagen, en vez de las imágenes sueltas que están adentro. Útil cuando el PDF tiene capas o fondos."
+              className="mt-2 rounded border border-accent-500/40 bg-accent-500/10 px-2 py-1 text-[11px] text-accent-200 hover:bg-accent-500/20 disabled:opacity-50"
+            >
+              {busy ? 'Procesando…' : '¿Las imágenes no se ven completas? Usar páginas enteras'}
+            </button>
+          )}
 
           {images.length > 0 && (
             <div className="mt-3 flex flex-wrap items-center gap-3">

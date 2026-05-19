@@ -43,18 +43,35 @@ export function computeGrid({
   return { cells, cols, rows };
 }
 
-// Prueba la celda en ambas orientaciones (W x H y H x W) y devuelve la que
-// rinde mas celdas. En empate prefiere la orientacion original (W x H).
-export function computeBestGrid(params) {
+// Prueba la celda en orientacion directa (W x H), rotada (H x W) o auto (la
+// que rinda mas). En auto y empate, prefiere directa.
+// rotateMode: 'auto' (default) | 'direct' | 'rotated'
+// El resultado lleva `orientation: 'direct' | 'rotated'` para que la UI sepa
+// cual se eligio realmente.
+export function computeBestGrid(params, { rotateMode = 'auto' } = {}) {
   const direct = computeGrid(params);
-  if (params.cellW === params.cellH) return direct;
-  const rotated = computeGrid({
+  const square = params.cellW === params.cellH;
+
+  if (rotateMode === 'direct' || square) {
+    return { ...direct, orientation: 'direct' };
+  }
+
+  const rotatedParams = {
     ...params,
     cellW: params.cellH,
     cellH: params.cellW,
-  });
-  if (rotated.cells.length > direct.cells.length) return rotated;
-  return direct;
+  };
+  const rotated = computeGrid(rotatedParams);
+
+  if (rotateMode === 'rotated') {
+    return { ...rotated, orientation: 'rotated' };
+  }
+
+  // rotateMode === 'auto'
+  if (rotated.cells.length > direct.cells.length) {
+    return { ...rotated, orientation: 'rotated' };
+  }
+  return { ...direct, orientation: 'direct' };
 }
 
 // Reparte una lista de imageIds entre celdas objetivo de forma equitativa.
@@ -150,9 +167,15 @@ export function generateCuts(cells, { cutShape = 'rect', cutMarginMm = 0 } = {})
   return cellsToCuts(cells, { cutMarginMm });
 }
 
-export const PAPER_PRESETS = [
-  { id: 'a4', label: 'A4 (210×297)', w: 210, h: 297 },
-  { id: 'a3', label: 'A3 (297×420)', w: 297, h: 420 },
-  { id: 'a4l', label: 'A4 horizontal (297×210)', w: 297, h: 210 },
-  { id: 'a3l', label: 'A3 horizontal (420×297)', w: 420, h: 297 },
+// Presets de hoja built-in (vienen con la app, no se pueden borrar ni editar).
+// Los presets custom del usuario se cargan desde el store y se mergean en la UI.
+export const BUILTIN_PAPER_PRESETS = [
+  { id: 'a4', label: 'A4 (210×297)', w: 210, h: 297, builtin: true },
+  { id: 'a3', label: 'A3 (297×420)', w: 297, h: 420, builtin: true },
+  { id: 'a4l', label: 'A4 horizontal (297×210)', w: 297, h: 210, builtin: true },
+  { id: 'a3l', label: 'A3 horizontal (420×297)', w: 420, h: 297, builtin: true },
 ];
+
+// Alias retro-compat: codigo viejo que importe PAPER_PRESETS sigue funcionando
+// con solo los presets built-in (el modal nuevo recibe la lista mergeada como prop).
+export const PAPER_PRESETS = BUILTIN_PAPER_PRESETS;

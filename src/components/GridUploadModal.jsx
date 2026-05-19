@@ -1,13 +1,29 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { computeBestGrid, PAPER_PRESETS } from '../lib/grid.js';
+import { computeBestGrid, BUILTIN_PAPER_PRESETS } from '../lib/grid.js';
+import GridPreview from './GridPreview.jsx';
 
 function parseNum(v) {
   const n = parseFloat(String(v ?? '').replace(',', '.'));
   return Number.isFinite(n) ? n : null;
 }
 
-export default function GridUploadModal({ open, onConfirm, onCancel }) {
-  const [paperId, setPaperId] = useState('a4');
+// `presets` (opcional) reemplaza la lista de tama&ntilde;os de hoja. Cuando no se
+// provee, caemos a los built-in - asi el modal funciona standalone si alguien lo
+// usa fuera del App.
+export default function GridUploadModal({
+  open,
+  onConfirm,
+  onCancel,
+  presets,
+  onOpenPresetsEditor,
+}) {
+  const paperList = useMemo(
+    () => (Array.isArray(presets) && presets.length > 0 ? presets : BUILTIN_PAPER_PRESETS),
+    [presets],
+  );
+
+  const defaultPaperId = paperList[0]?.id || 'a4';
+  const [paperId, setPaperId] = useState(defaultPaperId);
   const [paperW, setPaperW] = useState('210');
   const [paperH, setPaperH] = useState('297');
   const [cellW, setCellW] = useState('70');
@@ -19,6 +35,7 @@ export default function GridUploadModal({ open, onConfirm, onCancel }) {
   const [markMargin, setMarkMargin] = useState('10');
   const [cutShape, setCutShape] = useState('rect'); // 'rect' | 'circle'
   const [diameter, setDiameter] = useState('60');
+  const [rotateMode, setRotateMode] = useState('auto'); // 'auto' | 'direct' | 'rotated'
   const cellWRef = useRef(null);
 
   useEffect(() => {
@@ -28,13 +45,18 @@ export default function GridUploadModal({ open, onConfirm, onCancel }) {
   }, [open]);
 
   // Cuando elegis un preset, sincroniza paperW/H. "custom" no toca.
+  // Si el preset desaparece de la lista (caso borrado mientras esta abierto el modal),
+  // re-seteamos al primer preset disponible.
   useEffect(() => {
-    const preset = PAPER_PRESETS.find((p) => p.id === paperId);
+    if (paperId === 'custom') return;
+    const preset = paperList.find((p) => p.id === paperId);
     if (preset) {
       setPaperW(String(preset.w));
       setPaperH(String(preset.h));
+    } else {
+      setPaperId(paperList[0]?.id || 'custom');
     }
-  }, [paperId]);
+  }, [paperId, paperList]);
 
   const params = useMemo(() => {
     const d = parseNum(diameter);
@@ -57,20 +79,31 @@ export default function GridUploadModal({ open, onConfirm, onCancel }) {
     && params.cellW > 0 && params.cellH > 0
   );
 
-  const result = useMemo(() => (valid ? computeBestGrid(params) : null), [params, valid]);
+  const result = useMemo(
+    () => (valid ? computeBestGrid(params, { rotateMode }) : null),
+    [params, valid, rotateMode],
+  );
 
-  const cellOrientationUsed = useMemo(() => {
-    if (!result || result.cells.length === 0) return null;
-    const c = result.cells[0];
-    if (Math.abs(c.w - params.cellW) < 0.01 && Math.abs(c.h - params.cellH) < 0.01) return 'directa';
-    return 'rotada 90°';
-  }, [result, params]);
+  // En auto, tambien calculamos la otra orientacion para mostrar el "hubiera entrado X"
+  // como hint cuando el modo manual sale peor.
+  const autoResult = useMemo(
+    () => (valid && rotateMode !== 'auto' ? computeBestGrid(params, { rotateMode: 'auto' }) : null),
+    [params, valid, rotateMode],
+  );
 
   if (!open) return null;
 
   const cutMarginMm = Math.max(0, parseNum(cutMargin) || 0);
   const markMarginMm = Math.max(0, parseNum(markMargin) || 0);
   const willCut = result?.cells?.length > 0 && markMarginMm > 0;
+
+  // Si el usuario forzo una orientacion peor que auto, le avisamos cuanto perdio.
+  const autoHint =
+    autoResult
+    && result
+    && autoResult.cells.length > result.cells.length
+      ? autoResult.cells.length - result.cells.length
+      : 0;
 
   const submit = (e) => {
     e?.preventDefault();
@@ -87,28 +120,85 @@ export default function GridUploadModal({ open, onConfirm, onCancel }) {
     });
   };
 
+  const orientationLabel =
+    result?.orientation === 'rotated' ? 'rotada 90&deg;' : 'directa';
+
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-    >
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <form
         onSubmit={submit}
-        className="w-[28rem] rounded-lg border border-ink-700 bg-ink-900 p-4 shadow-2xl"
+        className="flex max-h-[92vh] w-[64rem] max-w-[95vw] flex-col overflow-hidden rounded-lg border border-ink-700 bg-ink-900 shadow-2xl"
       >
-        <h3 className="text-sm font-semibold text-ink-100">Nueva grilla rápida</h3>
-        <p className="mt-1 text-xs text-ink-400">
-          Hoja en blanco con celdas uniformes. No se guarda como plantilla — al cerrar la app se descarta.
-        </p>
+        <div className="flex flex-1 min-h-0 overflow-hidden">
+          {/* Preview a la izquierda, grande */}
+          <div className="flex min-w-0 flex-1 flex-col items-center justify-center bg-ink-950 p-4">
+            <GridPreview
+              paperW={params.paperW}
+              paperH={params.paperH}
+              cells={result?.cells ?? []}
+              marginX={params.marginX}
+              marginY={params.marginY}
+              cutShape={cutShape}
+              cutMarginMm={cutMarginMm}
+              markMarginMm={markMarginMm}
+              maxW={620}
+              maxH={580}
+            />
+            <div className="mt-3 text-center text-xs">
+              {result && result.cells.length > 0 ? (
+                <>
+                  <span className="text-ink-200">
+                    <span className="font-semibold text-accent-400">
+                      {result.cells.length}
+                    </span>{' '}
+                    celdas&nbsp;
+                    <span className="text-ink-400">
+                      ({result.cols} &times; {result.rows}, celda{' '}
+                      <span dangerouslySetInnerHTML={{ __html: orientationLabel }} />)
+                    </span>
+                  </span>
+                  {autoHint > 0 && (
+                    <div className="mt-0.5 text-[10px] text-amber-400">
+                      En auto entrar&iacute;an {autoHint} celda{autoHint === 1 ? '' : 's'} m&aacute;s.
+                    </div>
+                  )}
+                </>
+              ) : (
+                <span className="text-red-300">
+                  No entra ninguna celda con esos valores.
+                </span>
+              )}
+            </div>
+          </div>
 
-        <div className="mt-4 space-y-3">
+          {/* Formulario a la derecha, scrolleable */}
+          <div className="flex w-[24rem] shrink-0 flex-col overflow-y-auto border-l border-ink-700 p-4">
+            <h3 className="text-sm font-semibold text-ink-100">Nueva grilla r&aacute;pida</h3>
+            <p className="mt-1 text-xs text-ink-400">
+              Hoja en blanco con celdas uniformes. No se guarda como plantilla &mdash;
+              al cerrar la app se descarta.
+            </p>
+
+            <div className="mt-4 space-y-3">
           <label className="block text-xs text-ink-300">
-            <span className="block mb-1">Tamaño de hoja</span>
+            <div className="mb-1 flex items-center justify-between">
+              <span>Tama&ntilde;o de hoja</span>
+              {onOpenPresetsEditor && (
+                <button
+                  type="button"
+                  onClick={onOpenPresetsEditor}
+                  className="text-[10px] text-accent-400 hover:text-accent-300"
+                >
+                  Gestionar hojas...
+                </button>
+              )}
+            </div>
             <select
               value={paperId}
               onChange={(e) => setPaperId(e.target.value)}
               className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
             >
-              {PAPER_PRESETS.map((p) => (
+              {paperList.map((p) => (
                 <option key={p.id} value={p.id}>{p.label}</option>
               ))}
               <option value="custom">Custom (mm)</option>
@@ -159,7 +249,7 @@ export default function GridUploadModal({ open, onConfirm, onCancel }) {
                     : 'text-ink-300 hover:bg-ink-700'
                 }`}
               >
-                Círculo
+                C&iacute;rculo
               </button>
             </div>
           </div>
@@ -186,7 +276,7 @@ export default function GridUploadModal({ open, onConfirm, onCancel }) {
             </div>
           ) : (
             <label className="block text-xs text-ink-300">
-              <span className="block mb-1">Diámetro (mm)</span>
+              <span className="block mb-1">Di&aacute;metro (mm)</span>
               <input
                 ref={cellWRef}
                 value={diameter}
@@ -194,6 +284,54 @@ export default function GridUploadModal({ open, onConfirm, onCancel }) {
                 className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
               />
             </label>
+          )}
+
+          {/* Rotacion - solo si la celda no es cuadrada (con celda cuadrada
+              no hay diferencia, asi que ocultamos el control para no confundir) */}
+          {cutShape === 'rect' && params.cellW !== params.cellH && (
+            <div>
+              <span className="block mb-1 text-xs text-ink-300">
+                Rotaci&oacute;n de celda
+              </span>
+              <div className="flex gap-1 rounded border border-ink-700 bg-ink-800 p-0.5 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setRotateMode('auto')}
+                  title="Elige automaticamente la orientacion que rinda mas celdas."
+                  className={`flex-1 rounded px-2 py-1 ${
+                    rotateMode === 'auto'
+                      ? 'bg-accent-600 text-white'
+                      : 'text-ink-300 hover:bg-ink-700'
+                  }`}
+                >
+                  Auto
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRotateMode('direct')}
+                  title="Celda en orientacion original (ancho x alto)."
+                  className={`flex-1 rounded px-2 py-1 ${
+                    rotateMode === 'direct'
+                      ? 'bg-accent-600 text-white'
+                      : 'text-ink-300 hover:bg-ink-700'
+                  }`}
+                >
+                  Directa
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRotateMode('rotated')}
+                  title="Celda rotada 90 grados (alto x ancho)."
+                  className={`flex-1 rounded px-2 py-1 ${
+                    rotateMode === 'rotated'
+                      ? 'bg-accent-600 text-white'
+                      : 'text-ink-300 hover:bg-ink-700'
+                  }`}
+                >
+                  Rotada 90&deg;
+                </button>
+              </div>
+            </div>
           )}
 
           <div className="grid grid-cols-3 gap-2 text-xs text-ink-300">
@@ -248,17 +386,9 @@ export default function GridUploadModal({ open, onConfirm, onCancel }) {
           </div>
         </div>
 
-        <div className="mt-4 rounded border border-ink-700 bg-ink-800 p-3 text-xs">
-          {result && result.cells.length > 0 ? (
-            <>
-              <p className="text-ink-200">
-                <span className="font-semibold text-accent-400">{result.cells.length}</span>{' '}
-                celdas por hoja{' '}
-                <span className="text-ink-400">
-                  ({result.cols} × {result.rows}, celda {cellOrientationUsed})
-                </span>
-              </p>
-              <p className="mt-1 text-ink-400">
+            {/* Resumen secundario debajo de las opciones */}
+            {result && result.cells.length > 0 && (
+              <div className="mt-3 rounded border border-ink-700 bg-ink-800 p-2 text-[11px] text-ink-400">
                 {willCut ? (
                   <>
                     Cortes{cutShape === 'circle' ? ' circulares' : ''}:{' '}
@@ -272,16 +402,13 @@ export default function GridUploadModal({ open, onConfirm, onCancel }) {
                 ) : (
                   <>Sin cortes (margen de marcas en 0)</>
                 )}
-              </p>
-            </>
-          ) : (
-            <p className="text-red-300">
-              No entra ninguna celda con esos valores. Reducí el tamaño de celda o el margen.
-            </p>
-          )}
+              </div>
+            )}
+          </div>
         </div>
 
-        <div className="mt-5 flex justify-end gap-2">
+        {/* Footer fijo */}
+        <div className="flex justify-end gap-2 border-t border-ink-700 px-4 py-3">
           <button
             type="button"
             onClick={() => onCancel?.()}
