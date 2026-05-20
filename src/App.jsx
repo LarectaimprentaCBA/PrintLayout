@@ -240,11 +240,19 @@ export default function App() {
   }, [layout.pageCount, currentPage]);
 
   // Atajos de teclado: Delete/Backspace borra la celda seleccionada.
+  // Guards reforzados: chequeamos closest() del target y tambien
+  // document.activeElement, porque cuando un input controlado se vacia React
+  // puede disparar eventos donde target es el input pero activeElement ya no,
+  // o viceversa. Sin ambas guards, vaciar un input con Backspace podia derivar
+  // en clearCell() y comportamientos raros con el foco.
   useEffect(() => {
     if (layout.selectedCell === null || !selected) return;
+    const SELECTOR = 'input, textarea, select, [contenteditable="true"]';
     function onKey(e) {
-      const tag = e.target?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      const t = e.target;
+      if (t && typeof t.closest === 'function' && t.closest(SELECTOR)) return;
+      const active = document.activeElement;
+      if (active && typeof active.matches === 'function' && active.matches(SELECTOR)) return;
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
         layout.clearCell(layout.selectedCell);
