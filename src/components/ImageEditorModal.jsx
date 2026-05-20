@@ -43,6 +43,18 @@ export default function ImageEditorModal({
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
+  // Offset en mm para recentrar visualmente la imagen dentro del target.
+  // Lo aplica el pipeline de bleed (extendWithMethod) y se controla con
+  // click-drag sobre el preview cuando el zoom esta en 1x.
+  const [imageOffsetMm, setImageOffsetMm] = useState({ x: 0, y: 0 });
+  const [isDraggingImage, setIsDraggingImage] = useState(false);
+  const imageDragStartRef = useRef(null);
+  // Offset que ya esta bakeado en el previewUrl actual. Mientras se arrastra,
+  // imageOffsetMm avanza pero el preview todavia no se regenero — la diferencia
+  // entre ambos se aplica como translate CSS en vivo al <img> para feedback
+  // instantaneo. Cuando el debounce regenera el preview con el offset nuevo,
+  // este ref se iguala y el translate vuelve a 0 sin salto visual.
+  const previewOffsetMmRef = useRef({ x: 0, y: 0 });
   const panStartRef = useRef(null);
   const debounceRef = useRef(null);
   const safetyDebounceRef = useRef(null);
@@ -161,6 +173,8 @@ export default function ImageEditorModal({
     setShowGuides(true);
     setZoom(1);
     setPan({ x: 0, y: 0 });
+    setImageOffsetMm({ x: 0, y: 0 });
+    previewOffsetMmRef.current = { x: 0, y: 0 };
   }, [open, image?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const aw = parseFloat(actualW) || 0;
@@ -192,9 +206,14 @@ export default function ImageEditorModal({
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
       setBusy(true);
+      // Capturamos el offset del momento del dispatch para anotar despues que
+      // version del offset corresponde al dataUrl generado. Asi el translate
+      // CSS en vivo sabe contra que valor calcular el delta.
+      const usedOffset = { x: imageOffsetMm.x, y: imageOffsetMm.y };
       try {
         const cfg = methodConfig({
           method, stripPx, color, shrinkPercent, shrinkFillMode, centerRectMm, cropPercent,
+          offsetMm: usedOffset,
         });
         const out = await extendWithMethod(
           image.dataUrl,
@@ -202,6 +221,10 @@ export default function ImageEditorModal({
           { w: tw, h: th },
           cfg,
         );
+        // Ref antes que setState: cuando React procesa el re-render disparado
+        // por setPreviewUrl, el render leera el ref ya actualizado y no
+        // aplicara translate residual (salto visual).
+        previewOffsetMmRef.current = usedOffset;
         setPreviewUrl(out.dataUrl);
       } catch (err) {
         console.error('preview fallo:', err);
@@ -210,7 +233,7 @@ export default function ImageEditorModal({
       }
     }, 450);
     return () => debounceRef.current && clearTimeout(debounceRef.current);
-  }, [open, image, aw, ah, tw, th, method, stripPx, color, shrinkPercent, shrinkFillMode, centerRectMm, cropPercent]);
+  }, [open, image, aw, ah, tw, th, method, stripPx, color, shrinkPercent, shrinkFillMode, centerRectMm, cropPercent, imageOffsetMm]);
 
   if (!open || !image) return null;
 
@@ -220,6 +243,7 @@ export default function ImageEditorModal({
     try {
       const cfg = methodConfig({
         method, stripPx, color, shrinkPercent, shrinkFillMode, centerRectMm, cropPercent,
+        offsetMm: imageOffsetMm,
       });
       const out = await extendWithMethod(
         image.dataUrl,
@@ -296,11 +320,32 @@ export default function ImageEditorModal({
     });
   };
 
+  // Decide si el drag mueve la imagen (recentrar) o panea el preview zoomeado.
+  // - zoom > 1: pan visual (existente).
+  // - zoom == 1 y metodo no es 9-slice: mueve el contenido (imageOffsetMm).
+  // - pickingColor o draggingHandle (9-slice corners): no hace nada.
+  const canDragImage = method !== 'nineSlice';
   const onPanStart = (e) => {
     if (pickingColor || draggingHandle) return;
-    if (zoom <= 1.001) return; // sin zoom no tiene sentido panear
-    setIsPanning(true);
-    panStartRef.current = { x: e.clientX, y: e.clientY, pan: { ...pan } };
+    if (zoom > 1.001) {
+      setIsPanning(true);
+      panStartRef.current = { x: e.clientX, y: e.clientY, pan: { ...pan } };
+      return;
+    }
+    if (canDragImage) {
+      setIsDraggingImage(true);
+      const rect = previewBoxRef.current?.getBoundingClientRect();
+      imageDragStartRef.current = {
+        x: e.clientX,
+        y: e.clientY,
+        offset: { ...imageOffsetMm },
+        // mmPerPx: el preview transformado mide rect.width/height px pero
+        // representa tw/th mm. Si zoom != 1 ya cortamos arriba, asi que el
+        // factor es 1:1 sin compensacion.
+        mmPerPxX: rect && rect.width > 0 ? tw / rect.width : 0,
+        mmPerPxY: rect && rect.height > 0 ? th / rect.height : 0,
+      };
+    }
   };
 
   useEffect(() => {
@@ -325,6 +370,30 @@ export default function ImageEditorModal({
       window.removeEventListener('pointerup', onUp);
     };
   }, [isPanning]);
+
+  useEffect(() => {
+    if (!isDraggingImage) return;
+    const onMove = (e) => {
+      const st = imageDragStartRef.current;
+      if (!st) return;
+      const dx = e.clientX - st.x;
+      const dy = e.clientY - st.y;
+      setImageOffsetMm({
+        x: st.offset.x + dx * st.mmPerPxX,
+        y: st.offset.y + dy * st.mmPerPxY,
+      });
+    };
+    const onUp = () => {
+      setIsDraggingImage(false);
+      imageDragStartRef.current = null;
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+  }, [isDraggingImage]);
 
   // Eyedropper: click sobre la imagen del preview samplea el pixel.
   const onPreviewClick = async (e) => {
@@ -479,7 +548,11 @@ export default function ImageEditorModal({
                       ? 'grabbing'
                       : zoom > 1.001
                         ? 'grab'
-                        : 'default',
+                        : isDraggingImage
+                          ? 'grabbing'
+                          : canDragImage
+                            ? 'move'
+                            : 'default',
                 }}
               >
                 <div
@@ -491,12 +564,29 @@ export default function ImageEditorModal({
                     transformOrigin: 'center',
                   }}
                 >
-                <img
-                  src={previewUrl}
-                  alt="Preview"
-                  className="h-full w-full object-fill"
-                  draggable={false}
-                />
+                {(() => {
+                  // Translate en vivo: si imageOffsetMm avanzo desde el ultimo
+                  // preview bakeado, mostramos la imagen movida sin esperar al
+                  // debounce. Cuando se regenera, el ref se iguala y este
+                  // translate vuelve a 0 — sin salto.
+                  const dxMm = imageOffsetMm.x - previewOffsetMmRef.current.x;
+                  const dyMm = imageOffsetMm.y - previewOffsetMmRef.current.y;
+                  const liveDx = (dxMm / tw) * frameW;
+                  const liveDy = (dyMm / th) * frameH;
+                  return (
+                    <img
+                      src={previewUrl}
+                      alt="Preview"
+                      className="h-full w-full object-fill"
+                      draggable={false}
+                      style={{
+                        transform: liveDx || liveDy
+                          ? `translate(${liveDx}px, ${liveDy}px)`
+                          : undefined,
+                      }}
+                    />
+                  );
+                })()}
 
                 {showGuides && (
                   <>
@@ -537,7 +627,7 @@ export default function ImageEditorModal({
                           ry={circleRadiusMm}
                           fill="none"
                           stroke="#ef4444"
-                          strokeWidth={0.4}
+                          strokeWidth={2}
                           vectorEffect="non-scaling-stroke"
                         />
                       </svg>
@@ -569,8 +659,8 @@ export default function ImageEditorModal({
                           ry={safetyCircleRadiusMm}
                           fill="none"
                           stroke="#4ade80"
-                          strokeWidth={0.25}
-                          strokeDasharray="0.8 0.8"
+                          strokeWidth={1.25}
+                          strokeDasharray="4 3"
                           vectorEffect="non-scaling-stroke"
                         />
                       </svg>
@@ -772,6 +862,33 @@ export default function ImageEditorModal({
                 </label>
               </div>
             </div>
+
+            {/* Posicion */}
+            {canDragImage && (
+              <div>
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-semibold uppercase tracking-wider text-ink-300">
+                    Posición
+                  </h4>
+                  <button
+                    onClick={() => setImageOffsetMm({ x: 0, y: 0 })}
+                    disabled={imageOffsetMm.x === 0 && imageOffsetMm.y === 0}
+                    className="rounded border border-ink-700 px-2 py-0.5 text-[10px] text-ink-200 hover:bg-ink-700 disabled:opacity-40"
+                    title="Volver al centro del target"
+                  >
+                    Centrar
+                  </button>
+                </div>
+                <p className="mt-0.5 text-[10px] text-ink-500">
+                  Arrastrá la imagen sobre el preview para reposicionarla. El bleed rellena alrededor.
+                </p>
+                {(imageOffsetMm.x !== 0 || imageOffsetMm.y !== 0) && (
+                  <p className="mt-1 text-[10px] text-ink-400">
+                    Offset: {imageOffsetMm.x.toFixed(1)} × {imageOffsetMm.y.toFixed(1)} mm
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Metodo */}
             <div>
@@ -998,12 +1115,12 @@ export default function ImageEditorModal({
   );
 }
 
-function methodConfig({ method, stripPx, color, shrinkPercent, shrinkFillMode, centerRectMm, cropPercent }) {
+function methodConfig({ method, stripPx, color, shrinkPercent, shrinkFillMode, centerRectMm, cropPercent, offsetMm }) {
   switch (method) {
     case 'replicate':
-      return { method, stripPx };
+      return { method, stripPx, offsetMm };
     case 'color':
-      return { method, color };
+      return { method, color, offsetMm };
     case 'nineSlice':
       return { method, centerRectMm };
     case 'shrinkBleed':
@@ -1012,11 +1129,12 @@ function methodConfig({ method, stripPx, color, shrinkPercent, shrinkFillMode, c
         shrinkPercent,
         fillMode: shrinkFillMode,
         fillOptions: shrinkFillMode === 'color' ? { color } : { stripPx },
+        offsetMm,
       };
     case 'crop':
-      return { method, cropPercent };
+      return { method, cropPercent, offsetMm };
     case 'mirror':
     default:
-      return { method: 'mirror' };
+      return { method: 'mirror', offsetMm };
   }
 }

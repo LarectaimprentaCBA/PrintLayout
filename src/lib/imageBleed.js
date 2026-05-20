@@ -34,7 +34,7 @@ function loadImage(dataUrl) {
 // Si la imagen es mas GRANDE que el target: se escala hacia abajo (preserva
 // aspect) para que entre adentro del target. drawW/drawH < sw/sh; el bleed
 // rellena el espacio restante igual que en el caso chico.
-function computeLayout(img, srcSizeMm, targetSizeMm) {
+function computeLayout(img, srcSizeMm, targetSizeMm, offsetMm) {
   const sw = img.naturalWidth;
   const sh = img.naturalHeight;
   if (!Number.isFinite(srcSizeMm?.w) || !Number.isFinite(srcSizeMm?.h)
@@ -64,8 +64,14 @@ function computeLayout(img, srcSizeMm, targetSizeMm) {
   const canvasH = Math.max(1, Math.round(targetSizeMm.h * pxPerMm));
   const drawW = sw;
   const drawH = sh;
-  const drawX = Math.round((canvasW - drawW) / 2);
-  const drawY = Math.round((canvasH - drawH) / 2);
+  // Offset opcional en mm para reposicionar la imagen dentro del target
+  // (centrarla visualmente cuando viene descentrada de fabrica). El bleed
+  // de cada metodo (mirror/replicate/color) rellena el espacio que queda
+  // libre alrededor de la imagen desplazada.
+  const offXmm = Number.isFinite(offsetMm?.x) ? offsetMm.x : 0;
+  const offYmm = Number.isFinite(offsetMm?.y) ? offsetMm.y : 0;
+  const drawX = Math.round((canvasW - drawW) / 2 + offXmm * pxPerMm);
+  const drawY = Math.round((canvasH - drawH) / 2 + offYmm * pxPerMm);
   return { sw, sh, pxPerMm, canvasW, canvasH, drawW, drawH, drawX, drawY, fitScale };
 }
 
@@ -98,10 +104,10 @@ function output(canvas, targetSizeMm) {
 // flips apropiados; los excesos quedan fuera del canvas y se clippean. Es el
 // metodo mas robusto para fondos con textura natural.
 // ----------------------------------------------------------------------------
-export async function extendMirror(dataUrl, srcSizeMm, targetSizeMm) {
+export async function extendMirror(dataUrl, srcSizeMm, targetSizeMm, { offsetMm } = {}) {
   const img = await loadImage(dataUrl);
   const { canvasW, canvasH, drawW, drawH, drawX, drawY } =
-    computeLayout(img, srcSizeMm, targetSizeMm);
+    computeLayout(img, srcSizeMm, targetSizeMm, offsetMm);
   const { canvas, ctx } = makeCanvas(canvasW, canvasH);
 
   // sx/sy: -1 = flip en ese eje, 1 = identidad.
@@ -134,11 +140,11 @@ export async function extendMirror(dataUrl, srcSizeMm, targetSizeMm) {
 // preserva variacion local del color/textura.
 // ----------------------------------------------------------------------------
 export async function extendEdgeReplicate(
-  dataUrl, srcSizeMm, targetSizeMm, { stripPx = 8 } = {},
+  dataUrl, srcSizeMm, targetSizeMm, { stripPx = 8, offsetMm } = {},
 ) {
   const img = await loadImage(dataUrl);
   const { sw, sh, canvasW, canvasH, drawW, drawH, drawX, drawY } =
-    computeLayout(img, srcSizeMm, targetSizeMm);
+    computeLayout(img, srcSizeMm, targetSizeMm, offsetMm);
   const { canvas, ctx } = makeCanvas(canvasW, canvasH);
 
   const strip = Math.max(1, Math.min(stripPx, Math.floor(Math.min(sw, sh) / 2)));
@@ -183,11 +189,11 @@ export async function extendEdgeReplicate(
 // arriba. color es un hex string '#rrggbb' o cualquier valor valido CSS.
 // ----------------------------------------------------------------------------
 export async function extendSolidColor(
-  dataUrl, srcSizeMm, targetSizeMm, { color = '#ffffff' } = {},
+  dataUrl, srcSizeMm, targetSizeMm, { color = '#ffffff', offsetMm } = {},
 ) {
   const img = await loadImage(dataUrl);
   const { canvasW, canvasH, drawW, drawH, drawX, drawY } =
-    computeLayout(img, srcSizeMm, targetSizeMm);
+    computeLayout(img, srcSizeMm, targetSizeMm, offsetMm);
   const { canvas, ctx } = makeCanvas(canvasW, canvasH);
   ctx.fillStyle = color;
   ctx.fillRect(0, 0, canvasW, canvasH);
@@ -318,7 +324,7 @@ export async function extendNineSlice(
 // ----------------------------------------------------------------------------
 export async function extendShrinkAndBleed(
   dataUrl, srcSizeMm, targetSizeMm,
-  { shrinkPercent = 90, fillMode = 'mirror', fillOptions = {} } = {},
+  { shrinkPercent = 90, fillMode = 'mirror', fillOptions = {}, offsetMm } = {},
 ) {
   const img = await loadImage(dataUrl);
   const sw = img.naturalWidth;
@@ -343,11 +349,12 @@ export async function extendShrinkAndBleed(
   // porque contentMm respeta el aspect del file). Asi el bitmap original se
   // usa a su resolucion completa, sin perder calidad.
   const newSrcMm = { w: contentWmm, h: contentHmm };
+  const fillOpts = { ...fillOptions, offsetMm };
   switch (fillMode) {
     case 'replicate':
-      return extendEdgeReplicate(dataUrl, newSrcMm, targetSizeMm, fillOptions);
+      return extendEdgeReplicate(dataUrl, newSrcMm, targetSizeMm, fillOpts);
     case 'color':
-      return extendSolidColor(dataUrl, newSrcMm, targetSizeMm, fillOptions);
+      return extendSolidColor(dataUrl, newSrcMm, targetSizeMm, fillOpts);
     case 'nineSlice': {
       const centerRectMm = fillOptions.centerRectMm ?? {
         x: contentWmm * 0.2,
@@ -359,7 +366,7 @@ export async function extendShrinkAndBleed(
     }
     case 'mirror':
     default:
-      return extendMirror(dataUrl, newSrcMm, targetSizeMm);
+      return extendMirror(dataUrl, newSrcMm, targetSizeMm, { offsetMm });
   }
 }
 
@@ -372,7 +379,7 @@ export async function extendShrinkAndBleed(
 // cover). cropPercent > 0 escala extra hacia adentro.
 // ----------------------------------------------------------------------------
 export async function extendCrop(
-  dataUrl, srcSizeMm, targetSizeMm, { cropPercent = 0 } = {},
+  dataUrl, srcSizeMm, targetSizeMm, { cropPercent = 0, offsetMm } = {},
 ) {
   const img = await loadImage(dataUrl);
   const sw = img.naturalWidth;
@@ -389,8 +396,10 @@ export async function extendCrop(
   const drawScale = coverScale * zoom;
   const drawW = sw * drawScale;
   const drawH = sh * drawScale;
-  const drawX = (canvasW - drawW) / 2;
-  const drawY = (canvasH - drawH) / 2;
+  const offXmm = Number.isFinite(offsetMm?.x) ? offsetMm.x : 0;
+  const offYmm = Number.isFinite(offsetMm?.y) ? offsetMm.y : 0;
+  const drawX = (canvasW - drawW) / 2 + offXmm * pxPerMm;
+  const drawY = (canvasH - drawH) / 2 + offYmm * pxPerMm;
   ctx.drawImage(img, drawX, drawY, drawW, drawH);
   return output(canvas, targetSizeMm);
 }
@@ -403,7 +412,7 @@ export async function extendWithMethod(
 ) {
   const { method, ...opts } = methodConfig ?? {};
   switch (method) {
-    case 'mirror': return extendMirror(dataUrl, srcSizeMm, targetSizeMm);
+    case 'mirror': return extendMirror(dataUrl, srcSizeMm, targetSizeMm, opts);
     case 'replicate': return extendEdgeReplicate(dataUrl, srcSizeMm, targetSizeMm, opts);
     case 'color': return extendSolidColor(dataUrl, srcSizeMm, targetSizeMm, opts);
     case 'nineSlice': return extendNineSlice(dataUrl, srcSizeMm, targetSizeMm, opts);
@@ -411,6 +420,6 @@ export async function extendWithMethod(
     case 'crop': return extendCrop(dataUrl, srcSizeMm, targetSizeMm, opts);
     default:
       // Default = mirror (es el mas seguro para fotos reales).
-      return extendMirror(dataUrl, srcSizeMm, targetSizeMm);
+      return extendMirror(dataUrl, srcSizeMm, targetSizeMm, opts);
   }
 }

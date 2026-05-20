@@ -50,7 +50,7 @@ export function useLayoutEditor(template, face = 'front') {
   const pageCount = isMultiPage
     ? fixedPageCount(template)
     : (cellsPerPage > 0
-      ? Math.max(minPages, assignmentsFront.length / cellsPerPage)
+      ? Math.max(minPages, Math.ceil(assignmentsFront.length / cellsPerPage))
       : 0);
 
   const imageMap = useMemo(() => {
@@ -75,6 +75,13 @@ export function useLayoutEditor(template, face = 'front') {
         want = totalCellsCount;
       } else {
         want = Math.max(targetLen, cellsPerPage, minCellsFloor);
+        // En legacy, la longitud debe ser multiplo de cellsPerPage: cada
+        // "hoja" virtual ocupa cellsPerPage entradas. Si un caller pidio un
+        // targetLen no alineado (p.ej. set en indice global > arr.length),
+        // redondear arriba evita pageCount fraccional.
+        if (cellsPerPage > 0 && want % cellsPerPage !== 0) {
+          want = Math.ceil(want / cellsPerPage) * cellsPerPage;
+        }
       }
       const padded = (arr) =>
         arr.length >= want
