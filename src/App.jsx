@@ -17,6 +17,7 @@ import GridUploadModal from './components/GridUploadModal.jsx';
 import ImagePackModal from './components/ImagePackModal.jsx';
 import ImageCountPackModal from './components/ImageCountPackModal.jsx';
 import ImageEditorModal from './components/ImageEditorModal.jsx';
+import ImageCropModal from './components/ImageCropModal.jsx';
 import SaveTemplateModal from './components/SaveTemplateModal.jsx';
 import PaperPresetsModal from './components/PaperPresetsModal.jsx';
 import { useTemplates } from './hooks/useTemplates.js';
@@ -215,6 +216,8 @@ export default function App() {
   const [gridModalOpen, setGridModalOpen] = useState(false);
   // Imagen abierta en el editor.
   const [editingImageId, setEditingImageId] = useState(null);
+  // Imagen abierta en el modal de recorte manual.
+  const [croppingImageId, setCroppingImageId] = useState(null);
   // Extraccion de imagenes desde PDF.
   const [extractingPdf, setExtractingPdf] = useState(false);
   const [pdfExtract, setPdfExtract] = useState(null); // { fileName, tmpDir, images }
@@ -1232,6 +1235,7 @@ export default function App() {
             onAutoZoom={handleAutoZoom}
             onRotate={handleRotate}
             onEditImage={(imageId) => setEditingImageId(imageId)}
+            onCropImage={(imageId) => setCroppingImageId(imageId)}
             onCycleFit={(imageId, value) =>
               layout.updateImage(imageId, { fitOverride: value })
             }
@@ -1338,6 +1342,21 @@ export default function App() {
             if (file) handleUploadPdf(file);
           }}
         />
+
+        {(() => {
+          const croppingImage = croppingImageId
+            ? layout.imageMap.get(croppingImageId)
+            : null;
+          if (!croppingImage) return null;
+          return (
+            <ImageCropModal
+              open
+              image={croppingImage}
+              onApply={(updates) => layout.updateImage(croppingImageId, updates)}
+              onClose={() => setCroppingImageId(null)}
+            />
+          );
+        })()}
 
         {(() => {
           const editingImage = editingImageId

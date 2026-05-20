@@ -103,6 +103,7 @@ export default function PropertiesSidebar({
   onAutoZoom,
   onRotate,
   onEditImage,
+  onCropImage,
   onCycleFit,
   onSelectImage,
 }) {
@@ -300,6 +301,7 @@ export default function PropertiesSidebar({
                 onAutoZoom={onAutoZoom}
                 onRotate={onRotate}
                 onEditImage={onEditImage}
+                onCropImage={onCropImage}
                 onCycleFit={onCycleFit}
               />
             ))}

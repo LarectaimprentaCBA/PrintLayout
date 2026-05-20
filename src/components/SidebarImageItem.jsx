@@ -23,6 +23,7 @@ export default function SidebarImageItem({
   onCycleFit,
   onRotate,
   onEditImage,
+  onCropImage,
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `image:${image.id}`,
@@ -112,6 +113,27 @@ export default function SidebarImageItem({
             strokeWidth="1.5"
           >
             <path d="M11 2l3 3-9 9H2v-3z" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        <button
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onCropImage?.(image.id);
+          }}
+          className="rounded p-1 text-ink-300 hover:bg-ink-700 hover:text-accent-500"
+          title="Recortar imagen"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 16 16"
+            className="h-3.5 w-3.5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+          >
+            <path d="M4 1v10a1 1 0 0 0 1 1h10" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M1 4h10a1 1 0 0 1 1 1v10" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </button>
         <button
