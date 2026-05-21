@@ -412,6 +412,7 @@ export default function App() {
   //   Ctrl+S = guardar, Ctrl+Shift+S = guardar como, Ctrl+O = abrir lista
   //   Ctrl+T = nueva tab vacia, Ctrl+W = cerrar tab activa
   //   Ctrl+Tab = siguiente tab, Ctrl+Shift+Tab = anterior
+  //   Ctrl+1..9 = ir al tab N (1-indexed)
   // Guard: no disparar si el usuario esta tipeando en un input.
   useEffect(() => {
     const SELECTOR = 'input, textarea, select, [contenteditable="true"]';
@@ -419,7 +420,8 @@ export default function App() {
       if (!(e.ctrlKey || e.metaKey)) return;
       const key = e.key.toLowerCase();
       const isTab = e.key === 'Tab';
-      if (!isTab && key !== 's' && key !== 'o' && key !== 't' && key !== 'w') return;
+      const isDigit = /^[1-9]$/.test(e.key);
+      if (!isTab && !isDigit && key !== 's' && key !== 'o' && key !== 't' && key !== 'w') return;
       const t = e.target;
       if (t && typeof t.closest === 'function' && t.closest(SELECTOR)) return;
       const active = document.activeElement;
@@ -445,6 +447,10 @@ export default function App() {
         const delta = e.shiftKey ? -1 : 1;
         const nextIdx = (idx + delta + tabs.length) % tabs.length;
         switchTab(tabs[nextIdx].id);
+      } else if (isDigit) {
+        e.preventDefault();
+        const idx = Number(e.key) - 1;
+        if (idx >= 0 && idx < tabs.length) switchTab(tabs[idx].id);
       }
     }
     window.addEventListener('keydown', onKey);
@@ -1554,6 +1560,13 @@ export default function App() {
           onClose={requestCloseTab}
           onRename={(id, name) => updateTab(id, { name })}
           onNew={() => setNewTabModalOpen(true)}
+          onCloseOthers={(keepId) => {
+            const ids = tabs.filter((t) => t.id !== keepId).map((t) => t.id);
+            ids.forEach((id) => requestCloseTab(id));
+          }}
+          onCloseAll={() => {
+            tabs.map((t) => t.id).forEach((id) => requestCloseTab(id));
+          }}
         />
         <div className="flex flex-1 overflow-hidden">
           <LayoutCanvas

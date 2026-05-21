@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 
 // Tab bar estilo Corel/Photoshop. Muestra los tabs abiertos, marca el activo,
-// indicador ● ambar si dirty, X para cerrar (con confirm en App.jsx si dirty),
-// doble click en la pestana para renombrar inline. Boton "+" al final crea
-// una tab vacia.
+// indicador * (asterisco) si dirty, X para cerrar (con confirm en App.jsx si
+// dirty), doble click en la pestana para renombrar inline, right-click para
+// menu contextual. Boton "+" al final crea una tab vacia (en App.jsx esta
+// cableado para abrir el modal "Nuevo trabajo").
 //
 // Props:
 //   tabs: Array<TabState>
 //   activeTabId: string
 //   onSwitch(id), onClose(id), onRename(id, newName), onNew()
+//   onDuplicate(id), onSaveAs(id), onCloseOthers(id), onCloseAll()
 export default function TabsBar({
   tabs,
   activeTabId,
@@ -16,14 +18,43 @@ export default function TabsBar({
   onClose,
   onRename,
   onNew,
+  onDuplicate,
+  onSaveAs,
+  onCloseOthers,
+  onCloseAll,
 }) {
   const [renamingId, setRenamingId] = useState(null);
   const [draftName, setDraftName] = useState('');
+  const [contextMenu, setContextMenu] = useState(null); // { id, x, y } | null
   const inputRef = useRef(null);
+  const scrollRef = useRef(null);
 
   useEffect(() => {
     if (renamingId) setTimeout(() => inputRef.current?.select(), 0);
   }, [renamingId]);
+
+  // Cerrar el menu al click afuera o Escape.
+  useEffect(() => {
+    if (!contextMenu) return undefined;
+    const close = () => setContextMenu(null);
+    const onKey = (e) => { if (e.key === 'Escape') setContextMenu(null); };
+    window.addEventListener('click', close);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [contextMenu]);
+
+  // Scroll horizontal con la rueda del mouse (cualquier eje). Asi con muchas
+  // tabs alcanza con scrollear sin tener que agarrar la barra inferior.
+  const handleWheel = (e) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const delta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
+    if (delta === 0) return;
+    el.scrollLeft += delta;
+  };
 
   const startRename = (tab) => {
     setRenamingId(tab.id);
@@ -41,9 +72,21 @@ export default function TabsBar({
     setRenamingId(null);
   };
 
+  const openContextMenu = (e, tab) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ id: tab.id, x: e.clientX, y: e.clientY });
+  };
+
+  const ctxTab = contextMenu ? tabs.find((t) => t.id === contextMenu.id) : null;
+
   return (
     <div className="flex h-9 shrink-0 items-end border-b border-ink-700 bg-ink-950 pl-2">
-      <div className="flex flex-1 items-end gap-0.5 overflow-x-auto overflow-y-hidden">
+      <div
+        ref={scrollRef}
+        onWheel={handleWheel}
+        className="flex flex-1 items-end gap-0.5 overflow-x-auto overflow-y-hidden pr-2"
+      >
         {tabs.map((tab) => {
           const isActive = tab.id === activeTabId;
           const isRenaming = renamingId === tab.id;
@@ -52,6 +95,7 @@ export default function TabsBar({
               key={tab.id}
               onClick={() => !isRenaming && onSwitch?.(tab.id)}
               onDoubleClick={() => !isRenaming && startRename(tab)}
+              onContextMenu={(e) => openContextMenu(e, tab)}
               onMouseDown={(e) => {
                 // Middle-click cierra la tab (convencion browser/IDE).
                 if (e.button === 1) {
@@ -67,7 +111,13 @@ export default function TabsBar({
               }`}
             >
               {tab.isDirty && (
-                <span className="shrink-0 text-amber-300" aria-hidden>●</span>
+                <span
+                  className="shrink-0 leading-none text-amber-300/80"
+                  aria-hidden
+                  title="Sin guardar"
+                >
+                  *
+                </span>
               )}
               {isRenaming ? (
                 <input
@@ -115,6 +165,54 @@ export default function TabsBar({
           </svg>
         </button>
       </div>
+
+      {contextMenu && ctxTab && (
+        <div
+          className="fixed z-50 min-w-[180px] overflow-hidden rounded-md border border-ink-700 bg-ink-900 py-1 text-xs text-ink-200 shadow-2xl"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <MenuItem onClick={() => { setContextMenu(null); startRename(ctxTab); }}>
+            Renombrar
+          </MenuItem>
+          {onDuplicate && (
+            <MenuItem onClick={() => { setContextMenu(null); onDuplicate(ctxTab.id); }}>
+              Duplicar
+            </MenuItem>
+          )}
+          {onSaveAs && (
+            <MenuItem onClick={() => { setContextMenu(null); onSaveAs(ctxTab.id); }}>
+              Guardar como…
+            </MenuItem>
+          )}
+          <div className="my-1 h-px bg-ink-700" />
+          <MenuItem onClick={() => { setContextMenu(null); onClose?.(ctxTab.id); }}>
+            Cerrar
+          </MenuItem>
+          {onCloseOthers && tabs.length > 1 && (
+            <MenuItem onClick={() => { setContextMenu(null); onCloseOthers(ctxTab.id); }}>
+              Cerrar otras
+            </MenuItem>
+          )}
+          {onCloseAll && tabs.length > 1 && (
+            <MenuItem onClick={() => { setContextMenu(null); onCloseAll(); }}>
+              Cerrar todas
+            </MenuItem>
+          )}
+        </div>
+      )}
     </div>
+  );
+}
+
+function MenuItem({ children, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="block w-full px-3 py-1.5 text-left hover:bg-ink-800 hover:text-ink-100"
+    >
+      {children}
+    </button>
   );
 }
