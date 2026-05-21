@@ -222,6 +222,10 @@ export default function TopBar({
   imagesLoaded,
   hasOccupiedCells,
   onDistributeEvenly,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo,
 }) {
   const fitDisabled = !onLayoutFitChange;
   const pdfBusy = exporting || printing;
@@ -253,6 +257,46 @@ export default function TopBar({
         <div className="flex items-center gap-2">
           <div className="h-5 w-5 rounded bg-accent-500" />
           <h1 className="text-sm font-semibold tracking-wide">PrintLayout</h1>
+          <div className="ml-3 flex items-center gap-0.5">
+            <button
+              type="button"
+              onClick={onUndo}
+              disabled={!canUndo}
+              title="Deshacer (Ctrl+Z)"
+              className="flex h-7 w-7 items-center justify-center rounded-md text-ink-200 hover:bg-ink-800 disabled:opacity-30 disabled:hover:bg-transparent"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 16 16"
+                className="h-4 w-4"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.75"
+              >
+                <path d="M3 7h7a3.5 3.5 0 0 1 0 7H6" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M6 4L3 7l3 3" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              onClick={onRedo}
+              disabled={!canRedo}
+              title="Rehacer (Ctrl+Y)"
+              className="flex h-7 w-7 items-center justify-center rounded-md text-ink-200 hover:bg-ink-800 disabled:opacity-30 disabled:hover:bg-transparent"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 16 16"
+                className="h-4 w-4"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.75"
+              >
+                <path d="M13 7H6a3.5 3.5 0 0 0 0 7h4" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M10 4l3 3-3 3" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         <div className="flex items-center gap-3">

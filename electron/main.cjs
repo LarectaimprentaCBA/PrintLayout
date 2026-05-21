@@ -8,6 +8,8 @@ const templatesStore = require('./templates-store.cjs');
 const templatesSync = require('./templates-sync.cjs');
 const paperPresetsStore = require('./paper-presets-store.cjs');
 const paperPresetsSync = require('./paper-presets-sync.cjs');
+const workStatesStore = require('./work-states-store.cjs');
+const jobsStore = require('./jobs-store.cjs');
 
 autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
@@ -104,6 +106,28 @@ function runPython(scriptName, { args = [], stdin = null } = {}) {
 ipcMain.handle('templates:list', () => templatesStore.list());
 ipcMain.handle('templates:save', (_evt, template) => templatesStore.save(template));
 ipcMain.handle('templates:delete', (_evt, id) => templatesStore.remove(id));
+
+// Trabajo en curso por plantilla (auto-save). Cada plantilla tiene su propio
+// archivo JSON, asi guardar uno no toca a los demas.
+ipcMain.handle('work-states:list', () => workStatesStore.list());
+ipcMain.handle('work-states:load', (_evt, templateId) => workStatesStore.load(templateId));
+ipcMain.handle('work-states:save', (_evt, { templateId, state }) =>
+  workStatesStore.save(templateId, state),
+);
+ipcMain.handle('work-states:delete', (_evt, templateId) => workStatesStore.remove(templateId));
+
+// Trabajos guardados (jobs). Cada job es un archivo JSON auto-contenido con
+// plantilla + imagenes + asignaciones, en userData/jobs/.
+ipcMain.handle('jobs:list', () => jobsStore.listLight());
+ipcMain.handle('jobs:load', (_evt, id) => jobsStore.load(id));
+ipcMain.handle('jobs:save', (_evt, payload) => {
+  try {
+    return { ok: true, job: jobsStore.save(payload) };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+ipcMain.handle('jobs:delete', (_evt, id) => jobsStore.remove(id));
 
 // Sync de plantillas con GitHub.
 // templates:sync-pull => pulla manifest + plantillas nuevas/cambiadas. Sobrescribe

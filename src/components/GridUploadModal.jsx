@@ -40,9 +40,26 @@ export default function GridUploadModal({
 
   useEffect(() => {
     if (open) {
-      setTimeout(() => cellWRef.current?.select(), 0);
+      // window.focus() recupera foco del SO si la ventana lo perdio
+      // (caso reportado: modal abria con seleccion gris y campos no
+      // tomaban teclado hasta clickear afuera). focus() antes de select()
+      // garantiza que el input quede activo aunque .select() falle silente.
+      setTimeout(() => {
+        if (typeof window !== 'undefined') window.focus();
+        cellWRef.current?.focus();
+        cellWRef.current?.select();
+      }, 0);
     }
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') onCancel?.();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onCancel]);
 
   // Cuando elegis un preset, sincroniza paperW/H. "custom" no toca.
   // Si el preset desaparece de la lista (caso borrado mientras esta abierto el modal),
@@ -124,7 +141,12 @@ export default function GridUploadModal({
     result?.orientation === 'rotated' ? 'rotada 90&deg;' : 'directa';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onCancel?.();
+      }}
+    >
       <form
         onSubmit={submit}
         className="flex max-h-[92vh] w-[64rem] max-w-[95vw] flex-col overflow-hidden rounded-lg border border-ink-700 bg-ink-900 shadow-2xl"

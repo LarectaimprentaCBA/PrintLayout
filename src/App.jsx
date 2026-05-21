@@ -265,6 +265,28 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [layout, selected]);
 
+  // Atajos globales de undo/redo: Ctrl+Z deshace, Ctrl+Y rehace.
+  // Mismas guards que el listener de Delete/Backspace: si el usuario esta
+  // tipeando en un input, no interceptamos (asi el navegador hace su undo
+  // nativo del texto).
+  useEffect(() => {
+    const SELECTOR = 'input, textarea, select, [contenteditable="true"]';
+    function onKey(e) {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const key = e.key.toLowerCase();
+      if (key !== 'z' && key !== 'y') return;
+      const t = e.target;
+      if (t && typeof t.closest === 'function' && t.closest(SELECTOR)) return;
+      const active = document.activeElement;
+      if (active && typeof active.matches === 'function' && active.matches(SELECTOR)) return;
+      e.preventDefault();
+      if (key === 'z') layout.undo();
+      else if (key === 'y') layout.redo();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [layout]);
+
   const handleUploadPdf = (file) => {
     if (uploading) return;
     setPdfUpload({ file });
@@ -1150,6 +1172,10 @@ export default function App() {
           onDistributeEvenly={(mode) =>
             layout.distributeImagesEvenly(mode, currentPage)
           }
+          onUndo={layout.undo}
+          onRedo={layout.redo}
+          canUndo={layout.canUndo}
+          canRedo={layout.canRedo}
         />
         <div className="flex flex-1 overflow-hidden">
           <TemplatesSidebar
@@ -1164,6 +1190,7 @@ export default function App() {
             onCreateGrid={() => setGridModalOpen(true)}
             onAutoPack={handleStartAutoPack}
             onCountPack={handleStartCountPack}
+            templatesWithWork={layout.templatesWithWork}
           />
           <LayoutCanvas
             template={selected}
@@ -1247,6 +1274,8 @@ export default function App() {
                 layout.setSelectedCell(idx);
               }
             }}
+            onResetWork={layout.resetCurrentTemplateWork}
+            hasPersistedWork={selected ? layout.templatesWithWork.has(selected.id) : false}
           />
         </div>
 
@@ -1276,13 +1305,15 @@ export default function App() {
           onCancel={() => setPdfUpload(null)}
         />
 
-        <GridUploadModal
-          open={gridModalOpen}
-          onConfirm={handleCreateGrid}
-          onCancel={() => setGridModalOpen(false)}
-          presets={paperPresetList}
-          onOpenPresetsEditor={() => setPresetsModalOpen(true)}
-        />
+        {gridModalOpen && (
+          <GridUploadModal
+            open
+            onConfirm={handleCreateGrid}
+            onCancel={() => setGridModalOpen(false)}
+            presets={paperPresetList}
+            onOpenPresetsEditor={() => setPresetsModalOpen(true)}
+          />
+        )}
 
         <PaperPresetsModal
           open={presetsModalOpen}

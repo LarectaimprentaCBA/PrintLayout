@@ -35,6 +35,7 @@ export default function TemplatesSidebar({
   onCreateGrid,
   onAutoPack,
   onCountPack,
+  templatesWithWork,
 }) {
   const fileRef = useRef(null);
   const autoPackRef = useRef(null);
@@ -223,6 +224,12 @@ export default function TemplatesSidebar({
                                     >
                                       ☁
                                     </span>
+                                  )}
+                                  {templatesWithWork?.has(t.id) && (
+                                    <span
+                                      className="shrink-0 h-1.5 w-1.5 rounded-full bg-amber-400"
+                                      title="Hay trabajo en curso guardado en esta plantilla"
+                                    />
                                   )}
                                 </div>
                                 <div className="text-[11px] text-ink-400">

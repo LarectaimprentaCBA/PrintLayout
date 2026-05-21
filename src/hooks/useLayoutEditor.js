@@ -6,6 +6,16 @@ import {
 } from '../lib/templates.js';
 import { distributeEvenly } from '../lib/grid.js';
 
+// Limite del stack de undo/redo. 50 pasos cubre uso normal sin inflar memoria.
+// Como las imagenes se referencian (no se copian), el costo extra real son
+// unos KB por snapshot salvo edits de imagen (rotate/crop) que retienen
+// el bitmap viejo mientras este en el historial.
+const HISTORY_LIMIT = 50;
+
+// Debounce del auto-save al disco. 800ms = el usuario termino su accion,
+// ahora si vale la pena escribir. Mas corto = mas writes innecesarios.
+const SAVE_DEBOUNCE_MS = 800;
+
 // Soporta plantillas simple-faz (un assignments) y doble-faz (front/back).
 // El estado interno SIEMPRE mantiene los dos arrays alineados (misma length);
 // para simple-faz, assignmentsBack queda como espejo vacio que no se usa.
@@ -37,12 +47,294 @@ export function useLayoutEditor(template, face = 'front') {
   // es el largo del array que queremos inicializar (= celdas de 1 hoja).
   const totalCellsCount = template ? totalCells(template) : 0;
 
+  // Persistencia en memoria: por cada plantilla guardamos su estado completo
+  // (imagenes + asignaciones + minPages + historial de undo/redo). El Map
+  // se mantiene live: cada accion actualiza la entrada de la plantilla
+  // actual, asi al cambiar de plantilla simplemente leemos del Map. Sin
+  // esto, cambiar de plantilla = perder el trabajo.
+  const templateStatesRef = useRef(new Map());
+  // Set de templateIds que tienen estado persistido en disco. Se carga al
+  // mount y se mantiene sync con saves/deletes. Sirve para el indicador
+  // de "tiene trabajo" en la sidebar de plantillas, incluso para plantillas
+  // que todavia no abrimos en esta sesion.
+  const diskTemplatesRef = useRef(new Set());
+  // Timer del debounce de auto-save al disco.
+  const saveTimerRef = useRef(null);
+
+  // Undo/redo: stack de snapshots compartidos por referencia con el estado
+  // actual. No copiamos las imagenes; cuando una imagen sale del historial
+  // queda sin referencias y el GC la libera. Excluimos selectedCell de los
+  // snapshots porque solo seleccionar una celda no es una accion "deshacible".
+  const historyRef = useRef([]);
+  const historyIndexRef = useRef(-1);
+  const skipNextSnapshotRef = useRef(false);
+  const lastTemplateIdRef = useRef(undefined);
+  // historyTick fuerza re-render cuando cambia canUndo/canRedo o el set
+  // de plantillas con trabajo persistido. El valor exacto no importa, solo
+  // que cambie.
+  const [historyTick, setHistoryTick] = useState(0);
+  const bumpHistoryTick = useCallback(() => setHistoryTick((v) => v + 1), []);
+
+  // Cambio de plantilla: restaura del Map o inicializa vacio. NO necesita
+  // guardar la saliente porque el snapshot effect ya mantiene el Map al dia
+  // en cada accion. Solo dispara cuando cambia el id.
   useEffect(() => {
-    setAssignmentsFront(totalCellsCount > 0 ? Array(totalCellsCount).fill(null) : []);
-    setAssignmentsBack(totalCellsCount > 0 ? Array(totalCellsCount).fill(null) : []);
-    setSelectedCell(null);
+    const newTplId = template?.id ?? null;
+    if (lastTemplateIdRef.current === newTplId) return;
+
+    lastTemplateIdRef.current = newTplId;
+    // El proximo fire del snapshot effect no debe pushear al historial
+    // (el cambio de state es restore, no accion del usuario). Pero igual
+    // refrescara el Map.
+    skipNextSnapshotRef.current = true;
+
+    if (newTplId === null) {
+      setImages([]);
+      setAssignmentsFront([]);
+      setAssignmentsBack([]);
+      setMinPagesState(1);
+      setSelectedCell(null);
+      historyRef.current = [];
+      historyIndexRef.current = -1;
+      bumpHistoryTick();
+      return;
+    }
+
+    const saved = templateStatesRef.current.get(newTplId);
+    if (saved) {
+      setImages(saved.images);
+      setAssignmentsFront(saved.assignmentsFront);
+      setAssignmentsBack(saved.assignmentsBack);
+      setMinPagesState(saved.minPages);
+      setSelectedCell(null);
+      historyRef.current = saved.history;
+      historyIndexRef.current = saved.historyIndex;
+      bumpHistoryTick();
+      return undefined;
+    }
+
+    // No hay estado en memoria: init vacio SYNC y luego intentamos cargar
+    // del disco ASYNC. Si la plantilla tiene work guardado, lo aplicamos.
+    const emptyFront = totalCellsCount > 0 ? Array(totalCellsCount).fill(null) : [];
+    const emptyBack = totalCellsCount > 0 ? Array(totalCellsCount).fill(null) : [];
+    setImages([]);
+    setAssignmentsFront(emptyFront);
+    setAssignmentsBack(emptyBack);
     setMinPagesState(1);
-  }, [template?.id, totalCellsCount]);
+    setSelectedCell(null);
+    historyRef.current = [{
+      images: [],
+      assignmentsFront: emptyFront,
+      assignmentsBack: emptyBack,
+      minPages: 1,
+    }];
+    historyIndexRef.current = 0;
+    bumpHistoryTick();
+
+    // Async load del disco. Si encuentra estado y todavia estamos en esta
+    // plantilla, lo aplicamos como nuevo snapshot inicial.
+    let cancelled = false;
+    const api = typeof window !== 'undefined' ? window.printlayout?.workStates : null;
+    if (api?.load) {
+      api.load(newTplId).then((disk) => {
+        if (cancelled || !disk) return;
+        if (lastTemplateIdRef.current !== newTplId) return;
+        // Sanity check: que tenga la forma esperada.
+        if (!Array.isArray(disk.images) || !Array.isArray(disk.assignmentsFront)) return;
+        skipNextSnapshotRef.current = true;
+        setImages(disk.images);
+        setAssignmentsFront(disk.assignmentsFront);
+        setAssignmentsBack(disk.assignmentsBack || []);
+        setMinPagesState(disk.minPages ?? 1);
+        historyRef.current = [{
+          images: disk.images,
+          assignmentsFront: disk.assignmentsFront,
+          assignmentsBack: disk.assignmentsBack || [],
+          minPages: disk.minPages ?? 1,
+        }];
+        historyIndexRef.current = 0;
+        bumpHistoryTick();
+      }).catch((err) => {
+        console.warn('[work-states] load fallo:', err);
+      });
+    }
+    return () => { cancelled = true; };
+  }, [template?.id, totalCellsCount, bumpHistoryTick]);
+
+  // Mount: cargar lista de plantillas con trabajo persistido en disco.
+  // Asi la sidebar puede mostrar el indicador para plantillas que aun no
+  // abrimos en esta sesion.
+  useEffect(() => {
+    const api = typeof window !== 'undefined' ? window.printlayout?.workStates : null;
+    if (!api?.list) return undefined;
+    let cancelled = false;
+    api.list().then((ids) => {
+      if (cancelled) return;
+      diskTemplatesRef.current = new Set(ids || []);
+      bumpHistoryTick();
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [bumpHistoryTick]);
+
+  // Auto-save debounced al disco cuando cambia el estado de la plantilla
+  // actual. Solo guardamos {images, assignments, minPages}, no el historial
+  // (transient). Cancelamos el timer anterior en cada cambio: solo el
+  // ultimo cambio dispara el write.
+  useEffect(() => {
+    if (!lastTemplateIdRef.current) return undefined;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    const tplId = lastTemplateIdRef.current;
+    // Capturamos snapshot del state actual para el closure.
+    const payload = {
+      images,
+      assignmentsFront,
+      assignmentsBack,
+      minPages,
+    };
+    saveTimerRef.current = setTimeout(() => {
+      const api = typeof window !== 'undefined' ? window.printlayout?.workStates : null;
+      if (!api?.save) return;
+      // Si el estado esta totalmente vacio, no creamos archivo (mantenemos
+      // la sidebar limpia). resetCurrentTemplateWork hace el delete explicito.
+      const hasImages = payload.images.length > 0;
+      const hasAssignments =
+        payload.assignmentsFront.some((x) => x !== null) ||
+        payload.assignmentsBack.some((x) => x !== null);
+      if (!hasImages && !hasAssignments) {
+        if (diskTemplatesRef.current.has(tplId)) {
+          api.delete(tplId).catch(() => {});
+          diskTemplatesRef.current.delete(tplId);
+          bumpHistoryTick();
+        }
+        return;
+      }
+      api.save(tplId, payload).then(() => {
+        if (!diskTemplatesRef.current.has(tplId)) {
+          diskTemplatesRef.current.add(tplId);
+          bumpHistoryTick();
+        }
+      }).catch((err) => console.warn('[work-states] save fallo:', err));
+    }, SAVE_DEBOUNCE_MS);
+    return undefined; // intentionally NO cancel: dejar fire al desmontar
+  }, [images, assignmentsFront, assignmentsBack, minPages, bumpHistoryTick]);
+
+  // Snapshot effect: empuja al historial cuando cambia el estado por accion
+  // del usuario, y SIEMPRE refresca el Map persistente con el estado actual
+  // (incluso despues de undo/redo). Asi el Map nunca queda stale.
+  useEffect(() => {
+    const wasSkip = skipNextSnapshotRef.current;
+    skipNextSnapshotRef.current = false;
+
+    if (!wasSkip) {
+      const snapshot = { images, assignmentsFront, assignmentsBack, minPages };
+      const truncated = historyRef.current.slice(0, historyIndexRef.current + 1);
+      truncated.push(snapshot);
+      if (truncated.length > HISTORY_LIMIT) {
+        truncated.shift();
+      }
+      historyRef.current = truncated;
+      historyIndexRef.current = truncated.length - 1;
+    }
+
+    // Actualizar Map persistente con estado actual.
+    if (lastTemplateIdRef.current) {
+      templateStatesRef.current.set(lastTemplateIdRef.current, {
+        images,
+        assignmentsFront,
+        assignmentsBack,
+        minPages,
+        history: historyRef.current,
+        historyIndex: historyIndexRef.current,
+      });
+    }
+
+    bumpHistoryTick();
+  }, [images, assignmentsFront, assignmentsBack, minPages, bumpHistoryTick]);
+
+  const undo = useCallback(() => {
+    if (historyIndexRef.current <= 0) return;
+    historyIndexRef.current -= 1;
+    const snap = historyRef.current[historyIndexRef.current];
+    skipNextSnapshotRef.current = true;
+    setImages(snap.images);
+    setAssignmentsFront(snap.assignmentsFront);
+    setAssignmentsBack(snap.assignmentsBack);
+    setMinPagesState(snap.minPages);
+    setSelectedCell(null);
+    bumpHistoryTick();
+  }, [bumpHistoryTick]);
+
+  const redo = useCallback(() => {
+    if (historyIndexRef.current >= historyRef.current.length - 1) return;
+    historyIndexRef.current += 1;
+    const snap = historyRef.current[historyIndexRef.current];
+    skipNextSnapshotRef.current = true;
+    setImages(snap.images);
+    setAssignmentsFront(snap.assignmentsFront);
+    setAssignmentsBack(snap.assignmentsBack);
+    setMinPagesState(snap.minPages);
+    setSelectedCell(null);
+    bumpHistoryTick();
+  }, [bumpHistoryTick]);
+
+  // Limpia el trabajo de la plantilla actual: vuelve a estado vacio, borra
+  // historial, borra la entrada del Map en memoria y el archivo del disco.
+  // La proxima vez que entres a esta plantilla arranca desde cero. Usado
+  // por el boton "Empezar de cero".
+  const resetCurrentTemplateWork = useCallback(() => {
+    const tplId = lastTemplateIdRef.current;
+    if (tplId) {
+      templateStatesRef.current.delete(tplId);
+      const api = typeof window !== 'undefined' ? window.printlayout?.workStates : null;
+      if (api?.delete) {
+        api.delete(tplId).catch(() => {});
+      }
+      diskTemplatesRef.current.delete(tplId);
+    }
+    // Cancelar cualquier save pendiente del debounce — sino podria re-crear
+    // el archivo justo despues del delete.
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const emptyFront = totalCellsCount > 0 ? Array(totalCellsCount).fill(null) : [];
+    const emptyBack = totalCellsCount > 0 ? Array(totalCellsCount).fill(null) : [];
+    skipNextSnapshotRef.current = true;
+    setImages([]);
+    setAssignmentsFront(emptyFront);
+    setAssignmentsBack(emptyBack);
+    setMinPagesState(1);
+    setSelectedCell(null);
+    historyRef.current = [{
+      images: [],
+      assignmentsFront: emptyFront,
+      assignmentsBack: emptyBack,
+      minPages: 1,
+    }];
+    historyIndexRef.current = 0;
+    bumpHistoryTick();
+  }, [totalCellsCount, bumpHistoryTick]);
+
+  const canUndo = historyIndexRef.current > 0;
+  const canRedo = historyIndexRef.current < historyRef.current.length - 1;
+  // Set de ids de plantillas con trabajo (in-memory + disco). historyTick
+  // cambia en cada accion / cambio de plantilla / load del disco, asi que
+  // se recomputa.
+  const templatesWithWork = useMemo(() => {
+    const ids = new Set(diskTemplatesRef.current);
+    for (const [id, state] of templateStatesRef.current) {
+      // Consideramos "con trabajo" si tiene imagenes cargadas o alguna celda
+      // asignada. Estado vacio recien inicializado no cuenta.
+      const hasImages = state.images?.length > 0;
+      const hasAssignments =
+        state.assignmentsFront?.some((x) => x !== null) ||
+        state.assignmentsBack?.some((x) => x !== null);
+      if (hasImages || hasAssignments) ids.add(id);
+      else ids.delete(id); // por si tenia disco pero ahora la vaciaron
+    }
+    return ids;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyTick]);
 
   const isFront = face !== 'back';
   const assignments = isFront ? assignmentsFront : assignmentsBack;
@@ -395,5 +687,11 @@ export function useLayoutEditor(template, face = 'front') {
     removeImage,
     updateImage,
     clearAll,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+    resetCurrentTemplateWork,
+    templatesWithWork,
   };
 }

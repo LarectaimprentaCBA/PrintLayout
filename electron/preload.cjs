@@ -12,6 +12,19 @@ contextBridge.exposeInMainWorld('printlayout', {
     syncPull: () => ipcRenderer.invoke('templates:sync-pull'),
     share: (template) => ipcRenderer.invoke('templates:share', template),
   },
+  workStates: {
+    list: () => ipcRenderer.invoke('work-states:list'),
+    load: (templateId) => ipcRenderer.invoke('work-states:load', templateId),
+    save: (templateId, state) =>
+      ipcRenderer.invoke('work-states:save', { templateId, state }),
+    delete: (templateId) => ipcRenderer.invoke('work-states:delete', templateId),
+  },
+  jobs: {
+    list: () => ipcRenderer.invoke('jobs:list'),
+    load: (id) => ipcRenderer.invoke('jobs:load', id),
+    save: (payload) => ipcRenderer.invoke('jobs:save', payload),
+    delete: (id) => ipcRenderer.invoke('jobs:delete', id),
+  },
   paperPresets: {
     list: () => ipcRenderer.invoke('paper-presets:list'),
     save: (preset) => ipcRenderer.invoke('paper-presets:save', preset),

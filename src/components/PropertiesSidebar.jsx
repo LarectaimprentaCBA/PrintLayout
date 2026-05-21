@@ -106,6 +106,8 @@ export default function PropertiesSidebar({
   onCropImage,
   onCycleFit,
   onSelectImage,
+  onResetWork,
+  hasPersistedWork,
 }) {
   // Mostrar control "Hojas" solo en plantillas legacy con celdas homogeneas:
   // ahi tiene sentido pedir N hojas iguales para posar a mano.
@@ -592,6 +594,22 @@ export default function PropertiesSidebar({
                     Guardar plantilla…
                   </button>
                 )}
+              </div>
+            )}
+            {onResetWork && hasPersistedWork && (
+              <div className="pt-2 mt-2 border-t border-ink-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (confirm('¿Empezar de cero en esta plantilla?\n\nSe borran todas las imágenes, asignaciones e historial de deshacer. Esta acción no se puede deshacer.')) {
+                      onResetWork();
+                    }
+                  }}
+                  title="Borra todo el trabajo en curso de esta plantilla y arranca limpio. No se puede deshacer."
+                  className="w-full rounded border border-red-500/30 px-2 py-1.5 text-[11px] text-red-300 hover:bg-red-500/10"
+                >
+                  Empezar de cero
+                </button>
               </div>
             )}
           </dl>
