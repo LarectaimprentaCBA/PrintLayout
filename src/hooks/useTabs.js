@@ -36,6 +36,7 @@ function createEmptyTab(name) {
     id: makeTabId(),
     name,
     jobId: null,
+    jobPath: null,
     isDirty: false,
     template: null,
     viewingFace: 'front',
@@ -54,6 +55,7 @@ function sanitizeTab(t) {
     id: t.id,
     name: typeof t.name === 'string' ? t.name : 'Sin titulo',
     jobId: typeof t.jobId === 'string' ? t.jobId : null,
+    jobPath: typeof t.jobPath === 'string' ? t.jobPath : null,
     isDirty: !!t.isDirty,
     template: t.template && typeof t.template === 'object' ? t.template : null,
     viewingFace: t.viewingFace === 'back' ? 'back' : 'front',
@@ -182,6 +184,24 @@ export function useTabs() {
     }));
   }, [activeTabId]);
 
+  // Mueve una tab a la posicion de otra. Si dragId === targetId, no-op.
+  // place='before' inserta justo antes del target; 'after' justo despues.
+  const reorderTab = useCallback((dragId, targetId, place = 'before') => {
+    if (!dragId || !targetId || dragId === targetId) return;
+    setTabs((prev) => {
+      const dragIdx = prev.findIndex((t) => t.id === dragId);
+      const targetIdx = prev.findIndex((t) => t.id === targetId);
+      if (dragIdx < 0 || targetIdx < 0) return prev;
+      const next = prev.slice();
+      const [dragged] = next.splice(dragIdx, 1);
+      // Recalcular indice del target ahora que sacamos dragged.
+      let insertAt = next.findIndex((t) => t.id === targetId);
+      if (place === 'after') insertAt += 1;
+      next.splice(insertAt, 0, dragged);
+      return next;
+    });
+  }, []);
+
   return {
     tabs,
     activeTab,
@@ -192,5 +212,6 @@ export function useTabs() {
     switchTab,
     updateTab,
     updateActiveTab,
+    reorderTab,
   };
 }

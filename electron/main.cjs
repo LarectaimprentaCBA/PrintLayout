@@ -49,6 +49,8 @@ function resolvePythonBin() {
 }
 const PYTHON_BIN = resolvePythonBin();
 
+let isQuittingConfirmed = false;
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1400,
@@ -62,6 +64,27 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
+  });
+
+  // Intercept close para pedirle al renderer si hay tabs sin guardar. Si las
+  // hay, muestra confirm; sino cierra directo. Se evita si ya hicimos quit
+  // antes (asi no se bucla).
+  win.on('close', async (e) => {
+    if (isQuittingConfirmed) return;
+    e.preventDefault();
+    let shouldClose = true;
+    try {
+      shouldClose = await win.webContents.executeJavaScript(
+        'window.__printlayoutCanClose ? window.__printlayoutCanClose() : Promise.resolve(true)',
+        true,
+      );
+    } catch (err) {
+      console.warn('[close] askCanClose fallo:', err);
+    }
+    if (shouldClose) {
+      isQuittingConfirmed = true;
+      win.close();
+    }
   });
 
   if (isDev) {
@@ -129,6 +152,44 @@ ipcMain.handle('jobs:save', (_evt, payload) => {
   }
 });
 ipcMain.handle('jobs:delete', (_evt, id) => jobsStore.remove(id));
+
+// Guardar trabajo a un archivo .pljob elegido por el usuario via showSaveDialog.
+// El payload va tal cual + savedAt. El archivo es un JSON con todo embebido,
+// auto-contenido (igual que el formato de jobs internos).
+ipcMain.handle('jobs:save-as', async (_evt, { payload, defaultName }) => {
+  try {
+    const win = BrowserWindow.getFocusedWindow();
+    const safe = String(defaultName || 'trabajo').replace(/[<>:"/\\|?*]/g, '_');
+    const result = await dialog.showSaveDialog(win, {
+      title: 'Guardar trabajo como…',
+      defaultPath: `${safe}.pljob`,
+      filters: [
+        { name: 'PrintLayout Job', extensions: ['pljob', 'json'] },
+        { name: 'Todos los archivos', extensions: ['*'] },
+      ],
+    });
+    if (result.canceled || !result.filePath) {
+      return { canceled: true };
+    }
+    const body = { ...payload, savedAt: new Date().toISOString() };
+    fs.writeFileSync(result.filePath, JSON.stringify(body), 'utf-8');
+    return { ok: true, path: result.filePath };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// Sobreescribe un job en un path conocido (Ctrl+S despues de un Save As).
+ipcMain.handle('jobs:save-to-path', async (_evt, { path: filePath, payload }) => {
+  try {
+    if (!filePath) return { ok: false, error: 'path vacio' };
+    const body = { ...payload, savedAt: new Date().toISOString() };
+    fs.writeFileSync(filePath, JSON.stringify(body), 'utf-8');
+    return { ok: true, path: filePath };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
 
 // Tabs abiertas: persistimos la lista para restaurarlas al reabrir la app.
 // El state del editor (images/assignments) se persiste aparte via work-states,

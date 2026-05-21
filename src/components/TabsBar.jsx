@@ -22,10 +22,15 @@ export default function TabsBar({
   onSaveAs,
   onCloseOthers,
   onCloseAll,
+  onReorder,
 }) {
   const [renamingId, setRenamingId] = useState(null);
   const [draftName, setDraftName] = useState('');
   const [contextMenu, setContextMenu] = useState(null); // { id, x, y } | null
+  // Drag state: id de la tab que se esta arrastrando, y el id+lado donde
+  // caeria si se sueltara ahora. `place` = 'before' | 'after'.
+  const [dragId, setDragId] = useState(null);
+  const [dragOver, setDragOver] = useState(null); // { id, place } | null
   const inputRef = useRef(null);
   const scrollRef = useRef(null);
 
@@ -90,9 +95,39 @@ export default function TabsBar({
         {tabs.map((tab) => {
           const isActive = tab.id === activeTabId;
           const isRenaming = renamingId === tab.id;
+          const isDragging = dragId === tab.id;
+          const showLeftBar = dragOver?.id === tab.id && dragOver.place === 'before';
+          const showRightBar = dragOver?.id === tab.id && dragOver.place === 'after';
           return (
             <div
               key={tab.id}
+              draggable={!isRenaming && !!onReorder}
+              onDragStart={(e) => {
+                if (isRenaming || !onReorder) { e.preventDefault(); return; }
+                setDragId(tab.id);
+                try { e.dataTransfer.setData('text/plain', tab.id); } catch {}
+                e.dataTransfer.effectAllowed = 'move';
+              }}
+              onDragEnd={() => { setDragId(null); setDragOver(null); }}
+              onDragOver={(e) => {
+                if (!dragId || dragId === tab.id || !onReorder) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                const rect = e.currentTarget.getBoundingClientRect();
+                const mid = rect.left + rect.width / 2;
+                const place = e.clientX < mid ? 'before' : 'after';
+                if (dragOver?.id !== tab.id || dragOver.place !== place) {
+                  setDragOver({ id: tab.id, place });
+                }
+              }}
+              onDrop={(e) => {
+                if (!dragId || !onReorder) return;
+                e.preventDefault();
+                const place = dragOver?.id === tab.id ? dragOver.place : 'before';
+                onReorder(dragId, tab.id, place);
+                setDragId(null);
+                setDragOver(null);
+              }}
               onClick={() => !isRenaming && onSwitch?.(tab.id)}
               onDoubleClick={() => !isRenaming && startRename(tab)}
               onContextMenu={(e) => openContextMenu(e, tab)}
@@ -104,12 +139,20 @@ export default function TabsBar({
                 }
               }}
               title={tab.name + (tab.isDirty ? ' (sin guardar)' : '')}
-              className={`group flex h-8 min-w-[120px] max-w-[200px] shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-2.5 text-xs ${
+              className={`group relative flex h-8 min-w-[120px] max-w-[200px] shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-2.5 text-xs ${
+                isDragging ? 'opacity-50' : ''
+              } ${
                 isActive
                   ? 'border-ink-700 bg-ink-900 text-ink-100'
                   : 'border-transparent text-ink-400 hover:bg-ink-900/60 hover:text-ink-200'
               }`}
             >
+              {showLeftBar && (
+                <span className="pointer-events-none absolute -left-px top-1 bottom-0 w-0.5 rounded bg-accent-400" />
+              )}
+              {showRightBar && (
+                <span className="pointer-events-none absolute -right-px top-1 bottom-0 w-0.5 rounded bg-accent-400" />
+              )}
               {tab.isDirty && (
                 <span
                   className="shrink-0 leading-none text-amber-300/80"

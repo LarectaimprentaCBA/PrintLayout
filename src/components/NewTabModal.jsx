@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { describeCells, hasCuts } from '../lib/templates.js';
 
+const SIN_CARPETA = 'General';
+const TODAS = '__todas__';
+const SELECTED_KEY = 'printlayout.newTabModal.selectedCarpeta';
+
 // Modal "Nuevo trabajo" — hub central para empezar un trabajo nuevo. Tiene
 // dos vistas:
 //   - main: grilla de 6 opciones grandes (plantilla / grilla / auto /
@@ -26,6 +30,18 @@ export default function NewTabModal({
 }) {
   const [view, setView] = useState('main'); // 'main' | 'templates'
   const [query, setQuery] = useState('');
+  const [selectedCarpeta, setSelectedCarpeta] = useState(() => {
+    try {
+      return localStorage.getItem(SELECTED_KEY) || TODAS;
+    } catch {
+      return TODAS;
+    }
+  });
+
+  const pickCarpeta = (cat) => {
+    setSelectedCarpeta(cat);
+    try { localStorage.setItem(SELECTED_KEY, cat); } catch {}
+  };
 
   useEffect(() => {
     if (!open) {
@@ -46,18 +62,45 @@ export default function NewTabModal({
     return () => window.removeEventListener('keydown', onKey);
   }, [open, view, onClose]);
 
-  const filteredTemplates = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const sorted = [...templates].sort((a, b) => {
-      const ca = (a.categoria || '').localeCompare(b.categoria || '');
-      if (ca !== 0) return ca;
-      return (a.name || '').localeCompare(b.name || '');
+  // Lista de carpetas (incluye "Todas" siempre primero). Cada una con count
+  // total (sin filtro de query — el conteo es el universo, no la vista).
+  const carpetas = useMemo(() => {
+    const counts = new Map();
+    for (const t of templates) {
+      const cat = (t.categoria || '').trim() || SIN_CARPETA;
+      counts.set(cat, (counts.get(cat) || 0) + 1);
+    }
+    const keys = Array.from(counts.keys()).sort((a, b) => {
+      if (a === SIN_CARPETA) return 1;
+      if (b === SIN_CARPETA) return -1;
+      return a.localeCompare(b);
     });
-    if (!q) return sorted;
-    return sorted.filter((t) =>
-      `${t.name || ''} ${t.categoria || ''}`.toLowerCase().includes(q),
-    );
-  }, [templates, query]);
+    return [
+      { id: TODAS, label: 'Todas', count: templates.length },
+      ...keys.map((k) => ({ id: k, label: k, count: counts.get(k) })),
+    ];
+  }, [templates]);
+
+  // Plantillas visibles en el pane derecho: filtradas por query (si hay) y
+  // por carpeta seleccionada (excepto si query, donde mostramos todas las
+  // matcheadas para no esconder coincidencias).
+  const visibleTemplates = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    let list = templates;
+    if (!q && selectedCarpeta !== TODAS) {
+      list = list.filter((t) => {
+        const cat = (t.categoria || '').trim() || SIN_CARPETA;
+        return cat === selectedCarpeta;
+      });
+    }
+    if (q) {
+      list = list.filter((t) =>
+        `${t.name || ''} ${t.categoria || ''}`.toLowerCase().includes(q),
+      );
+    }
+    return [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  }, [templates, query, selectedCarpeta]);
+  const hasQuery = query.trim() !== '';
 
   if (!open) return null;
 
@@ -196,62 +239,91 @@ export default function NewTabModal({
                 </button>
               )}
             </div>
-            <div className="flex-1 overflow-y-auto px-3 py-2">
-              {filteredTemplates.length === 0 ? (
-                <p className="px-3 py-8 text-center text-xs text-ink-400">
-                  {templates.length === 0
-                    ? 'Todavia no hay plantillas. Subi un PDF desde "Nuevo trabajo".'
-                    : 'No hay plantillas que coincidan.'}
-                </p>
-              ) : (
-                <ul className="space-y-1">
-                  {filteredTemplates.map((t) => (
-                    <li key={t.id}>
-                      <div className="group flex items-center gap-3 rounded-md border border-transparent px-3 py-2 hover:border-ink-700 hover:bg-ink-800">
+            <div className="flex flex-1 overflow-hidden">
+              {/* Pane izquierdo: carpetas. */}
+              <div className="w-44 shrink-0 overflow-y-auto border-r border-ink-700 py-2">
+                <ul className="space-y-0.5 px-1">
+                  {carpetas.map((c) => {
+                    const isActive = !hasQuery && c.id === selectedCarpeta;
+                    return (
+                      <li key={c.id}>
                         <button
                           type="button"
-                          onClick={() => {
-                            onClose?.();
-                            onPickTemplate?.(t.id);
-                          }}
-                          className="min-w-0 flex-1 text-left"
+                          onClick={() => pickCarpeta(c.id)}
+                          className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-xs ${
+                            isActive
+                              ? 'bg-accent-600/20 text-accent-200'
+                              : 'text-ink-300 hover:bg-ink-800 hover:text-ink-100'
+                          }`}
                         >
-                          <div className="flex items-center gap-1.5 truncate text-sm font-medium text-ink-100">
-                            <span className="truncate">{t.name}</span>
-                            {t.sharedAt && (
-                              <span className="shrink-0 text-accent-400" title="Compartida con el equipo">☁</span>
-                            )}
-                          </div>
-                          <div className="mt-0.5 text-[11px] text-ink-400">
-                            {t.categoria ? `${t.categoria} · ` : ''}
-                            {describeCells(t)}
-                            {hasCuts(t) && (
-                              <span className="ml-2 text-accent-400">corte</span>
-                            )}
-                            {' · '}
-                            {Math.round(t.pageWidthMm)}×{Math.round(t.pageHeightMm)} mm
-                          </div>
+                          <span className="truncate">{c.label}</span>
+                          <span className="ml-1 shrink-0 text-[10px] text-ink-500">{c.count}</span>
                         </button>
-                        {onDeleteTemplate && (
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+              {/* Pane derecho: plantillas de la carpeta seleccionada (o todas si hay query). */}
+              <div className="flex-1 overflow-y-auto px-3 py-2">
+                {visibleTemplates.length === 0 ? (
+                  <p className="px-3 py-8 text-center text-xs text-ink-400">
+                    {templates.length === 0
+                      ? 'Todavia no hay plantillas. Subi un PDF desde "Nuevo trabajo".'
+                      : hasQuery
+                        ? 'No hay plantillas que coincidan.'
+                        : 'Esta carpeta esta vacia.'}
+                  </p>
+                ) : (
+                  <ul className="space-y-1">
+                    {visibleTemplates.map((t) => (
+                      <li key={t.id}>
+                        <div className="group flex items-center gap-3 rounded-md border border-transparent px-3 py-2 hover:border-ink-700 hover:bg-ink-800">
                           <button
                             type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (confirm(`¿Eliminar la plantilla "${t.name}"?`)) {
-                                onDeleteTemplate(t.id);
-                              }
+                            onClick={() => {
+                              onClose?.();
+                              onPickTemplate?.(t.id);
                             }}
-                            className="shrink-0 rounded border border-red-500/40 px-2 py-1 text-[11px] text-red-300 opacity-0 transition hover:bg-red-500/15 group-hover:opacity-100"
-                            title="Eliminar plantilla"
+                            className="min-w-0 flex-1 text-left"
                           >
-                            Eliminar
+                            <div className="flex items-center gap-1.5 truncate text-sm font-medium text-ink-100">
+                              <span className="truncate">{t.name}</span>
+                              {t.sharedAt && (
+                                <span className="shrink-0 text-accent-400" title="Compartida con el equipo">☁</span>
+                              )}
+                            </div>
+                            <div className="mt-0.5 text-[11px] text-ink-400">
+                              {hasQuery && t.categoria ? `${t.categoria} · ` : ''}
+                              {describeCells(t)}
+                              {hasCuts(t) && (
+                                <span className="ml-2 text-accent-400">corte</span>
+                              )}
+                              {' · '}
+                              {Math.round(t.pageWidthMm)}×{Math.round(t.pageHeightMm)} mm
+                            </div>
                           </button>
-                        )}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
+                          {onDeleteTemplate && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (confirm(`¿Eliminar la plantilla "${t.name}"?`)) {
+                                  onDeleteTemplate(t.id);
+                                }
+                              }}
+                              className="shrink-0 rounded border border-red-500/40 px-2 py-1 text-[11px] text-red-300 opacity-0 transition hover:bg-red-500/15 group-hover:opacity-100"
+                              title="Eliminar plantilla"
+                            >
+                              Eliminar
+                            </button>
+                          )}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
           </>
         )}

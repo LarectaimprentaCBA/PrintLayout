@@ -94,6 +94,7 @@ export default function App() {
     switchTab,
     updateActiveTab,
     updateTab,
+    reorderTab,
   } = useTabs();
   const [sharing, setSharing] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -514,8 +515,6 @@ export default function App() {
       });
       return;
     }
-    // Update la tab del usuario (puede no ser la activa si tarda; uso updateTab
-    // con el id explicito que capture al inicio).
     updateTab(targetTabId, {
       jobId: r.job.id,
       name: r.job.name,
@@ -530,19 +529,73 @@ export default function App() {
     });
   };
 
+  // Reescribe el job en el path que ya tiene la tab (tras un Save As previo).
+  const persistJobToPath = async (filePath, name) => {
+    const targetTabId = activeTabId;
+    const payload = buildJobPayload(name);
+    if (!payload) {
+      setToast({ kind: 'error', text: 'No hay plantilla activa para guardar.' });
+      return;
+    }
+    const r = await window.printlayout.jobs.saveToPath(filePath, payload);
+    if (!r?.ok) {
+      setToast({
+        kind: 'error',
+        text: `No se pudo guardar: ${r?.error ?? 'error'}`,
+      });
+      return;
+    }
+    updateTab(targetTabId, { isDirty: false });
+    lastMutationTickRef.current = layout.mutationTick;
+    setToast({ kind: 'success', text: `Guardado en ${r.path}`, path: r.path });
+  };
+
+  // Abre el file picker y guarda al path elegido. Recibe defaultName para
+  // pre-poblar el dialog. Si el usuario cancela, devuelve sin tocar nada.
+  const persistJobAs = async (defaultName, { closeAfterId } = {}) => {
+    const targetTabId = activeTabId;
+    const payload = buildJobPayload(defaultName);
+    if (!payload) {
+      setToast({ kind: 'error', text: 'No hay plantilla activa para guardar.' });
+      return;
+    }
+    const r = await window.printlayout.jobs.saveAs(payload, defaultName);
+    if (r?.canceled) return;
+    if (!r?.ok) {
+      setToast({ kind: 'error', text: `No se pudo guardar: ${r?.error ?? 'error'}` });
+      return;
+    }
+    // Nombre = basename del path sin extension.
+    const baseName = r.path.replace(/^.*[\\/]/, '').replace(/\.(pljob|json)$/i, '');
+    updateTab(targetTabId, {
+      jobPath: r.path,
+      jobId: null,
+      name: baseName,
+      isDirty: false,
+    });
+    lastMutationTickRef.current = layout.mutationTick;
+    setToast({ kind: 'success', text: `Guardado en ${r.path}`, path: r.path });
+    if (closeAfterId) closeTab(closeAfterId);
+  };
+
   const handleSaveJobShortcut = () => {
     if (!selected) return;
-    if (currentJobId) {
-      // Update directo en el mismo id.
+    const tab = tabs.find((t) => t.id === activeTabId);
+    if (tab?.jobPath) {
+      // Tab guardada con file picker: reescribir en el mismo path.
+      persistJobToPath(tab.jobPath, tab.name || 'Sin titulo');
+    } else if (currentJobId) {
+      // Legacy: tab guardada en userData/jobs/ — reusar id.
       persistJob(currentJobName || 'Sin titulo', { reuseId: true });
     } else {
-      setSaveJobModal({ saveAs: false });
+      // Primera vez: abrir file picker.
+      persistJobAs(currentJobName || 'Sin titulo');
     }
   };
 
   const handleSaveJobAs = () => {
     if (!selected) return;
-    setSaveJobModal({ saveAs: true });
+    persistJobAs(currentJobName || 'Sin titulo');
   };
 
   const submitSaveJob = async ({ name }) => {
@@ -622,12 +675,15 @@ export default function App() {
       if (ctx.id !== activeTabId) switchTab(ctx.id);
       const tab = tabs.find((t) => t.id === ctx.id);
       if (!tab) return;
-      if (tab.jobId) {
+      if (tab.jobPath) {
+        await persistJobToPath(tab.jobPath, tab.name || 'Sin titulo');
+        closeTab(ctx.id);
+      } else if (tab.jobId) {
         await persistJob(tab.name || 'Sin titulo', { reuseId: true });
         closeTab(ctx.id);
       } else {
-        // Sin jobId: pedimos nombre. Abrimos SaveJobModal y delayed close.
-        setSaveJobModal({ saveAs: false, closeAfterId: ctx.id });
+        // Sin path ni id legacy: file picker, cerrar despues.
+        persistJobAs(tab.name || 'Sin titulo', { closeAfterId: ctx.id });
       }
     }
   };
@@ -1441,9 +1497,32 @@ export default function App() {
 
   useEffect(() => {
     if (!toast) return;
-    const id = setTimeout(() => setToast(null), 6000);
+    // Errores se quedan mas tiempo (12s) para que se alcancen a leer; los
+    // success son menos criticos y bajan en 6s.
+    const ms = toast.kind === 'error' ? 12000 : 6000;
+    const id = setTimeout(() => setToast(null), ms);
     return () => clearTimeout(id);
   }, [toast]);
+
+  // Warning antes de cerrar la app si hay tabs con cambios sin guardar
+  // (isDirty=true). Lo expone como window.__printlayoutCanClose: el main
+  // process lo llama via executeJavaScript en el `close` event del window.
+  // Devuelve Promise<bool>: true para cerrar, false para abortar el cierre.
+  // Usamos confirm() nativo — es bloqueante y feo pero funcional. El estado
+  // del editor (auto-save de Fase E) sigue persistido en disco igual, asi
+  // que el warning es para advertir, no para evitar perdida.
+  useEffect(() => {
+    window.__printlayoutCanClose = () => {
+      const dirty = tabs.filter((t) => t.isDirty);
+      if (dirty.length === 0) return Promise.resolve(true);
+      const names = dirty.map((t) => `· ${t.name || 'Sin titulo'}`).join('\n');
+      const ok = window.confirm(
+        `Hay ${dirty.length} trabajo${dirty.length === 1 ? '' : 's'} con cambios sin guardar:\n\n${names}\n\nSe van a guardar automaticamente y se restauran al reabrir, pero si querés guardarlos como trabajo nombrado hacelo antes de cerrar.\n\n¿Cerrar igual?`,
+      );
+      return Promise.resolve(ok);
+    };
+    return () => { delete window.__printlayoutCanClose; };
+  }, [tabs]);
 
   // Auto-update: escuchar status del main y mostrar banner cuando este listo.
   const [updateInfo, setUpdateInfo] = useState(null);
@@ -1560,6 +1639,18 @@ export default function App() {
           onClose={requestCloseTab}
           onRename={(id, name) => updateTab(id, { name })}
           onNew={() => setNewTabModalOpen(true)}
+          onReorder={reorderTab}
+          onSaveAs={(id) => {
+            // Si la tab clickeada no es la activa, la activamos y disparamos
+            // saveAs en el proximo tick (asi handleSaveJobAs lee el contexto
+            // ya switcheado).
+            if (id !== activeTabId) {
+              switchTab(id);
+              setTimeout(() => handleSaveJobAs(), 0);
+            } else {
+              handleSaveJobAs();
+            }
+          }}
           onCloseOthers={(keepId) => {
             const ids = tabs.filter((t) => t.id !== keepId).map((t) => t.id);
             ids.forEach((id) => requestCloseTab(id));
@@ -1864,24 +1955,34 @@ export default function App() {
 
         {toast && (
           <div
-            className={`pointer-events-auto fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-lg border px-4 py-2 text-sm shadow-2xl ${
+            role={toast.kind === 'error' ? 'alert' : 'status'}
+            className={`pointer-events-auto fixed bottom-6 left-1/2 z-40 flex max-w-[80vw] -translate-x-1/2 items-start gap-3 rounded-lg border px-5 py-3 text-sm font-medium text-white shadow-2xl ring-1 ring-black/40 ${
               toast.kind === 'success'
-                ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-100'
-                : 'border-red-500/40 bg-red-500/15 text-red-100'
+                ? 'border-emerald-400 bg-emerald-700'
+                : 'border-red-400 bg-red-700'
             }`}
           >
-            <span>{toast.text}</span>
+            <span
+              className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                toast.kind === 'success' ? 'bg-emerald-500' : 'bg-red-500'
+              }`}
+              aria-hidden
+            >
+              {toast.kind === 'success' ? '✓' : '!'}
+            </span>
+            <span className="whitespace-pre-wrap break-words">{toast.text}</span>
             {toast.path && (
               <button
                 onClick={() => window.printlayout.shell.showItem(toast.path)}
-                className="rounded border border-emerald-400/40 px-2 py-0.5 text-xs hover:bg-emerald-500/20"
+                className="shrink-0 rounded border border-white/40 bg-white/10 px-2 py-0.5 text-xs hover:bg-white/20"
               >
                 Mostrar en carpeta
               </button>
             )}
             <button
               onClick={() => setToast(null)}
-              className="text-xs text-ink-300 hover:text-ink-100"
+              title="Cerrar"
+              className="shrink-0 rounded p-0.5 text-white/70 hover:bg-white/20 hover:text-white"
             >
               ✕
             </button>

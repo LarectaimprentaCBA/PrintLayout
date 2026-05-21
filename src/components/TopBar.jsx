@@ -264,6 +264,12 @@ export default function TopBar({
         <div className="flex items-center gap-2">
           <div className="h-5 w-5 rounded bg-accent-500" />
           <h1 className="text-sm font-semibold tracking-wide">PrintLayout</h1>
+          <span
+            className="text-[10px] font-mono text-ink-500"
+            title={`Versión ${__APP_VERSION__}`}
+          >
+            v{__APP_VERSION__}
+          </span>
           {(jobName !== undefined || canSaveJob) && (
             <div
               className="ml-2 max-w-[260px] truncate border-l border-ink-700 pl-3 text-xs"
