@@ -596,9 +596,11 @@ export default function PropertiesSidebar({
                 )}
               </div>
             )}
-            {/* En tabs: ofrecer guardar como plantilla permanente sin el banner
-                de "temporal" (que ya no aplica — los trabajos viven como jobs). */}
-            {template.tabBacked && onSaveTemporal && (
+            {/* En tabs derivadas de un template "al vuelo" (grilla, auto,
+                cantidad): ofrecer guardar como plantilla permanente. Si la
+                tab vino de una plantilla guardada (sourceTemplateId), el
+                boton no aparece porque ya existe en el store. */}
+            {template.tabBacked && !template.sourceTemplateId && onSaveTemporal && (
               <button
                 type="button"
                 onClick={() => onSaveTemporal(template)}
