@@ -638,6 +638,39 @@ export default function App() {
     performOpenJob(jobId);
   };
 
+  // Abre un .pljob desde el filesystem via showOpenDialog. La tab resultante
+  // tiene jobPath seteado, asi Ctrl+S sobreescribe el mismo archivo.
+  const handleOpenJobFromFile = async () => {
+    const r = await window.printlayout.jobs.openFromFile();
+    if (r?.canceled) return;
+    if (!r?.ok || !r.job) {
+      setToast({ kind: 'error', text: `No se pudo abrir: ${r?.error ?? 'archivo invalido'}` });
+      return;
+    }
+    const job = r.job;
+    if (!job.template) {
+      setToast({ kind: 'error', text: 'El archivo no es un trabajo valido.' });
+      return;
+    }
+    const baseName = r.path.replace(/^.*[\\/]/, '').replace(/\.(pljob|json)$/i, '');
+    openInTab(job.template, {
+      name: job.name || baseName,
+      forceNew: true,
+      initialLayout: {
+        images: job.images || [],
+        assignmentsFront: job.assignmentsFront || [],
+        assignmentsBack: job.assignmentsBack || [],
+        minPages: job.minPages ?? 1,
+      },
+    });
+    // Como openInTab no acepta jobPath en su API actual, lo asignamos al
+    // ultimo tab agregado en el siguiente tick. activeTabId apunta al tab
+    // recien creado tras updateActiveTab/createTab.
+    setTimeout(() => {
+      updateActiveTab({ jobPath: r.path, isDirty: false });
+    }, 0);
+  };
+
   const handleDeleteJob = async (jobId) => {
     const r = await removeJobFromDisk(jobId);
     if (r?.ok) {
@@ -650,7 +683,12 @@ export default function App() {
     }
   };
 
-  const handleOpenJobsList = () => setJobsListOpen(true);
+  // "Abrir trabajo" ahora abre file picker por default — el modelo del
+  // negocio es file-based (un .pljob por cliente / trabajo). La lista
+  // interna en userData/jobs/ solo sirve para jobs legacy guardados con
+  // el modelo viejo; queda accesible como fallback si el usuario lo
+  // necesita (Ctrl+Shift+O).
+  const handleOpenJobsList = () => handleOpenJobFromFile();
 
   // Pide cerrar una tab. Si esta dirty, abre ConfirmModal con opciones
   // Guardar / Descartar / Cancelar. Si no, cierra directo.

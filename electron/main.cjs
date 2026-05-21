@@ -179,6 +179,44 @@ ipcMain.handle('jobs:save-as', async (_evt, { payload, defaultName }) => {
   }
 });
 
+// Abrir un .pljob desde el filesystem: file picker + lectura del JSON.
+// El archivo es el mismo formato que jobs:save-as (payload + savedAt).
+ipcMain.handle('jobs:open-from-file', async () => {
+  try {
+    const win = BrowserWindow.getFocusedWindow();
+    const result = await dialog.showOpenDialog(win, {
+      title: 'Abrir trabajo…',
+      properties: ['openFile'],
+      filters: [
+        { name: 'PrintLayout Job', extensions: ['pljob', 'json'] },
+        { name: 'Todos los archivos', extensions: ['*'] },
+      ],
+    });
+    if (result.canceled || !result.filePaths?.[0]) {
+      return { canceled: true };
+    }
+    const filePath = result.filePaths[0];
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    const job = JSON.parse(raw);
+    return { ok: true, path: filePath, job };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// Lee un .pljob desde un path conocido (sin pasar por el dialog). Util para
+// "abrir reciente" o cuando el path ya esta resuelto.
+ipcMain.handle('jobs:load-from-path', async (_evt, { path: filePath }) => {
+  try {
+    if (!filePath) return { ok: false, error: 'path vacio' };
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    const job = JSON.parse(raw);
+    return { ok: true, path: filePath, job };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 // Sobreescribe un job en un path conocido (Ctrl+S despues de un Save As).
 ipcMain.handle('jobs:save-to-path', async (_evt, { path: filePath, payload }) => {
   try {

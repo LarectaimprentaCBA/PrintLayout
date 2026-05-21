@@ -207,8 +207,8 @@ export default function NewTabModal({
               onClick={handleOption(onUploadPdf)}
             />
             <OptionCard
-              title="Abrir trabajo guardado"
-              subtitle="Reabrir uno de los trabajos persistidos"
+              title="Abrir trabajo desde archivo"
+              subtitle="Buscar un .pljob guardado (cliente, fecha, etc.)"
               icon={(
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
                   <path d="M3 7 H10 L12 5 H21 V19 H3 Z" strokeLinejoin="round" />

@@ -28,6 +28,9 @@ contextBridge.exposeInMainWorld('printlayout', {
       ipcRenderer.invoke('jobs:save-as', { payload, defaultName }),
     saveToPath: (filePath, payload) =>
       ipcRenderer.invoke('jobs:save-to-path', { path: filePath, payload }),
+    openFromFile: () => ipcRenderer.invoke('jobs:open-from-file'),
+    loadFromPath: (filePath) =>
+      ipcRenderer.invoke('jobs:load-from-path', { path: filePath }),
   },
   openTabs: {
     load: () => ipcRenderer.invoke('open-tabs:load'),
