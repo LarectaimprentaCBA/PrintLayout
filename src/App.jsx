@@ -24,7 +24,6 @@ import SaveJobModal from './components/SaveJobModal.jsx';
 import JobsListModal from './components/JobsListModal.jsx';
 import NewTabModal from './components/NewTabModal.jsx';
 import PaperPresetsModal from './components/PaperPresetsModal.jsx';
-import PrintModal from './components/PrintModal.jsx';
 import { useTemplates } from './hooks/useTemplates.js';
 import { usePaperPresets } from './hooks/usePaperPresets.js';
 import { useJobs } from './hooks/useJobs.js';
@@ -89,6 +88,7 @@ export default function App() {
     tabs,
     activeTab,
     activeTabId,
+    restoring: tabsRestoring,
     createTab,
     closeTab,
     switchTab,
@@ -98,9 +98,6 @@ export default function App() {
   const [sharing, setSharing] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [presetsModalOpen, setPresetsModalOpen] = useState(false);
-  // printPrompt: { face } | null. Cuando esta seteado, se abre PrintModal y
-  // al confirmar dispara la impresion silenciosa con deviceName+copies.
-  const [printPrompt, setPrintPrompt] = useState(null);
 
   const runSyncWithToast = async ({ silent = false } = {}) => {
     setSyncing(true);
@@ -210,17 +207,21 @@ export default function App() {
   // Auto-abrir el modal "Nuevo trabajo" cuando se queda en una sola tab vacia
   // (al arrancar la app, o tras cerrar la ultima tab que useTabs reemplaza
   // por una vacia nueva). Asi el usuario nunca ve un canvas vacio sin saber
-  // que hacer. Guard: si ya abrimos para esta tab y el usuario lo cerro,
+  // que hacer. Guard 1: si ya abrimos para esta tab y el usuario lo cerro,
   // no lo abrimos de nuevo hasta que cambie a otra tab vacia distinta.
+  // Guard 2: mientras useTabs todavia esta restaurando del disco, no
+  // disparamos — sino se abriria el modal por un frame antes de que se
+  // restauren las tabs persistidas.
   const autoOpenedForTabIdRef = useRef(null);
   useEffect(() => {
+    if (tabsRestoring) return;
     if (tabs.length !== 1) return;
     const t = tabs[0];
     if (t.template || t.jobId) return;
     if (autoOpenedForTabIdRef.current === t.id) return;
     autoOpenedForTabIdRef.current = t.id;
     setNewTabModalOpen(true);
-  }, [tabs]);
+  }, [tabs, tabsRestoring]);
 
   // Sync inicial al arrancar: cuando termina de cargar las plantillas locales,
   // pulla el manifest remoto. Si trae cambios, refresca local y avisa con un
@@ -1353,7 +1354,7 @@ export default function App() {
     }
   };
 
-  const handlePrint = (face = 'front') => {
+  const handlePrint = async (face = 'front') => {
     if (!selected || printing) return;
     const isBack = face === 'back';
     const assignments = isBack ? layout.assignmentsBack : layout.assignmentsFront;
@@ -1364,31 +1365,19 @@ export default function App() {
       });
       return;
     }
-    setToast(null);
-    setPrintPrompt({ face });
-  };
-
-  const runPrintWith = async ({ deviceName, copies }) => {
-    const face = printPrompt?.face ?? 'front';
-    setPrintPrompt(null);
-    if (!selected) return;
-    const isBack = face === 'back';
-    const assignments = isBack ? layout.assignmentsBack : layout.assignmentsFront;
-    if (!assignments?.some((id) => id !== null)) return;
     setPrinting(face);
     setToast(null);
-    // Defensa en profundidad: si por algún motivo la promesa nunca resuelve
-    // (callback de Chromium colgado), liberamos el botón a los 15s.
-    const safety = setTimeout(() => setPrinting(false), 15000);
     try {
+      // El helper nativo muestra el PrintDialog estandar de Windows en modo
+      // documento. El usuario elige impresora + toca lo que quiera en
+      // Preferencias del driver — todo se aplica solo a ese trabajo y NO
+      // queda como default del sistema.
       const result = await printLayoutPdf(selected, assignments, layout.imageMap, {
         layoutFitMode,
         embedBackground: !isBack && !selected.singlePage,
         faceLabel: selected.doubleSided ? (isBack ? 'dorso' : 'frente') : undefined,
         paperWidthMm: customPaper?.widthMm,
         paperHeightMm: customPaper?.heightMm,
-        deviceName,
-        copies,
       });
       if (result?.canceled) {
         setToast(null);
@@ -1406,7 +1395,6 @@ export default function App() {
       console.error(err);
       setToast({ kind: 'error', text: `No se pudo imprimir: ${err.message}` });
     } finally {
-      clearTimeout(safety);
       setPrinting(false);
     }
   };
@@ -1690,17 +1678,6 @@ export default function App() {
             onOpenPresetsEditor={() => setPresetsModalOpen(true)}
           />
         )}
-
-        <PrintModal
-          open={!!printPrompt}
-          faceLabel={
-            selected?.doubleSided
-              ? (printPrompt?.face === 'back' ? 'dorso' : 'frente')
-              : null
-          }
-          onConfirm={runPrintWith}
-          onCancel={() => setPrintPrompt(null)}
-        />
 
         <PaperPresetsModal
           open={presetsModalOpen}

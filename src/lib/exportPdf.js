@@ -367,8 +367,10 @@ export async function exportDoubleSidedLayoutToPdf(
 
 export async function printLayoutPdf(template, assignments, imageMap, options) {
   const bytes = await buildPdf(template, assignments, imageMap, options);
-  // webContents.print() del PDF viewer interno de Chromium sale en blanco
-  // en builds packaged. Rasterizamos con pdfjs e imprimimos como HTML.
+  // Rasterizamos con pdfjs para mandarle PNG por hoja al PrintHelper nativo.
+  // El helper muestra el PrintDialog estandar (document mode) — los settings
+  // del driver elegidos en Preferencias quedan solo para ese job, NO como
+  // defaults del sistema. Es lo que hace Adobe Reader.
   const dpi = options?.printDpi ?? 240;
   const images = await renderPdfBytesToImages(bytes, dpi);
   const paperWidthMm = options?.paperWidthMm ?? template.pageWidthMm;
@@ -378,8 +380,6 @@ export async function printLayoutPdf(template, assignments, imageMap, options) {
     images,
     pageWidthMm: paperWidthMm,
     pageHeightMm: paperHeightMm,
-    deviceName: options?.deviceName,
-    copies: options?.copies,
   });
   return result;
 }

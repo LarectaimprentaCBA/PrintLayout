@@ -25,6 +25,10 @@ contextBridge.exposeInMainWorld('printlayout', {
     save: (payload) => ipcRenderer.invoke('jobs:save', payload),
     delete: (id) => ipcRenderer.invoke('jobs:delete', id),
   },
+  openTabs: {
+    load: () => ipcRenderer.invoke('open-tabs:load'),
+    save: (payload) => ipcRenderer.invoke('open-tabs:save', payload),
+  },
   paperPresets: {
     list: () => ipcRenderer.invoke('paper-presets:list'),
     save: (preset) => ipcRenderer.invoke('paper-presets:save', preset),
@@ -40,9 +44,6 @@ contextBridge.exposeInMainWorld('printlayout', {
     save: (defaultName, bytes) =>
       ipcRenderer.invoke('export:save-pdf', { defaultName, bytes }),
     print: (payload) => ipcRenderer.invoke('print:pdf', payload),
-    listPrinters: () => ipcRenderer.invoke('print:list-printers'),
-    openPrinterConfig: (deviceName) =>
-      ipcRenderer.invoke('print:open-printer-config', { deviceName }),
     extractImages: (bytes) => ipcRenderer.invoke('pdf:extract-images', { bytes }),
     readExtractedImage: (filePath) =>
       ipcRenderer.invoke('pdf:read-extracted-image', { path: filePath }),

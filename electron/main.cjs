@@ -10,6 +10,7 @@ const paperPresetsStore = require('./paper-presets-store.cjs');
 const paperPresetsSync = require('./paper-presets-sync.cjs');
 const workStatesStore = require('./work-states-store.cjs');
 const jobsStore = require('./jobs-store.cjs');
+const openTabsStore = require('./open-tabs-store.cjs');
 
 autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
@@ -128,6 +129,18 @@ ipcMain.handle('jobs:save', (_evt, payload) => {
   }
 });
 ipcMain.handle('jobs:delete', (_evt, id) => jobsStore.remove(id));
+
+// Tabs abiertas: persistimos la lista para restaurarlas al reabrir la app.
+// El state del editor (images/assignments) se persiste aparte via work-states,
+// indexado por el template id sintetico de cada tab.
+ipcMain.handle('open-tabs:load', () => openTabsStore.load());
+ipcMain.handle('open-tabs:save', (_evt, payload) => {
+  try {
+    return openTabsStore.save(payload);
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
 
 // Sync de plantillas con GitHub.
 // templates:sync-pull => pulla manifest + plantillas nuevas/cambiadas. Sobrescribe
@@ -426,78 +439,42 @@ ipcMain.handle('shell:show-item', (_evt, p) => {
   shell.showItemInFolder(p);
 });
 
-// printWin persistente: lo reutilizamos entre impresiones para que
-// Chromium retenga las preferencias del dialogo (impresora, papel, etc.).
-let printWin = null;
-const printTmpDirs = new Set();
-
-function ensurePrintWindow(parentWin) {
-  if (printWin && !printWin.isDestroyed()) return printWin;
-  printWin = new BrowserWindow({
-    show: false,
-    parent: parentWin ?? undefined,
-    webPreferences: {
-      sandbox: false,
-    },
-  });
-  printWin.on('closed', () => {
-    printWin = null;
-    for (const d of printTmpDirs) {
-      try { fs.rmSync(d, { recursive: true, force: true }); } catch {}
-    }
-    printTmpDirs.clear();
-  });
-  return printWin;
+// PrintHelper.exe: nativo .NET que muestra PrintDialog estandar (document
+// mode) — los settings que el usuario toque en Preferencias del driver se
+// aplican solo a ese trabajo, NUNCA persisten como defaults del sistema.
+// Esto es lo que hacen Adobe Reader, Word, Notepad. webContents.print() de
+// Electron no permite eso porque su path de DocumentProperties usa default
+// mode y persiste — bug viejo de Chromium.
+//
+// El binario se compila desde helper/PrintHelper.cs con helper/build-helper.ps1
+// y se commitea firmado al repo. En dev vive en helper/PrintHelper.exe; en
+// packaged va como extraResource a resources/PrintHelper.exe.
+function resolvePrintHelper() {
+  const candidates = [
+    path.join(__dirname, '..', 'helper', 'PrintHelper.exe'),
+    path.join(process.resourcesPath || '', 'PrintHelper.exe'),
+  ];
+  for (const c of candidates) {
+    if (c && fs.existsSync(c)) return c;
+  }
+  return null;
 }
 
-// Lista las impresoras instaladas en el sistema. La invocamos desde el modal
-// propio de impresion para que el usuario elija deviceName sin abrir el dialogo
-// nativo de Windows (que persiste configuraciones del driver como defaults
-// del sistema cuando uno entra a Preferencias — bug viejo de Chromium).
-ipcMain.handle('print:list-printers', async (evt) => {
-  try {
-    const parentWin = BrowserWindow.fromWebContents(evt.sender);
-    const win = ensurePrintWindow(parentWin);
-    const printers = await win.webContents.getPrintersAsync();
-    return { ok: true, printers: printers ?? [] };
-  } catch (err) {
-    return { ok: false, error: err.message, printers: [] };
-  }
-});
+// Decodifica una dataURL `data:image/png;base64,xxx...` a Buffer.
+function dataUrlToBuffer(dataUrl) {
+  const m = /^data:[^;]+;base64,(.+)$/.exec(dataUrl ?? '');
+  if (!m) throw new Error('dataURL invalida (se esperaba base64).');
+  return Buffer.from(m[1], 'base64');
+}
 
-// Abre el dialogo de Preferencias del driver para una impresora especifica.
-// Las preferencias que el usuario toque aca SI quedan como default del sistema
-// para esa impresora (es lo que el usuario quiere — configurar una sola vez).
-// El boton que invoca esto vive en PrintModal, separado del flujo de imprimir.
-ipcMain.handle('print:open-printer-config', async (_evt, payload) => {
-  const { deviceName } = payload ?? {};
-  if (!deviceName || typeof deviceName !== 'string') {
-    return { ok: false, error: 'Falta el nombre de la impresora.' };
-  }
-  return new Promise((resolve) => {
-    // rundll32 printui.dll,PrintUIEntry /e /n "Nombre" abre "Preferencias de
-    // impresion". Pasar args como array a spawn evita problemas de escape con
-    // nombres que tienen espacios/parentesis.
-    const proc = spawn(
-      'rundll32',
-      ['printui.dll,PrintUIEntry', '/e', '/n', deviceName],
-      { windowsHide: true, detached: true, stdio: 'ignore' },
-    );
-    proc.on('error', (err) => resolve({ ok: false, error: err.message }));
-    proc.unref();
-    // No esperamos a que cierre — rundll32 abre la UI y vuelve. Resolvemos
-    // ya para que el modal no se quede colgado.
-    setTimeout(() => resolve({ ok: true }), 200);
-  });
-});
-
-ipcMain.handle('print:pdf', async (evt, payload) => {
+ipcMain.handle('print:pdf', async (_evt, payload) => {
   const {
     images,
     pageWidthMm,
     pageHeightMm,
     deviceName,
     copies,
+    showDialog,
   } = payload ?? {};
   if (!Array.isArray(images) || images.length === 0) {
     return { ok: false, error: 'No hay paginas para imprimir.' };
@@ -505,110 +482,90 @@ ipcMain.handle('print:pdf', async (evt, payload) => {
   if (!pageWidthMm || !pageHeightMm) {
     return { ok: false, error: 'Tamano de hoja no definido.' };
   }
-  const parentWin = BrowserWindow.fromWebContents(evt.sender);
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'printlayout-print-'));
-  printTmpDirs.add(tmpDir);
-  const tmpHtml = path.join(tmpDir, 'print.html');
 
-  // HTML con @page del tamano exacto. Imprimir HTML evita el bug del visor
-  // PDF de Chromium en builds packaged (sale hoja en blanco).
-  const pages = images
-    .map((src) => `<div class="page"><img src="${src}"/></div>`)
-    .join('');
-  const html = `<!doctype html>
-<html><head><meta charset="utf-8"/>
-<style>
-  @page { size: ${pageWidthMm}mm ${pageHeightMm}mm; margin: 0; }
-  html, body { margin: 0; padding: 0; background: #fff; }
-  .page { width: ${pageWidthMm}mm; height: ${pageHeightMm}mm; page-break-after: always; overflow: hidden; }
-  .page:last-child { page-break-after: auto; }
-  .page img { width: 100%; height: 100%; display: block; }
-</style></head>
-<body>${pages}</body></html>`;
-
-  try {
-    fs.writeFileSync(tmpHtml, html, 'utf-8');
-  } catch (err) {
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-    printTmpDirs.delete(tmpDir);
-    return { ok: false, error: `No se pudo crear el HTML temporal: ${err.message}` };
+  const helperExe = resolvePrintHelper();
+  if (!helperExe) {
+    return { ok: false, error: 'No se encontro PrintHelper.exe.' };
   }
 
-  const win = ensurePrintWindow(parentWin);
+  // Volcar cada hoja (dataURL PNG) a un archivo temporal. El helper carga
+  // los PNG de disco — pasarlos por stdin junto al control complicaria el
+  // protocolo y limitaria por buffer pipe de Windows.
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'printlayout-print-'));
+  const pagePaths = [];
+  try {
+    for (let i = 0; i < images.length; i++) {
+      const p = path.join(tmpDir, `page-${String(i).padStart(3, '0')}.png`);
+      fs.writeFileSync(p, dataUrlToBuffer(images[i]));
+      pagePaths.push(p);
+    }
+  } catch (err) {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    return { ok: false, error: `No se pudieron preparar las hojas: ${err.message}` };
+  }
+
+  // Construir input del helper. Ver protocolo en helper/PrintHelper.cs.
+  const lines = [];
+  if (deviceName) lines.push(`DEVICE=${deviceName}`);
+  if (typeof copies === 'number' && copies > 0) {
+    lines.push(`COPIES=${Math.floor(copies)}`);
+  }
+  // Default: mostrar dialog (UX Adobe Reader). Caller puede pasar
+  // showDialog:false para impresion silent.
+  lines.push(`SHOW_DIALOG=${showDialog === false ? '0' : '1'}`);
+  lines.push(`WIDTH_MM=${pageWidthMm}`);
+  lines.push(`HEIGHT_MM=${pageHeightMm}`);
+  for (const p of pagePaths) lines.push(`PAGE=${p}`);
+  lines.push('END=1');
 
   return await new Promise((resolve) => {
-    let resolved = false;
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
     const settle = (result) => {
-      if (resolved) return;
-      resolved = true;
+      if (settled) return;
+      settled = true;
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
       resolve(result);
     };
 
-    // Liberar UI a los 5s; la window queda viva con el dialogo, asi el
-    // usuario puede tocar Propiedades sin que se cierre.
-    setTimeout(() => settle({ ok: true, async: true }), 5000);
+    let proc;
+    try {
+      proc = spawn(helperExe, [], { windowsHide: false });
+    } catch (err) {
+      settle({ ok: false, error: `No se pudo iniciar PrintHelper: ${err.message}` });
+      return;
+    }
 
-    const cleanupTmp = () => {
-      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-      printTmpDirs.delete(tmpDir);
-    };
-
-    const onLoaded = () => {
-      // Esperar que las <img> dataURL terminen de decodificarse antes
-      // de imprimir. Sin esto algunas impresoras reciben el job antes
-      // de que Chromium pinte y sale hoja en blanco.
-      win.webContents
-        .executeJavaScript(
-          `Promise.all(Array.from(document.images).map((img) =>
-             img.complete ? Promise.resolve() :
-             new Promise((r) => { img.onload = img.onerror = r; })
-           )).then(() => true)`,
-          true,
-        )
-        .catch(() => null)
-        .finally(() => {
-          if (win.isDestroyed()) return;
-          // Si vino deviceName usamos silent:true: nunca abrimos el dialogo
-          // de Windows -> nada que el usuario toque queda como default del
-          // sistema. Las copias van por parametro. Sin deviceName caemos al
-          // dialogo nativo (compat con cualquier caller viejo).
-          const printOptions = {
-            silent: Boolean(deviceName),
-            printBackground: true,
-            margins: { marginType: 'none' },
-            pageSize: {
-              width: Math.round(pageWidthMm * 1000),
-              height: Math.round(pageHeightMm * 1000),
-            },
-          };
-          if (deviceName) printOptions.deviceName = deviceName;
-          if (typeof copies === 'number' && copies > 0) {
-            printOptions.copies = Math.floor(copies);
-          }
-          win.webContents.print(
-            printOptions,
-            (success, reason) => {
-              cleanupTmp();
-              if (success) settle({ ok: true });
-              else if (reason === 'cancelled') settle({ ok: false, canceled: true });
-              else settle({ ok: false, error: reason || 'Impresion fallida.' });
-            },
-          );
-        });
-    };
-
-    const onFailed = (_e, code, desc) => {
-      cleanupTmp();
-      settle({ ok: false, error: `No se pudo cargar el HTML (${code}): ${desc}` });
-    };
-
-    win.webContents.once('did-finish-load', onLoaded);
-    win.webContents.once('did-fail-load', onFailed);
-
-    win.loadFile(tmpHtml).catch((err) => {
-      cleanupTmp();
-      settle({ ok: false, error: err.message });
+    proc.stdout.on('data', (d) => { stdout += d.toString('utf-8'); });
+    proc.stderr.on('data', (d) => { stderr += d.toString('utf-8'); });
+    proc.on('error', (err) => {
+      settle({ ok: false, error: `PrintHelper fallo: ${err.message}` });
     });
+    proc.on('close', (code) => {
+      // Parsear key=value del stdout.
+      const result = {};
+      for (const ln of stdout.split(/\r?\n/)) {
+        const eq = ln.indexOf('=');
+        if (eq <= 0) continue;
+        result[ln.slice(0, eq)] = ln.slice(eq + 1);
+      }
+      if (result.OK === '1') {
+        settle({ ok: true });
+      } else if (result.CANCELED === '1' || code === 2) {
+        settle({ ok: false, canceled: true });
+      } else {
+        const errMsg = result.ERROR || stderr.trim() || `PrintHelper exit ${code}`;
+        settle({ ok: false, error: errMsg });
+      }
+    });
+
+    try {
+      proc.stdin.write(lines.join('\n') + '\n', 'utf-8');
+      proc.stdin.end();
+    } catch (err) {
+      settle({ ok: false, error: `No se pudo enviar input al helper: ${err.message}` });
+    }
   });
 });
 
