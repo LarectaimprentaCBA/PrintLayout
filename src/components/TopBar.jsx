@@ -226,6 +226,13 @@ export default function TopBar({
   onRedo,
   canUndo,
   canRedo,
+  // Jobs (Fase A)
+  jobName,
+  jobDirty,
+  canSaveJob,
+  onSaveJob,
+  onSaveJobAs,
+  onOpenJob,
 }) {
   const fitDisabled = !onLayoutFitChange;
   const pdfBusy = exporting || printing;
@@ -257,6 +264,51 @@ export default function TopBar({
         <div className="flex items-center gap-2">
           <div className="h-5 w-5 rounded bg-accent-500" />
           <h1 className="text-sm font-semibold tracking-wide">PrintLayout</h1>
+          {(jobName !== undefined || canSaveJob) && (
+            <div
+              className="ml-2 max-w-[260px] truncate border-l border-ink-700 pl-3 text-xs"
+              title={jobName ? `Trabajo: ${jobName}` : 'Trabajo sin guardar'}
+            >
+              <span className={jobDirty ? 'text-amber-300' : 'text-ink-300'}>
+                {jobDirty ? '● ' : ''}
+                {jobName || 'Sin titulo'}
+              </span>
+            </div>
+          )}
+          <div className="ml-3 flex items-center gap-1">
+            {onOpenJob && (
+              <button
+                type="button"
+                onClick={onOpenJob}
+                title="Abrir trabajo (Ctrl+O)"
+                className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:bg-ink-700"
+              >
+                Abrir
+              </button>
+            )}
+            {onSaveJob && (
+              <button
+                type="button"
+                onClick={onSaveJob}
+                disabled={!canSaveJob}
+                title="Guardar trabajo (Ctrl+S)"
+                className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:bg-ink-700 disabled:opacity-40"
+              >
+                Guardar
+              </button>
+            )}
+            {onSaveJobAs && (
+              <button
+                type="button"
+                onClick={onSaveJobAs}
+                disabled={!canSaveJob}
+                title="Guardar como nuevo trabajo (Ctrl+Shift+S)"
+                className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:bg-ink-700 disabled:opacity-40"
+              >
+                Guardar como…
+              </button>
+            )}
+          </div>
           <div className="ml-3 flex items-center gap-0.5">
             <button
               type="button"

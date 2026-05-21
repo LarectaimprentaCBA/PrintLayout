@@ -19,9 +19,12 @@ import ImageCountPackModal from './components/ImageCountPackModal.jsx';
 import ImageEditorModal from './components/ImageEditorModal.jsx';
 import ImageCropModal from './components/ImageCropModal.jsx';
 import SaveTemplateModal from './components/SaveTemplateModal.jsx';
+import SaveJobModal from './components/SaveJobModal.jsx';
+import JobsListModal from './components/JobsListModal.jsx';
 import PaperPresetsModal from './components/PaperPresetsModal.jsx';
 import { useTemplates } from './hooks/useTemplates.js';
 import { usePaperPresets } from './hooks/usePaperPresets.js';
+import { useJobs } from './hooks/useJobs.js';
 import { BUILTIN_PAPER_PRESETS } from './lib/grid.js';
 import { useLayoutEditor } from './hooks/useLayoutEditor.js';
 import { readImageFiles, readImageFile } from './lib/images.js';
@@ -65,6 +68,13 @@ export default function App() {
     syncPull: syncPullPaperPresets,
     syncPush: syncPushPaperPresets,
   } = usePaperPresets();
+  const {
+    jobs,
+    loading: jobsLoading,
+    save: saveJobToDisk,
+    remove: removeJobFromDisk,
+    load: loadJobFromDisk,
+  } = useJobs();
   const [selectedId, setSelectedId] = useState(null);
   const [sharing, setSharing] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -228,6 +238,18 @@ export default function App() {
   // Imagenes precargadas que se asignan a una plantilla recien creada.
   const [pendingAutoAssign, setPendingAutoAssign] = useState(null); // { templateId, images }
 
+  // ---- Jobs (Fase A): un solo "trabajo" por vez ----
+  const [currentJobId, setCurrentJobId] = useState(null);
+  const [currentJobName, setCurrentJobName] = useState(null);
+  const [isDirty, setIsDirty] = useState(false);
+  const [saveJobModal, setSaveJobModal] = useState(null); // null | { saveAs: bool }
+  const [jobsListOpen, setJobsListOpen] = useState(false);
+  // Estado a aplicar al layout cuando el cambio de plantilla termine. Mismo
+  // patron que pendingAutoAssign.
+  const [pendingJobLoad, setPendingJobLoad] = useState(null);
+  // Ignora el primer fire del mutationTick effect (el initial render).
+  const lastMutationTickRef = useRef(layout.mutationTick);
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
   );
@@ -265,6 +287,33 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [layout, selected]);
 
+  // Atajos de jobs: Ctrl+S guarda, Ctrl+Shift+S guarda como, Ctrl+O abre lista.
+  // Guard: no disparar si el usuario esta tipeando en un input.
+  useEffect(() => {
+    const SELECTOR = 'input, textarea, select, [contenteditable="true"]';
+    function onKey(e) {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const key = e.key.toLowerCase();
+      if (key !== 's' && key !== 'o') return;
+      const t = e.target;
+      if (t && typeof t.closest === 'function' && t.closest(SELECTOR)) return;
+      const active = document.activeElement;
+      if (active && typeof active.matches === 'function' && active.matches(SELECTOR)) return;
+      if (key === 's') {
+        e.preventDefault();
+        if (!selected) return;
+        if (e.shiftKey) handleSaveJobAs();
+        else handleSaveJobShortcut();
+      } else if (key === 'o') {
+        e.preventDefault();
+        handleOpenJobsList();
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, currentJobId, currentJobName, isDirty, layout.images, layout.assignmentsFront, layout.assignmentsBack, layout.minPages]);
+
   // Atajos globales de undo/redo: Ctrl+Z deshace, Ctrl+Y rehace.
   // Mismas guards que el listener de Delete/Backspace: si el usuario esta
   // tipeando en un input, no interceptamos (asi el navegador hace su undo
@@ -291,6 +340,116 @@ export default function App() {
     if (uploading) return;
     setPdfUpload({ file });
   };
+
+  // Construye el payload de un job a partir del estado actual.
+  const buildJobPayload = (name, existingId = null) => {
+    if (!selected) return null;
+    return {
+      id: existingId || undefined,
+      name,
+      template: { ...selected },
+      images: layout.images,
+      assignmentsFront: layout.assignmentsFront,
+      assignmentsBack: layout.assignmentsBack,
+      minPages: layout.minPages,
+    };
+  };
+
+  const persistJob = async (name, { reuseId }) => {
+    const payload = buildJobPayload(name, reuseId ? currentJobId : null);
+    if (!payload) {
+      setToast({ kind: 'error', text: 'No hay plantilla activa para guardar.' });
+      return;
+    }
+    const r = await saveJobToDisk(payload);
+    if (!r?.ok) {
+      setToast({
+        kind: 'error',
+        text: `No se pudo guardar el trabajo: ${r?.error ?? 'error'}`,
+      });
+      return;
+    }
+    setCurrentJobId(r.job.id);
+    setCurrentJobName(r.job.name);
+    setIsDirty(false);
+    lastMutationTickRef.current = layout.mutationTick;
+    setToast({
+      kind: 'success',
+      text: reuseId && currentJobId
+        ? `Trabajo "${r.job.name}" actualizado.`
+        : `Trabajo "${r.job.name}" guardado.`,
+    });
+  };
+
+  const handleSaveJobShortcut = () => {
+    if (!selected) return;
+    if (currentJobId) {
+      // Update directo en el mismo id.
+      persistJob(currentJobName || 'Sin titulo', { reuseId: true });
+    } else {
+      setSaveJobModal({ saveAs: false });
+    }
+  };
+
+  const handleSaveJobAs = () => {
+    if (!selected) return;
+    setSaveJobModal({ saveAs: true });
+  };
+
+  const submitSaveJob = async ({ name }) => {
+    const isSaveAs = saveJobModal?.saveAs;
+    setSaveJobModal(null);
+    // Save As: siempre crea nuevo (no reusa id). "Guardar" comun reusa si hay.
+    await persistJob(name, { reuseId: !isSaveAs });
+  };
+
+  const performOpenJob = async (jobId) => {
+    setJobsListOpen(false);
+    const job = await loadJobFromDisk(jobId);
+    if (!job) {
+      setToast({ kind: 'error', text: 'No se pudo leer el trabajo.' });
+      return;
+    }
+    if (!job.template) {
+      setToast({ kind: 'error', text: 'El trabajo no tiene plantilla.' });
+      return;
+    }
+    // Id sintetico jobtpl_xxx: aisla la plantilla del job del work-states-store
+    // y de la lista de plantillas locales, asi editar este trabajo nunca pisa
+    // la plantilla original guardada.
+    const isolatedTpl = { ...job.template, id: `jobtpl_${job.id}`, temporal: true };
+    setDynamicTemplate(isolatedTpl);
+    setSelectedId(isolatedTpl.id);
+    setCurrentJobId(job.id);
+    setCurrentJobName(job.name);
+    setPendingJobLoad({
+      templateId: isolatedTpl.id,
+      images: job.images || [],
+      assignmentsFront: job.assignmentsFront || [],
+      assignmentsBack: job.assignmentsBack || [],
+      minPages: job.minPages ?? 1,
+    });
+  };
+
+  const handleOpenJob = (jobId) => {
+    if (isDirty) {
+      if (!window.confirm('Tenes cambios sin guardar. ¿Perderlos para abrir otro trabajo?')) return;
+    }
+    performOpenJob(jobId);
+  };
+
+  const handleDeleteJob = async (jobId) => {
+    const r = await removeJobFromDisk(jobId);
+    if (r?.ok) {
+      setToast({ kind: 'success', text: 'Trabajo eliminado.' });
+      if (jobId === currentJobId) {
+        setCurrentJobId(null);
+        setCurrentJobName(null);
+      }
+    }
+  };
+
+  const handleOpenJobsList = () => setJobsListOpen(true);
 
   const handleEditMargin = () => {
     if (!selected) return;
@@ -753,6 +912,44 @@ export default function App() {
     setPendingAutoAssign(null);
   }, [pendingAutoAssign, selected?.id, layout.totalCellsCount, layout.loadImagesWithMapping]);
 
+  // Tras un open de job: esperamos a que el cambio de plantilla este aplicado
+  // (selected.id matchea el id sintetico jobtpl_xxx) y entonces volcamos
+  // images + assignments al layout. loadFromJob marca skipNextSnapshot,
+  // asi NO marca dirty.
+  useEffect(() => {
+    if (!pendingJobLoad) return;
+    if (selected?.id !== pendingJobLoad.templateId) return;
+    layout.loadFromJob(pendingJobLoad);
+    // Sincronizamos el baseline del mutationTick: el loadFromJob bumpea
+    // tickets internos pero NO mutationTick (porque marca skip).
+    lastMutationTickRef.current = layout.mutationTick;
+    setIsDirty(false);
+    setPendingJobLoad(null);
+  }, [pendingJobLoad, selected?.id, layout]);
+
+  // Marca dirty cuando hay una accion real del usuario sobre el layout.
+  useEffect(() => {
+    if (layout.mutationTick === lastMutationTickRef.current) return;
+    lastMutationTickRef.current = layout.mutationTick;
+    setIsDirty(true);
+  }, [layout.mutationTick]);
+
+  // Cambio de plantilla manual (click en sidebar, +Grilla, etc.) = abandono
+  // del job actual. Si habia un job abierto, queda como "trabajo nuevo sin
+  // titulo" porque la plantilla cambio. Estamos en single-doc — no preservamos
+  // multiples docs todavia (eso viene en Fase B).
+  const lastSelectedIdRef = useRef(selectedId);
+  useEffect(() => {
+    if (lastSelectedIdRef.current === selectedId) return;
+    lastSelectedIdRef.current = selectedId;
+    // Si el cambio fue inducido por openJob (estamos esperando pendingJobLoad),
+    // dejamos que ese flujo maneje el estado del job (no reseteamos aca).
+    if (pendingJobLoad && pendingJobLoad.templateId === selectedId) return;
+    setCurrentJobId(null);
+    setCurrentJobName(null);
+    setIsDirty(false);
+  }, [selectedId, pendingJobLoad]);
+
   const cancelPdfExtract = async () => {
     const ctx = pdfExtract;
     setPdfExtract(null);
@@ -1176,6 +1373,12 @@ export default function App() {
           onRedo={layout.redo}
           canUndo={layout.canUndo}
           canRedo={layout.canRedo}
+          jobName={currentJobName}
+          jobDirty={isDirty}
+          canSaveJob={!!selected}
+          onSaveJob={handleSaveJobShortcut}
+          onSaveJobAs={handleSaveJobAs}
+          onOpenJob={handleOpenJobsList}
         />
         <div className="flex flex-1 overflow-hidden">
           <TemplatesSidebar
@@ -1359,6 +1562,26 @@ export default function App() {
           existingCategories={categoriasList}
           onConfirm={submitSaveTemplate}
           onCancel={() => setSaveTemplatePrompt(null)}
+        />
+
+        <SaveJobModal
+          open={!!saveJobModal}
+          defaultName={
+            saveJobModal?.saveAs
+              ? (currentJobName ? `${currentJobName} (copia)` : '')
+              : (currentJobName || '')
+          }
+          onConfirm={submitSaveJob}
+          onCancel={() => setSaveJobModal(null)}
+        />
+
+        <JobsListModal
+          open={jobsListOpen}
+          jobs={jobs}
+          loading={jobsLoading}
+          onOpen={handleOpenJob}
+          onDelete={handleDeleteJob}
+          onClose={() => setJobsListOpen(false)}
         />
 
 

@@ -74,6 +74,10 @@ export function useLayoutEditor(template, face = 'front') {
   // que cambie.
   const [historyTick, setHistoryTick] = useState(0);
   const bumpHistoryTick = useCallback(() => setHistoryTick((v) => v + 1), []);
+  // mutationTick: incrementa SOLO cuando una accion real del usuario modifica
+  // el estado (no incrementa en restore por cambio de plantilla, undo/redo,
+  // ni en loadFromJob). App.jsx la usa para marcar el job como "dirty".
+  const [mutationTick, setMutationTick] = useState(0);
 
   // Cambio de plantilla: restaura del Map o inicializa vacio. NO necesita
   // guardar la saliente porque el snapshot effect ya mantiene el Map al dia
@@ -234,6 +238,7 @@ export function useLayoutEditor(template, face = 'front') {
       }
       historyRef.current = truncated;
       historyIndexRef.current = truncated.length - 1;
+      setMutationTick((t) => t + 1);
     }
 
     // Actualizar Map persistente con estado actual.
@@ -652,6 +657,38 @@ export function useLayoutEditor(template, face = 'front') {
     );
   }, []);
 
+  // Carga el estado completo desde un job guardado. Sobreescribe images +
+  // assignments + minPages directamente, resetea el historial al snapshot
+  // cargado, y marca skipNextSnapshot para que NO se cuente como accion
+  // del usuario (no marca dirty). El template ya debe estar montado antes
+  // de llamar este metodo — el caller espera al cambio de selectedId via
+  // pendingJobLoad effect.
+  const loadFromJob = useCallback(({
+    images: jobImages,
+    assignmentsFront: jobFront,
+    assignmentsBack: jobBack,
+    minPages: jobMinPages,
+  } = {}) => {
+    const safeImages = Array.isArray(jobImages) ? jobImages : [];
+    const safeFront = Array.isArray(jobFront) ? jobFront : [];
+    const safeBack = Array.isArray(jobBack) ? jobBack : [];
+    const safeMin = Math.max(1, Math.floor(Number(jobMinPages) || 1));
+    skipNextSnapshotRef.current = true;
+    setImages(safeImages);
+    setAssignmentsFront(safeFront);
+    setAssignmentsBack(safeBack);
+    setMinPagesState(safeMin);
+    setSelectedCell(null);
+    historyRef.current = [{
+      images: safeImages,
+      assignmentsFront: safeFront,
+      assignmentsBack: safeBack,
+      minPages: safeMin,
+    }];
+    historyIndexRef.current = 0;
+    bumpHistoryTick();
+  }, [bumpHistoryTick]);
+
   const clearAll = useCallback(() => {
     setImages([]);
     const size = isMultiPage
@@ -693,5 +730,7 @@ export function useLayoutEditor(template, face = 'front') {
     canRedo,
     resetCurrentTemplateWork,
     templatesWithWork,
+    mutationTick,
+    loadFromJob,
   };
 }
