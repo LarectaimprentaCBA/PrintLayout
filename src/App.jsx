@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DndContext,
   DragOverlay,
@@ -7,6 +7,8 @@ import {
   useSensors,
 } from '@dnd-kit/core';
 import TopBar from './components/TopBar.jsx';
+import TabsBar from './components/TabsBar.jsx';
+import ConfirmModal from './components/ConfirmModal.jsx';
 import TemplatesSidebar from './components/TemplatesSidebar.jsx';
 import LayoutCanvas from './components/LayoutCanvas.jsx';
 import PropertiesSidebar from './components/PropertiesSidebar.jsx';
@@ -25,6 +27,7 @@ import PaperPresetsModal from './components/PaperPresetsModal.jsx';
 import { useTemplates } from './hooks/useTemplates.js';
 import { usePaperPresets } from './hooks/usePaperPresets.js';
 import { useJobs } from './hooks/useJobs.js';
+import { useTabs } from './hooks/useTabs.js';
 import { BUILTIN_PAPER_PRESETS } from './lib/grid.js';
 import { useLayoutEditor } from './hooks/useLayoutEditor.js';
 import { readImageFiles, readImageFile } from './lib/images.js';
@@ -75,7 +78,22 @@ export default function App() {
     remove: removeJobFromDisk,
     load: loadJobFromDisk,
   } = useJobs();
-  const [selectedId, setSelectedId] = useState(null);
+  // Multi-doc: el estado de "que estoy editando" vive en tabs. Cada tab tiene
+  // su template embebido (id sintetico tabtpl_<tabId>), nombre, jobId si fue
+  // guardado, isDirty, viewingFace, currentPage, customPaper. images +
+  // assignments + minPages + undo/redo los maneja useLayoutEditor via su
+  // templateStatesRef Map (keyed por template id) — al switchear tab cambia
+  // el template id y useLayoutEditor restora el state.
+  const {
+    tabs,
+    activeTab,
+    activeTabId,
+    createTab,
+    closeTab,
+    switchTab,
+    updateActiveTab,
+    updateTab,
+  } = useTabs();
   const [sharing, setSharing] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [presetsModalOpen, setPresetsModalOpen] = useState(false);
@@ -118,14 +136,12 @@ export default function App() {
     }
   };
 
-  // Plantilla "grilla rapida": vive solo en memoria. Si su id coincide con
-  // selectedId, la usamos para todo el flujo. Al cerrar la app se descarta.
-  const [dynamicTemplate, setDynamicTemplate] = useState(null);
-
-  const selected = useMemo(() => {
-    if (dynamicTemplate && selectedId === dynamicTemplate.id) return dynamicTemplate;
-    return templates.find((t) => t.id === selectedId) ?? null;
-  }, [templates, selectedId, dynamicTemplate]);
+  // El template de la tab activa ES el "selected": una copia self-contained
+  // con id sintetico (tabtpl_<tabId>). Por eso ya no hace falta lookup en
+  // templates list — el template ya viene completo. Si la tab esta vacia,
+  // selected = null y la app muestra el estado "sin plantilla".
+  const selected = activeTab?.template ?? null;
+  const selectedId = selected?.id ?? null;
 
   // Lista unica de carpetas usadas por las plantillas (para autocomplete y
   // agrupado en la sidebar).
@@ -138,7 +154,26 @@ export default function App() {
     return Array.from(set).sort();
   }, [templates]);
 
-  const [viewingFace, setViewingFace] = useState('front');
+  // viewingFace / currentPage / customPaper viven en la tab activa.
+  const viewingFace = activeTab?.viewingFace ?? 'front';
+  const currentPage = activeTab?.currentPage ?? 0;
+  const customPaper = activeTab?.customPaper ?? null;
+
+  const setViewingFace = useCallback(
+    (face) => updateActiveTab({ viewingFace: face }),
+    [updateActiveTab],
+  );
+  const setCurrentPage = useCallback(
+    (p) => updateActiveTab((tab) => ({
+      currentPage: typeof p === 'function' ? p(tab.currentPage) : p,
+    })),
+    [updateActiveTab],
+  );
+  const setCustomPaper = useCallback(
+    (cp) => updateActiveTab({ customPaper: cp }),
+    [updateActiveTab],
+  );
+
   const layout = useLayoutEditor(selected, viewingFace);
 
   // Si la plantilla deja de ser doble-faz, volvemos al frente.
@@ -146,7 +181,7 @@ export default function App() {
     if (!selected?.doubleSided && viewingFace !== 'front') {
       setViewingFace('front');
     }
-  }, [selected?.doubleSided, viewingFace]);
+  }, [selected?.doubleSided, viewingFace, setViewingFace]);
   const cellPickerRef = useRef(null);
   const pendingCellRef = useRef(null);
   // File picker para "+ Subir PDF" cuando se invoca desde el canvas vacio
@@ -161,15 +196,7 @@ export default function App() {
   const [cutting, setCutting] = useState(false);
   const [toast, setToast] = useState(null);
   const [layoutFitMode, setLayoutFitMode] = useState('contain');
-  const [currentPage, setCurrentPage] = useState(0);
   const [showCuts, setShowCuts] = useState(true);
-  // Override de tamano fisico de hoja para esta sesion. null = usar plantilla.
-  // No persiste; se resetea al cambiar de plantilla.
-  const [customPaper, setCustomPaper] = useState(null);
-
-  useEffect(() => {
-    setCustomPaper(null);
-  }, [selected?.id]);
 
   // Sync inicial al arrancar: cuando termina de cargar las plantillas locales,
   // pulla el manifest remoto. Si trae cambios, refresca local y avisa con un
@@ -238,17 +265,72 @@ export default function App() {
   // Imagenes precargadas que se asignan a una plantilla recien creada.
   const [pendingAutoAssign, setPendingAutoAssign] = useState(null); // { templateId, images }
 
-  // ---- Jobs (Fase A): un solo "trabajo" por vez ----
-  const [currentJobId, setCurrentJobId] = useState(null);
-  const [currentJobName, setCurrentJobName] = useState(null);
-  const [isDirty, setIsDirty] = useState(false);
+  // ---- Jobs / Tabs ----
+  // currentJobId/Name/isDirty viven en la tab activa.
+  const currentJobId = activeTab?.jobId ?? null;
+  const currentJobName = activeTab?.name ?? null;
+  const isDirty = activeTab?.isDirty ?? false;
   const [saveJobModal, setSaveJobModal] = useState(null); // null | { saveAs: bool }
   const [jobsListOpen, setJobsListOpen] = useState(false);
-  // Estado a aplicar al layout cuando el cambio de plantilla termine. Mismo
-  // patron que pendingAutoAssign.
-  const [pendingJobLoad, setPendingJobLoad] = useState(null);
+  // Estado a aplicar al layout cuando un nuevo template termine de montar
+  // (cambio de tab o abrir job). Mismo patron que pendingAutoAssign.
+  const [pendingTabLoad, setPendingTabLoad] = useState(null);
+  // Confirm modal para cerrar tab dirty.
+  const [closeTabConfirm, setCloseTabConfirm] = useState(null); // { id, name }
   // Ignora el primer fire del mutationTick effect (el initial render).
   const lastMutationTickRef = useRef(layout.mutationTick);
+
+  // Helper para abrir un raw template en la tab actual (si vacia) o en una nueva.
+  // initialLayout = { images?, assignmentsFront?, assignmentsBack?, minPages? }
+  // si viene, se aplica via pendingTabLoad despues del cambio de template.
+  const openInTab = useCallback((rawTemplate, opts = {}) => {
+    const { name, jobId = null, forceNew = false, initialLayout = null } = opts;
+    const empty = !!activeTab && !activeTab.template && !activeTab.jobId;
+    const reuse = !forceNew && empty;
+
+    let tabId;
+    let tplId;
+    if (reuse) {
+      tabId = activeTab.id;
+      tplId = `tabtpl_${tabId}`;
+      const tpl = rawTemplate
+        ? { ...rawTemplate, id: tplId, temporal: true, tabBacked: true }
+        : null;
+      updateActiveTab({
+        template: tpl,
+        name: name ?? activeTab.name,
+        jobId,
+        isDirty: false,
+        viewingFace: 'front',
+        currentPage: 0,
+        customPaper: null,
+      });
+    } else {
+      tabId = `tab_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+      tplId = `tabtpl_${tabId}`;
+      const tpl = rawTemplate
+        ? { ...rawTemplate, id: tplId, temporal: true, tabBacked: true }
+        : null;
+      createTab({
+        id: tabId,
+        template: tpl,
+        name,
+        jobId,
+        isDirty: false,
+      });
+    }
+
+    if (initialLayout) {
+      setPendingTabLoad({
+        templateId: tplId,
+        images: initialLayout.images || [],
+        assignmentsFront: initialLayout.assignmentsFront || [],
+        assignmentsBack: initialLayout.assignmentsBack || [],
+        minPages: initialLayout.minPages ?? 1,
+      });
+    }
+    return tabId;
+  }, [activeTab, updateActiveTab, createTab]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -287,14 +369,18 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [layout, selected]);
 
-  // Atajos de jobs: Ctrl+S guarda, Ctrl+Shift+S guarda como, Ctrl+O abre lista.
+  // Atajos de jobs y tabs:
+  //   Ctrl+S = guardar, Ctrl+Shift+S = guardar como, Ctrl+O = abrir lista
+  //   Ctrl+T = nueva tab vacia, Ctrl+W = cerrar tab activa
+  //   Ctrl+Tab = siguiente tab, Ctrl+Shift+Tab = anterior
   // Guard: no disparar si el usuario esta tipeando en un input.
   useEffect(() => {
     const SELECTOR = 'input, textarea, select, [contenteditable="true"]';
     function onKey(e) {
       if (!(e.ctrlKey || e.metaKey)) return;
       const key = e.key.toLowerCase();
-      if (key !== 's' && key !== 'o') return;
+      const isTab = e.key === 'Tab';
+      if (!isTab && key !== 's' && key !== 'o' && key !== 't' && key !== 'w') return;
       const t = e.target;
       if (t && typeof t.closest === 'function' && t.closest(SELECTOR)) return;
       const active = document.activeElement;
@@ -307,12 +393,25 @@ export default function App() {
       } else if (key === 'o') {
         e.preventDefault();
         handleOpenJobsList();
+      } else if (key === 't') {
+        e.preventDefault();
+        createTab({});
+      } else if (key === 'w') {
+        e.preventDefault();
+        requestCloseTab(activeTabId);
+      } else if (isTab) {
+        e.preventDefault();
+        const idx = tabs.findIndex((tt) => tt.id === activeTabId);
+        if (idx < 0 || tabs.length < 2) return;
+        const delta = e.shiftKey ? -1 : 1;
+        const nextIdx = (idx + delta + tabs.length) % tabs.length;
+        switchTab(tabs[nextIdx].id);
       }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, currentJobId, currentJobName, isDirty, layout.images, layout.assignmentsFront, layout.assignmentsBack, layout.minPages]);
+  }, [selected, currentJobId, currentJobName, isDirty, tabs, activeTabId, layout.images, layout.assignmentsFront, layout.assignmentsBack, layout.minPages]);
 
   // Atajos globales de undo/redo: Ctrl+Z deshace, Ctrl+Y rehace.
   // Mismas guards que el listener de Delete/Backspace: si el usuario esta
@@ -356,6 +455,7 @@ export default function App() {
   };
 
   const persistJob = async (name, { reuseId }) => {
+    const targetTabId = activeTabId;
     const payload = buildJobPayload(name, reuseId ? currentJobId : null);
     if (!payload) {
       setToast({ kind: 'error', text: 'No hay plantilla activa para guardar.' });
@@ -369,9 +469,13 @@ export default function App() {
       });
       return;
     }
-    setCurrentJobId(r.job.id);
-    setCurrentJobName(r.job.name);
-    setIsDirty(false);
+    // Update la tab del usuario (puede no ser la activa si tarda; uso updateTab
+    // con el id explicito que capture al inicio).
+    updateTab(targetTabId, {
+      jobId: r.job.id,
+      name: r.job.name,
+      isDirty: false,
+    });
     lastMutationTickRef.current = layout.mutationTick;
     setToast({
       kind: 'success',
@@ -398,9 +502,11 @@ export default function App() {
 
   const submitSaveJob = async ({ name }) => {
     const isSaveAs = saveJobModal?.saveAs;
+    const closeAfterId = saveJobModal?.closeAfterId;
     setSaveJobModal(null);
     // Save As: siempre crea nuevo (no reusa id). "Guardar" comun reusa si hay.
     await persistJob(name, { reuseId: !isSaveAs });
+    if (closeAfterId) closeTab(closeAfterId);
   };
 
   const performOpenJob = async (jobId) => {
@@ -414,27 +520,23 @@ export default function App() {
       setToast({ kind: 'error', text: 'El trabajo no tiene plantilla.' });
       return;
     }
-    // Id sintetico jobtpl_xxx: aisla la plantilla del job del work-states-store
-    // y de la lista de plantillas locales, asi editar este trabajo nunca pisa
-    // la plantilla original guardada.
-    const isolatedTpl = { ...job.template, id: `jobtpl_${job.id}`, temporal: true };
-    setDynamicTemplate(isolatedTpl);
-    setSelectedId(isolatedTpl.id);
-    setCurrentJobId(job.id);
-    setCurrentJobName(job.name);
-    setPendingJobLoad({
-      templateId: isolatedTpl.id,
-      images: job.images || [],
-      assignmentsFront: job.assignmentsFront || [],
-      assignmentsBack: job.assignmentsBack || [],
-      minPages: job.minPages ?? 1,
+    // Abrir el job en una tab. forceNew=true para no pisar la tab actual
+    // si el usuario ya esta trabajando — cada job vive en su propia tab.
+    openInTab(job.template, {
+      name: job.name,
+      jobId: job.id,
+      forceNew: true,
+      initialLayout: {
+        images: job.images || [],
+        assignmentsFront: job.assignmentsFront || [],
+        assignmentsBack: job.assignmentsBack || [],
+        minPages: job.minPages ?? 1,
+      },
     });
   };
 
   const handleOpenJob = (jobId) => {
-    if (isDirty) {
-      if (!window.confirm('Tenes cambios sin guardar. ¿Perderlos para abrir otro trabajo?')) return;
-    }
+    // Cada abrir = tab nueva. No hace falta confirmar dirty (no pisamos nada).
     performOpenJob(jobId);
   };
 
@@ -442,72 +544,102 @@ export default function App() {
     const r = await removeJobFromDisk(jobId);
     if (r?.ok) {
       setToast({ kind: 'success', text: 'Trabajo eliminado.' });
-      if (jobId === currentJobId) {
-        setCurrentJobId(null);
-        setCurrentJobName(null);
-      }
+      // Si alguna tab apuntaba a este job, le sacamos el jobId (queda como
+      // "Sin titulo" pero conserva el state — el usuario puede re-guardar).
+      tabs.forEach((t) => {
+        if (t.jobId === jobId) updateTab(t.id, { jobId: null });
+      });
     }
   };
 
   const handleOpenJobsList = () => setJobsListOpen(true);
+
+  // Pide cerrar una tab. Si esta dirty, abre ConfirmModal con opciones
+  // Guardar / Descartar / Cancelar. Si no, cierra directo.
+  const requestCloseTab = useCallback((id) => {
+    const tab = tabs.find((t) => t.id === id);
+    if (!tab) return;
+    if (tab.isDirty) {
+      setCloseTabConfirm({ id, name: tab.name || 'Sin titulo' });
+    } else {
+      closeTab(id);
+    }
+  }, [tabs, closeTab]);
+
+  const handleCloseTabConfirm = async (action) => {
+    const ctx = closeTabConfirm;
+    setCloseTabConfirm(null);
+    if (!ctx) return;
+    if (action === 'discard') {
+      closeTab(ctx.id);
+    } else if (action === 'save') {
+      // Switchear a la tab (si no es la activa) para que save use su contexto.
+      if (ctx.id !== activeTabId) switchTab(ctx.id);
+      const tab = tabs.find((t) => t.id === ctx.id);
+      if (!tab) return;
+      if (tab.jobId) {
+        await persistJob(tab.name || 'Sin titulo', { reuseId: true });
+        closeTab(ctx.id);
+      } else {
+        // Sin jobId: pedimos nombre. Abrimos SaveJobModal y delayed close.
+        setSaveJobModal({ saveAs: false, closeAfterId: ctx.id });
+      }
+    }
+  };
 
   const handleEditMargin = () => {
     if (!selected) return;
     setMarginPrompt({ defaultValue: String(selected.markMarginMm ?? 10) });
   };
 
-  // Aplica updates parciales a la plantilla temporal (grilla rapida) y
-  // regenera los cortes en base a cutMarginMm + markMarginMm + cutShape.
-  // Si markMarginMm <= 0 quedan sin cortes (no se puede cortar sin marcas).
+  // Aplica updates parciales a la plantilla de la tab activa (siempre es una
+  // copia self-contained con id sintetico). Regenera cortes en base a
+  // cutMarginMm + markMarginMm + cutShape. Si markMarginMm <= 0 sin cortes.
   const handleUpdateTemporalTemplate = (updates) => {
-    setDynamicTemplate((prev) => {
-      if (!prev || !prev.temporal) return prev;
-      const next = { ...prev, ...updates };
+    if (!activeTab?.template) return;
+    updateActiveTab((tab) => {
+      const next = { ...tab.template, ...updates };
       const cutM = next.cutMarginMm ?? 0;
       const markM = next.markMarginMm ?? 0;
       const shape = next.cutShape ?? 'rect';
       next.cortes = markM > 0
         ? generateCuts(next.celdas ?? [], { cutShape: shape, cutMarginMm: cutM })
         : [];
-      return next;
+      return { template: next };
     });
   };
 
-  const handleRenameTemplate = async (template, newName) => {
+  // Renombrar el template = renombrar localmente la copia de la tab. No toca
+  // la plantilla original guardada (que vive en templatesStore con su id
+  // real). Para renombrar la guardada, hay que editarla desde el sidebar.
+  const handleRenameTemplate = (template, newName) => {
     const trimmed = (newName || '').trim();
     if (!trimmed || trimmed === template.name) return;
-    if (template.temporal) {
-      setDynamicTemplate((prev) => (prev ? { ...prev, name: trimmed } : prev));
-      return;
-    }
-    await update({ ...template, name: trimmed });
+    updateActiveTab((tab) => ({
+      template: tab.template ? { ...tab.template, name: trimmed } : tab.template,
+    }));
   };
 
-  const handleSetCategoria = async (template, newCategoria) => {
-    const trimmed = (newCategoria || '').trim();
-    const current = (template.categoria || '').trim();
-    if (trimmed === current) return;
-    if (template.temporal) return; // categoria no aplica a temporales
-    await update({ ...template, categoria: trimmed || undefined });
-  };
+  // Categoria de tab no aplica (es metadata de la lista de plantillas, no del
+  // documento en curso). No hacemos nada.
+  const handleSetCategoria = () => {};
 
-  // Convierte una grilla temporal en plantilla permanente. Quita `temporal`
-  // del objeto, le pone nombre+categoria y la persiste via templates.save.
-  // El id se mantiene para preservar las asignaciones de imagenes en curso.
+  // Convierte el template del tab activo en plantilla permanente del store.
+  // El id se genera nuevo (el del tab es sintetico). El tab sigue trabajando
+  // con su copia local, asi nada se rompe.
   const submitSaveTemplate = async ({ name, categoria }) => {
     const tpl = saveTemplatePrompt;
     setSaveTemplatePrompt(null);
     if (!tpl) return;
     try {
-      const { temporal: _t, ...rest } = tpl;
+      // Quitamos id sintetico + temporal para que templatesStore genere id real.
+      const { id: _ignoredId, temporal: _t, ...rest } = tpl;
       const saved = await update({
         ...rest,
         name,
         categoria: categoria || undefined,
       });
-      setDynamicTemplate(null);
-      setSelectedId(saved.id);
-      setToast({ kind: 'success', text: `Plantilla "${saved.name}" guardada.` });
+      setToast({ kind: 'success', text: `Plantilla "${saved.name}" guardada en la lista.` });
     } catch (err) {
       console.error(err);
       setToast({ kind: 'error', text: `No se pudo guardar: ${err.message}` });
@@ -522,14 +654,12 @@ export default function App() {
     markMarginMm = 0,
     cutShape = 'rect',
   }) => {
-    const id = `tpl_dyn_${Date.now().toString(36)}`;
     // Solo generamos cortes si va a poder usarlos (necesita marcas L para
     // que el plotter alinee). Con markMarginMm=0 la grilla es sin corte.
     const cortes = markMarginMm > 0
       ? generateCuts(cells, { cutShape, cutMarginMm })
       : [];
     const tpl = {
-      id,
       name: 'Grilla rápida',
       pdfBase64: null,
       pageWidthMm: paperWidthMm,
@@ -543,10 +673,8 @@ export default function App() {
       cutShape,
       doubleSided: false,
       singlePage: true,
-      temporal: true,
     };
-    setDynamicTemplate(tpl);
-    setSelectedId(id);
+    openInTab(tpl, { name: 'Grilla rapida', forceNew: true });
     setGridModalOpen(false);
   };
 
@@ -568,7 +696,9 @@ export default function App() {
         name,
         categoria,
       });
-      setSelectedId(saved.id);
+      // Abrimos la plantilla recien creada en tab nueva (forceNew=true para
+      // no pisar el trabajo en curso).
+      openInTab(saved, { name: saved.name, forceNew: true });
       setToast({
         kind: 'success',
         text: `Plantilla "${saved.name}" lista. ${saved.celdas.length} celda${
@@ -806,12 +936,11 @@ export default function App() {
         setToast({ kind: 'error', text: 'No se pudieron leer las imágenes.' });
         return;
       }
-      const id = `tpl_dyn_${Date.now().toString(36)}`;
+      const name = pageCount > 1
+        ? `Por cantidad (${countPerPage}/hoja · ${pageCount} hojas)`
+        : `Por cantidad (${countPerPage} en hoja)`;
       const tpl = {
-        id,
-        name: pageCount > 1
-          ? `Por cantidad (${countPerPage}/hoja · ${pageCount} hojas)`
-          : `Por cantidad (${countPerPage} en hoja)`,
+        name,
         pdfBase64: null,
         pageWidthMm: paperWidthMm,
         pageHeightMm: paperHeightMm,
@@ -823,11 +952,13 @@ export default function App() {
         markMarginMm: 0,
         doubleSided: false,
         singlePage: true,
-        temporal: true,
       };
-      setDynamicTemplate(tpl);
-      setSelectedId(id);
-      setPendingAutoAssign({ templateId: id, images: loaded, cellMapping });
+      const tabId = openInTab(tpl, { name, forceNew: true });
+      setPendingAutoAssign({
+        templateId: `tabtpl_${tabId}`,
+        images: loaded,
+        cellMapping,
+      });
       setToast({
         kind: 'success',
         text: pageCount > 1
@@ -852,14 +983,13 @@ export default function App() {
         setToast({ kind: 'error', text: 'No se pudieron leer las imágenes.' });
         return;
       }
-      const id = `tpl_dyn_${Date.now().toString(36)}`;
+      const name = repeated
+        ? `Auto-acomodar (${totalCells} celdas, ${loaded.length} imgs)`
+        : pageCount > 1
+          ? `Auto-acomodar (${loaded.length} imgs · ${pageCount} hojas)`
+          : `Auto-acomodar (${loaded.length})`;
       const tpl = {
-        id,
-        name: repeated
-          ? `Auto-acomodar (${totalCells} celdas, ${loaded.length} imgs)`
-          : pageCount > 1
-            ? `Auto-acomodar (${loaded.length} imgs · ${pageCount} hojas)`
-            : `Auto-acomodar (${loaded.length})`,
+        name,
         pdfBase64: null,
         pageWidthMm: paperWidthMm,
         pageHeightMm: paperHeightMm,
@@ -874,11 +1004,13 @@ export default function App() {
         markMarginMm: 0,
         doubleSided: false,
         singlePage: true,
-        temporal: true,
       };
-      setDynamicTemplate(tpl);
-      setSelectedId(id);
-      setPendingAutoAssign({ templateId: id, images: loaded, cellMapping });
+      const tabId = openInTab(tpl, { name, forceNew: true });
+      setPendingAutoAssign({
+        templateId: `tabtpl_${tabId}`,
+        images: loaded,
+        cellMapping,
+      });
       if (repeated) {
         setToast({
           kind: 'success',
@@ -912,43 +1044,29 @@ export default function App() {
     setPendingAutoAssign(null);
   }, [pendingAutoAssign, selected?.id, layout.totalCellsCount, layout.loadImagesWithMapping]);
 
-  // Tras un open de job: esperamos a que el cambio de plantilla este aplicado
-  // (selected.id matchea el id sintetico jobtpl_xxx) y entonces volcamos
-  // images + assignments al layout. loadFromJob marca skipNextSnapshot,
-  // asi NO marca dirty.
+  // Tras adoptar un template en una tab (abrir job, switchear tab con state
+  // viejo, crear nueva tab con preset): esperamos a que el cambio de plantilla
+  // este aplicado (selected.id matchea el templateId esperado) y volcamos
+  // images + assignments al layout via loadFromJob. loadFromJob marca
+  // skipNextSnapshot asi NO marca dirty.
   useEffect(() => {
-    if (!pendingJobLoad) return;
-    if (selected?.id !== pendingJobLoad.templateId) return;
-    layout.loadFromJob(pendingJobLoad);
-    // Sincronizamos el baseline del mutationTick: el loadFromJob bumpea
-    // tickets internos pero NO mutationTick (porque marca skip).
+    if (!pendingTabLoad) return;
+    if (selected?.id !== pendingTabLoad.templateId) return;
+    layout.loadFromJob(pendingTabLoad);
     lastMutationTickRef.current = layout.mutationTick;
-    setIsDirty(false);
-    setPendingJobLoad(null);
-  }, [pendingJobLoad, selected?.id, layout]);
+    updateActiveTab({ isDirty: false });
+    setPendingTabLoad(null);
+  }, [pendingTabLoad, selected?.id, layout, updateActiveTab]);
 
-  // Marca dirty cuando hay una accion real del usuario sobre el layout.
+  // Marca dirty en la tab activa cuando hay una accion real del usuario.
+  // mutationTick incrementa SOLO con acciones (no en restore por switch de
+  // tab, no en undo/redo, no en loadFromJob). Asi switchear entre tabs no
+  // ensucia nada.
   useEffect(() => {
     if (layout.mutationTick === lastMutationTickRef.current) return;
     lastMutationTickRef.current = layout.mutationTick;
-    setIsDirty(true);
-  }, [layout.mutationTick]);
-
-  // Cambio de plantilla manual (click en sidebar, +Grilla, etc.) = abandono
-  // del job actual. Si habia un job abierto, queda como "trabajo nuevo sin
-  // titulo" porque la plantilla cambio. Estamos en single-doc — no preservamos
-  // multiples docs todavia (eso viene en Fase B).
-  const lastSelectedIdRef = useRef(selectedId);
-  useEffect(() => {
-    if (lastSelectedIdRef.current === selectedId) return;
-    lastSelectedIdRef.current = selectedId;
-    // Si el cambio fue inducido por openJob (estamos esperando pendingJobLoad),
-    // dejamos que ese flujo maneje el estado del job (no reseteamos aca).
-    if (pendingJobLoad && pendingJobLoad.templateId === selectedId) return;
-    setCurrentJobId(null);
-    setCurrentJobName(null);
-    setIsDirty(false);
-  }, [selectedId, pendingJobLoad]);
+    updateActiveTab({ isDirty: true });
+  }, [layout.mutationTick, updateActiveTab]);
 
   const cancelPdfExtract = async () => {
     const ctx = pdfExtract;
@@ -975,8 +1093,18 @@ export default function App() {
   };
 
   const handleDelete = async (id) => {
+    // Borra la plantilla del sidebar (lista permanente). Si alguna tab
+    // adopto una copia derivada, sigue funcionando: el template de la tab
+    // es self-contained.
     await remove(id);
-    if (id === selectedId) setSelectedId(null);
+  };
+
+  // Click en plantilla del sidebar: adopt en la tab actual si esta vacia,
+  // sino crea tab nueva con esa plantilla.
+  const handleSelectTemplate = (tplId) => {
+    const tpl = templates.find((t) => t.id === tplId);
+    if (!tpl) return;
+    openInTab(tpl, { name: tpl.name });
   };
 
   const handleCellClick = (cellIdx) => {
@@ -1380,13 +1508,21 @@ export default function App() {
           onSaveJobAs={handleSaveJobAs}
           onOpenJob={handleOpenJobsList}
         />
+        <TabsBar
+          tabs={tabs}
+          activeTabId={activeTabId}
+          onSwitch={switchTab}
+          onClose={requestCloseTab}
+          onRename={(id, name) => updateTab(id, { name })}
+          onNew={() => createTab({})}
+        />
         <div className="flex flex-1 overflow-hidden">
           <TemplatesSidebar
             templates={templates}
-            selectedId={selectedId}
+            selectedId={null}
             uploading={uploading}
             syncing={syncing}
-            onSelect={setSelectedId}
+            onSelect={handleSelectTemplate}
             onUploadPdf={handleUploadPdf}
             onDelete={handleDelete}
             onSync={() => runSyncWithToast()}
@@ -1582,6 +1718,18 @@ export default function App() {
           onOpen={handleOpenJob}
           onDelete={handleDeleteJob}
           onClose={() => setJobsListOpen(false)}
+        />
+
+        <ConfirmModal
+          open={!!closeTabConfirm}
+          title="Cerrar trabajo con cambios sin guardar"
+          message={`"${closeTabConfirm?.name ?? ''}" tiene cambios sin guardar. ¿Que querés hacer?`}
+          actions={[
+            { label: 'Descartar y cerrar', value: 'discard', variant: 'danger' },
+            { label: 'Guardar y cerrar', value: 'save', variant: 'primary' },
+          ]}
+          onAction={handleCloseTabConfirm}
+          onCancel={() => setCloseTabConfirm(null)}
         />
 
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   totalCells,
   cellsCountOnPage,
@@ -82,7 +82,10 @@ export function useLayoutEditor(template, face = 'front') {
   // Cambio de plantilla: restaura del Map o inicializa vacio. NO necesita
   // guardar la saliente porque el snapshot effect ya mantiene el Map al dia
   // en cada accion. Solo dispara cuando cambia el id.
-  useEffect(() => {
+  // useLayoutEffect (no useEffect) para que el state se aplique ANTES del
+  // paint — sino al switchear de tab se ve un frame con el state viejo del
+  // editor + el template nuevo, lo que provoca un "flash" feo.
+  useLayoutEffect(() => {
     const newTplId = template?.id ?? null;
     if (lastTemplateIdRef.current === newTplId) return;
 

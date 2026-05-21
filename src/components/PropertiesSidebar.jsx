@@ -580,7 +580,7 @@ export default function PropertiesSidebar({
                 )}
               </>
             )}
-            {template.temporal && (
+            {template.temporal && !template.tabBacked && (
               <div className="space-y-2">
                 <div className="rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-[11px] text-amber-200">
                   Grilla temporal — vive solo en esta sesión.
@@ -595,6 +595,17 @@ export default function PropertiesSidebar({
                   </button>
                 )}
               </div>
+            )}
+            {/* En tabs: ofrecer guardar como plantilla permanente sin el banner
+                de "temporal" (que ya no aplica — los trabajos viven como jobs). */}
+            {template.tabBacked && onSaveTemporal && (
+              <button
+                type="button"
+                onClick={() => onSaveTemporal(template)}
+                className="w-full rounded border border-accent-500/40 bg-accent-500/10 px-2 py-1.5 text-[11px] font-medium text-accent-200 hover:bg-accent-500/20"
+              >
+                Guardar como plantilla…
+              </button>
             )}
             {onResetWork && hasPersistedWork && (
               <div className="pt-2 mt-2 border-t border-ink-800">
