@@ -450,8 +450,55 @@ function ensurePrintWindow(parentWin) {
   return printWin;
 }
 
+// Lista las impresoras instaladas en el sistema. La invocamos desde el modal
+// propio de impresion para que el usuario elija deviceName sin abrir el dialogo
+// nativo de Windows (que persiste configuraciones del driver como defaults
+// del sistema cuando uno entra a Preferencias — bug viejo de Chromium).
+ipcMain.handle('print:list-printers', async (evt) => {
+  try {
+    const parentWin = BrowserWindow.fromWebContents(evt.sender);
+    const win = ensurePrintWindow(parentWin);
+    const printers = await win.webContents.getPrintersAsync();
+    return { ok: true, printers: printers ?? [] };
+  } catch (err) {
+    return { ok: false, error: err.message, printers: [] };
+  }
+});
+
+// Abre el dialogo de Preferencias del driver para una impresora especifica.
+// Las preferencias que el usuario toque aca SI quedan como default del sistema
+// para esa impresora (es lo que el usuario quiere — configurar una sola vez).
+// El boton que invoca esto vive en PrintModal, separado del flujo de imprimir.
+ipcMain.handle('print:open-printer-config', async (_evt, payload) => {
+  const { deviceName } = payload ?? {};
+  if (!deviceName || typeof deviceName !== 'string') {
+    return { ok: false, error: 'Falta el nombre de la impresora.' };
+  }
+  return new Promise((resolve) => {
+    // rundll32 printui.dll,PrintUIEntry /e /n "Nombre" abre "Preferencias de
+    // impresion". Pasar args como array a spawn evita problemas de escape con
+    // nombres que tienen espacios/parentesis.
+    const proc = spawn(
+      'rundll32',
+      ['printui.dll,PrintUIEntry', '/e', '/n', deviceName],
+      { windowsHide: true, detached: true, stdio: 'ignore' },
+    );
+    proc.on('error', (err) => resolve({ ok: false, error: err.message }));
+    proc.unref();
+    // No esperamos a que cierre — rundll32 abre la UI y vuelve. Resolvemos
+    // ya para que el modal no se quede colgado.
+    setTimeout(() => resolve({ ok: true }), 200);
+  });
+});
+
 ipcMain.handle('print:pdf', async (evt, payload) => {
-  const { images, pageWidthMm, pageHeightMm } = payload ?? {};
+  const {
+    images,
+    pageWidthMm,
+    pageHeightMm,
+    deviceName,
+    copies,
+  } = payload ?? {};
   if (!Array.isArray(images) || images.length === 0) {
     return { ok: false, error: 'No hay paginas para imprimir.' };
   }
@@ -521,16 +568,25 @@ ipcMain.handle('print:pdf', async (evt, payload) => {
         .catch(() => null)
         .finally(() => {
           if (win.isDestroyed()) return;
-          win.webContents.print(
-            {
-              silent: false,
-              printBackground: true,
-              margins: { marginType: 'none' },
-              pageSize: {
-                width: Math.round(pageWidthMm * 1000),
-                height: Math.round(pageHeightMm * 1000),
-              },
+          // Si vino deviceName usamos silent:true: nunca abrimos el dialogo
+          // de Windows -> nada que el usuario toque queda como default del
+          // sistema. Las copias van por parametro. Sin deviceName caemos al
+          // dialogo nativo (compat con cualquier caller viejo).
+          const printOptions = {
+            silent: Boolean(deviceName),
+            printBackground: true,
+            margins: { marginType: 'none' },
+            pageSize: {
+              width: Math.round(pageWidthMm * 1000),
+              height: Math.round(pageHeightMm * 1000),
             },
+          };
+          if (deviceName) printOptions.deviceName = deviceName;
+          if (typeof copies === 'number' && copies > 0) {
+            printOptions.copies = Math.floor(copies);
+          }
+          win.webContents.print(
+            printOptions,
             (success, reason) => {
               cleanupTmp();
               if (success) settle({ ok: true });

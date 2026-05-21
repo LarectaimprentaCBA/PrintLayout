@@ -378,6 +378,8 @@ export async function printLayoutPdf(template, assignments, imageMap, options) {
     images,
     pageWidthMm: paperWidthMm,
     pageHeightMm: paperHeightMm,
+    deviceName: options?.deviceName,
+    copies: options?.copies,
   });
   return result;
 }

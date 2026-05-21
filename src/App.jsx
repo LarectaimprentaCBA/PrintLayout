@@ -9,7 +9,6 @@ import {
 import TopBar from './components/TopBar.jsx';
 import TabsBar from './components/TabsBar.jsx';
 import ConfirmModal from './components/ConfirmModal.jsx';
-import TemplatesSidebar from './components/TemplatesSidebar.jsx';
 import LayoutCanvas from './components/LayoutCanvas.jsx';
 import PropertiesSidebar from './components/PropertiesSidebar.jsx';
 import PromptModal from './components/PromptModal.jsx';
@@ -23,7 +22,9 @@ import ImageCropModal from './components/ImageCropModal.jsx';
 import SaveTemplateModal from './components/SaveTemplateModal.jsx';
 import SaveJobModal from './components/SaveJobModal.jsx';
 import JobsListModal from './components/JobsListModal.jsx';
+import NewTabModal from './components/NewTabModal.jsx';
 import PaperPresetsModal from './components/PaperPresetsModal.jsx';
+import PrintModal from './components/PrintModal.jsx';
 import { useTemplates } from './hooks/useTemplates.js';
 import { usePaperPresets } from './hooks/usePaperPresets.js';
 import { useJobs } from './hooks/useJobs.js';
@@ -97,6 +98,9 @@ export default function App() {
   const [sharing, setSharing] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [presetsModalOpen, setPresetsModalOpen] = useState(false);
+  // printPrompt: { face } | null. Cuando esta seteado, se abre PrintModal y
+  // al confirmar dispara la impresion silenciosa con deviceName+copies.
+  const [printPrompt, setPrintPrompt] = useState(null);
 
   const runSyncWithToast = async ({ silent = false } = {}) => {
     setSyncing(true);
@@ -187,6 +191,11 @@ export default function App() {
   // File picker para "+ Subir PDF" cuando se invoca desde el canvas vacio
   // (la sidebar tiene su propio input interno).
   const blankPdfInputRef = useRef(null);
+  // File pickers para los flujos disparados desde NewTabModal (mismos handlers
+  // que ya usa la sidebar, pero con inputs al margen del DOM de la sidebar
+  // — asi el modal funciona aunque la sidebar deje de estar en Fase D).
+  const newTabAutoPickerRef = useRef(null);
+  const newTabCountPickerRef = useRef(null);
 
   const [activeDrag, setActiveDrag] = useState(null);
   const [exporting, setExporting] = useState(false);
@@ -197,6 +206,21 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [layoutFitMode, setLayoutFitMode] = useState('contain');
   const [showCuts, setShowCuts] = useState(true);
+
+  // Auto-abrir el modal "Nuevo trabajo" cuando se queda en una sola tab vacia
+  // (al arrancar la app, o tras cerrar la ultima tab que useTabs reemplaza
+  // por una vacia nueva). Asi el usuario nunca ve un canvas vacio sin saber
+  // que hacer. Guard: si ya abrimos para esta tab y el usuario lo cerro,
+  // no lo abrimos de nuevo hasta que cambie a otra tab vacia distinta.
+  const autoOpenedForTabIdRef = useRef(null);
+  useEffect(() => {
+    if (tabs.length !== 1) return;
+    const t = tabs[0];
+    if (t.template || t.jobId) return;
+    if (autoOpenedForTabIdRef.current === t.id) return;
+    autoOpenedForTabIdRef.current = t.id;
+    setNewTabModalOpen(true);
+  }, [tabs]);
 
   // Sync inicial al arrancar: cuando termina de cargar las plantillas locales,
   // pulla el manifest remoto. Si trae cambios, refresca local y avisa con un
@@ -272,6 +296,8 @@ export default function App() {
   const isDirty = activeTab?.isDirty ?? false;
   const [saveJobModal, setSaveJobModal] = useState(null); // null | { saveAs: bool }
   const [jobsListOpen, setJobsListOpen] = useState(false);
+  // Modal "Nuevo trabajo" (hub central de creacion).
+  const [newTabModalOpen, setNewTabModalOpen] = useState(false);
   // Estado a aplicar al layout cuando un nuevo template termine de montar
   // (cambio de tab o abrir job). Mismo patron que pendingAutoAssign.
   const [pendingTabLoad, setPendingTabLoad] = useState(null);
@@ -288,16 +314,31 @@ export default function App() {
     const empty = !!activeTab && !activeTab.template && !activeTab.jobId;
     const reuse = !forceNew && empty;
 
+    // Si el raw template viene con id "real" (no sintetico de tab/job), lo
+    // guardamos como sourceTemplateId. Asi PropertiesSidebar puede ocultar
+    // el boton "Guardar como plantilla" cuando ya esta en el store.
+    const rawId = rawTemplate?.id;
+    const sourceTemplateId = rawId
+      && typeof rawId === 'string'
+      && !rawId.startsWith('tabtpl_')
+      && !rawId.startsWith('jobtpl_')
+      ? rawId
+      : undefined;
+
+    const buildTpl = (tplId) => {
+      if (!rawTemplate) return null;
+      const t = { ...rawTemplate, id: tplId, temporal: true, tabBacked: true };
+      if (sourceTemplateId) t.sourceTemplateId = sourceTemplateId;
+      return t;
+    };
+
     let tabId;
     let tplId;
     if (reuse) {
       tabId = activeTab.id;
       tplId = `tabtpl_${tabId}`;
-      const tpl = rawTemplate
-        ? { ...rawTemplate, id: tplId, temporal: true, tabBacked: true }
-        : null;
       updateActiveTab({
-        template: tpl,
+        template: buildTpl(tplId),
         name: name ?? activeTab.name,
         jobId,
         isDirty: false,
@@ -308,12 +349,9 @@ export default function App() {
     } else {
       tabId = `tab_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
       tplId = `tabtpl_${tabId}`;
-      const tpl = rawTemplate
-        ? { ...rawTemplate, id: tplId, temporal: true, tabBacked: true }
-        : null;
       createTab({
         id: tabId,
-        template: tpl,
+        template: buildTpl(tplId),
         name,
         jobId,
         isDirty: false,
@@ -395,7 +433,7 @@ export default function App() {
         handleOpenJobsList();
       } else if (key === 't') {
         e.preventDefault();
-        createTab({});
+        setNewTabModalOpen(true);
       } else if (key === 'w') {
         e.preventDefault();
         requestCloseTab(activeTabId);
@@ -1315,7 +1353,7 @@ export default function App() {
     }
   };
 
-  const handlePrint = async (face = 'front') => {
+  const handlePrint = (face = 'front') => {
     if (!selected || printing) return;
     const isBack = face === 'back';
     const assignments = isBack ? layout.assignmentsBack : layout.assignmentsFront;
@@ -1326,11 +1364,22 @@ export default function App() {
       });
       return;
     }
+    setToast(null);
+    setPrintPrompt({ face });
+  };
+
+  const runPrintWith = async ({ deviceName, copies }) => {
+    const face = printPrompt?.face ?? 'front';
+    setPrintPrompt(null);
+    if (!selected) return;
+    const isBack = face === 'back';
+    const assignments = isBack ? layout.assignmentsBack : layout.assignmentsFront;
+    if (!assignments?.some((id) => id !== null)) return;
     setPrinting(face);
     setToast(null);
     // Defensa en profundidad: si por algún motivo la promesa nunca resuelve
-    // (callback de Chromium colgado), liberamos el botón a los 10s.
-    const safety = setTimeout(() => setPrinting(false), 10000);
+    // (callback de Chromium colgado), liberamos el botón a los 15s.
+    const safety = setTimeout(() => setPrinting(false), 15000);
     try {
       const result = await printLayoutPdf(selected, assignments, layout.imageMap, {
         layoutFitMode,
@@ -1338,6 +1387,8 @@ export default function App() {
         faceLabel: selected.doubleSided ? (isBack ? 'dorso' : 'frente') : undefined,
         paperWidthMm: customPaper?.widthMm,
         paperHeightMm: customPaper?.heightMm,
+        deviceName,
+        copies,
       });
       if (result?.canceled) {
         setToast(null);
@@ -1514,23 +1565,9 @@ export default function App() {
           onSwitch={switchTab}
           onClose={requestCloseTab}
           onRename={(id, name) => updateTab(id, { name })}
-          onNew={() => createTab({})}
+          onNew={() => setNewTabModalOpen(true)}
         />
         <div className="flex flex-1 overflow-hidden">
-          <TemplatesSidebar
-            templates={templates}
-            selectedId={null}
-            uploading={uploading}
-            syncing={syncing}
-            onSelect={handleSelectTemplate}
-            onUploadPdf={handleUploadPdf}
-            onDelete={handleDelete}
-            onSync={() => runSyncWithToast()}
-            onCreateGrid={() => setGridModalOpen(true)}
-            onAutoPack={handleStartAutoPack}
-            onCountPack={handleStartCountPack}
-            templatesWithWork={layout.templatesWithWork}
-          />
           <LayoutCanvas
             template={selected}
             assignments={layout.assignments}
@@ -1654,6 +1691,17 @@ export default function App() {
           />
         )}
 
+        <PrintModal
+          open={!!printPrompt}
+          faceLabel={
+            selected?.doubleSided
+              ? (printPrompt?.face === 'back' ? 'dorso' : 'frente')
+              : null
+          }
+          onConfirm={runPrintWith}
+          onCancel={() => setPrintPrompt(null)}
+        />
+
         <PaperPresetsModal
           open={presetsModalOpen}
           builtinPresets={BUILTIN_PAPER_PRESETS}
@@ -1732,6 +1780,45 @@ export default function App() {
           onCancel={() => setCloseTabConfirm(null)}
         />
 
+        <NewTabModal
+          open={newTabModalOpen}
+          templates={templates}
+          syncing={syncing}
+          onSync={() => runSyncWithToast()}
+          onDeleteTemplate={handleDelete}
+          onClose={() => setNewTabModalOpen(false)}
+          onPickTemplate={(id) => handleSelectTemplate(id)}
+          onCreateGrid={() => setGridModalOpen(true)}
+          onAutoPack={() => newTabAutoPickerRef.current?.click()}
+          onCountPack={() => newTabCountPickerRef.current?.click()}
+          onUploadPdf={() => blankPdfInputRef.current?.click()}
+          onOpenJobsList={() => setJobsListOpen(true)}
+        />
+
+        <input
+          ref={newTabAutoPickerRef}
+          type="file"
+          accept="image/jpeg,image/png,image/jpg"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            const files = Array.from(e.target.files || []);
+            e.target.value = '';
+            if (files.length > 0) handleStartAutoPack(files);
+          }}
+        />
+        <input
+          ref={newTabCountPickerRef}
+          type="file"
+          accept="image/jpeg,image/png,image/jpg"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            const files = Array.from(e.target.files || []);
+            e.target.value = '';
+            if (files.length > 0) handleStartCountPack(files);
+          }}
+        />
 
         <input
           ref={blankPdfInputRef}
