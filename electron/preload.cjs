@@ -51,6 +51,13 @@ contextBridge.exposeInMainWorld('printlayout', {
     save: (defaultName, bytes) =>
       ipcRenderer.invoke('export:save-pdf', { defaultName, bytes }),
     print: (payload) => ipcRenderer.invoke('print:pdf', payload),
+    listPrinters: () => ipcRenderer.invoke('print:list-printers'),
+    openPrinterConfig: (deviceName) =>
+      ipcRenderer.invoke('print:open-printer-config', { deviceName }),
+    resetPrinterConfig: (deviceName) =>
+      ipcRenderer.invoke('print:reset-printer-config', { deviceName }),
+    hasPrinterConfig: (deviceName) =>
+      ipcRenderer.invoke('print:has-printer-config', { deviceName }),
     extractImages: (bytes) => ipcRenderer.invoke('pdf:extract-images', { bytes }),
     readExtractedImage: (filePath) =>
       ipcRenderer.invoke('pdf:read-extracted-image', { path: filePath }),

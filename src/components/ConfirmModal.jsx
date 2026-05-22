@@ -7,6 +7,7 @@
 //   - onAction: (value) => void (se llama al click de cualquier accion)
 //   - onCancel: () => void (se llama al click en backdrop o Escape)
 //   - cancelLabel?: string (default 'Cancelar'; agrega boton extra al inicio)
+//   - children?: ReactNode (contenido extra renderizado entre message y actions)
 //
 // Convencion: el ultimo boton de actions es el confirmativo (variant 'primary'),
 // pero no es obligatorio — el caller arma las acciones como quiera.
@@ -26,6 +27,7 @@ export default function ConfirmModal({
   cancelLabel = 'Cancelar',
   onAction,
   onCancel,
+  children,
 }) {
   useEffect(() => {
     if (!open) return undefined;
@@ -48,6 +50,7 @@ export default function ConfirmModal({
       <div className="w-96 rounded-lg border border-ink-700 bg-ink-900 p-4 shadow-2xl">
         <h3 className="text-sm font-semibold text-ink-100">{title}</h3>
         {message && <p className="mt-1 text-xs text-ink-400">{message}</p>}
+        {children && <div className="mt-3">{children}</div>}
         <div className="mt-4 flex flex-wrap justify-end gap-2">
           {cancelLabel && (
             <button

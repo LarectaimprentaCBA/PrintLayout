@@ -571,34 +571,42 @@ export function useLayoutEditor(template, face = 'front') {
   );
 
   // Reparte equitativamente las imagenes cargadas entre las celdas de la pagina
-  // indicada (default: primera). Modos:
-  //   'fill-empty'  -> solo asigna en celdas vacias de la pagina (preserva las ocupadas).
-  //   'replace-all' -> sobreescribe todas las celdas de la pagina con el reparto.
-  // pageIdx fuera de rango: no hace nada.
+  // indicada (default: primera) o de todas las hojas. Modos:
+  //   'fill-empty'  -> solo asigna en celdas vacias del scope (preserva las ocupadas).
+  //   'replace-all' -> sobreescribe todas las celdas del scope con el reparto.
+  // scope:
+  //   'page'        -> solo la pagina pageIdx.
+  //   'all-pages'   -> todas las celdas de la cara actual (cruza hojas).
+  // pageIdx fuera de rango con scope='page': no hace nada.
   const distributeImagesEvenly = useCallback(
-    (mode = 'fill-empty', pageIdx = 0) => {
+    (mode = 'fill-empty', pageIdx = 0, scope = 'page') => {
       if (images.length === 0) return;
-      let start, count;
-      if (isMultiPage) {
-        if (!template) return;
-        const cellFace = isFront ? 'front' : 'back';
-        let offset = 0;
-        for (let i = 0; i < pageIdx; i++) {
-          offset += cellsCountOnPage(template, i, cellFace);
-        }
-        count = cellsCountOnPage(template, pageIdx, cellFace);
-        start = offset;
-        if (count === 0) return;
-      } else {
-        if (cellsPerPage === 0) return;
-        start = pageIdx * cellsPerPage;
-        count = cellsPerPage;
-      }
-      const end = start + count;
-      if (start >= assignments.length) return;
-
       const range = [];
-      for (let i = start; i < end && i < assignments.length; i++) range.push(i);
+      if (scope === 'all-pages') {
+        for (let i = 0; i < assignments.length; i++) range.push(i);
+      } else {
+        let start, count;
+        if (isMultiPage) {
+          if (!template) return;
+          const cellFace = isFront ? 'front' : 'back';
+          let offset = 0;
+          for (let i = 0; i < pageIdx; i++) {
+            offset += cellsCountOnPage(template, i, cellFace);
+          }
+          count = cellsCountOnPage(template, pageIdx, cellFace);
+          start = offset;
+          if (count === 0) return;
+        } else {
+          if (cellsPerPage === 0) return;
+          start = pageIdx * cellsPerPage;
+          count = cellsPerPage;
+        }
+        const end = start + count;
+        if (start >= assignments.length) return;
+        for (let i = start; i < end && i < assignments.length; i++) range.push(i);
+      }
+      if (range.length === 0) return;
+
       const targetIndices =
         mode === 'replace-all'
           ? range

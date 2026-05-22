@@ -4,23 +4,36 @@
 // custom; cualquier configuracion que el usuario toque en el dialogo nativo
 // que abre Chromium queda como default del sistema. Esto rompia el resto de
 // las apps en las PCs del local. Adobe Reader / Word / Notepad usan la API
-// PrintDialog de Win32 en "document mode": el DEVMODE elegido se usa solo
-// para ese trabajo y no persiste. Eso es lo que hace este helper, via
-// System.Windows.Forms.PrintDialog (que internamente esta en document mode).
+// DocumentProperties de Win32 sobre un DEVMODE en memoria: las preferencias
+// elegidas SOLO viven en ese DEVMODE — el sistema queda intacto. Eso es lo
+// que hace este helper.
+//
+// Modos (MODE=...):
+//   print     (default) — imprime las hojas. Acepta DEVMODE_FILE para usar
+//                         preferencias guardadas por la app.
+//   configure          — abre DocumentProperties sobre una copia en memoria
+//                         del DEVMODE del driver, devuelve el DEVMODE
+//                         resultante en stdout (DEVMODE_OUT=<base64>).
+//                         NO escribe nada al DEVMODE del sistema.
 //
 // Protocolo: lee key=value de stdin (1 por linea), termina con END=1.
-//   DEVICE=<name>           opcional — pre-selecciona impresora en el dialog
-//   COPIES=<n>              opcional — pre-rellena copias en el dialog
-//   SHOW_DIALOG=<0|1>       default 1 — si 0, imprime silent con DEVICE+COPIES
-//   WIDTH_MM=<float>        ancho fisico de hoja en mm (custom paper)
-//   HEIGHT_MM=<float>       alto fisico de hoja en mm
-//   PAGE=<path>             una linea PAGE= por hoja (PNG); orden = orden imprimir
+//   MODE=<print|configure>  default print
+//   DEVICE=<name>           obligatorio en configure; opcional en print
+//   COPIES=<n>              opcional (print)
+//   SHOW_DIALOG=<0|1>       default 1 (print) — si 0, silent
+//   WIDTH_MM=<float>        ancho hoja en mm (print)
+//   HEIGHT_MM=<float>       alto hoja en mm (print)
+//   PAGE=<path>             una linea por hoja PNG (print)
+//   DEVMODE_FILE=<path>     opcional — bin con DEVMODE guardado.
+//                           En print: se aplica al PrinterSettings.
+//                           En configure: precarga al abrir DocumentProperties.
 //   END=1                   fin de input
 //
 // Output a stdout, una key=value por linea:
-//   OK=1                    impresion exitosa
-//   OK=0 + CANCELED=1       usuario cancelo el dialog
-//   OK=0 + ERROR=<msg>      error
+//   OK=1                          ok
+//   OK=0 + CANCELED=1             usuario cancelo
+//   OK=0 + ERROR=<msg>            error
+//   DEVMODE_OUT=<base64>          (configure ok) bytes del DEVMODE resultante
 //
 // Exit codes: 0 ok, 1 error, 2 canceled.
 using System;
@@ -41,6 +54,12 @@ namespace PrintLayoutHelper {
         static int _pageIdx = 0;
         static float _widthMm = 0;
         static float _heightMm = 0;
+        // Cuando se aplica un DEVMODE guardado por la app (preferencias propias
+        // del usuario para esa impresora), respetamos su PaperSize/Margins/
+        // Orientation en vez de forzar nuestro MakePaperSize sintetico. Esto
+        // es lo que el usuario espera: si configuro un papel especifico en
+        // Preferencias, ese papel se usa al imprimir.
+        static bool _useDevModePaper = false;
 
         [STAThread]
         static int Main(string[] args) {
@@ -58,9 +77,11 @@ namespace PrintLayoutHelper {
 
                 Log("starting");
 
+                string mode = "print";
                 string device = null;
                 int copies = 1;
                 bool showDialog = true;
+                string devmodeFile = null;
 
                 string line;
                 while ((line = Console.In.ReadLine()) != null) {
@@ -69,14 +90,20 @@ namespace PrintLayoutHelper {
                     string k = line.Substring(0, eq);
                     string v = line.Substring(eq + 1);
                     if (k == "END") break;
+                    else if (k == "MODE") mode = v;
                     else if (k == "DEVICE") device = v;
                     else if (k == "COPIES") int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out copies);
                     else if (k == "SHOW_DIALOG") showDialog = v == "1";
                     else if (k == "WIDTH_MM") float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out _widthMm);
                     else if (k == "HEIGHT_MM") float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out _heightMm);
+                    else if (k == "DEVMODE_FILE") devmodeFile = v;
                     else if (k == "PAGE") PagePaths.Add(v);
                 }
-                Log("read input: pages=" + PagePaths.Count + " device=" + device + " copies=" + copies + " showDialog=" + showDialog);
+                Log("read input: mode=" + mode + " pages=" + PagePaths.Count + " device=" + device + " copies=" + copies + " showDialog=" + showDialog + " devmodeFile=" + devmodeFile);
+
+                if (mode == "configure") {
+                    return RunConfigure(device, devmodeFile);
+                }
 
                 if (PagePaths.Count == 0) {
                     WriteResult(false, "Sin hojas para imprimir.");
@@ -87,11 +114,22 @@ namespace PrintLayoutHelper {
                     return 1;
                 }
 
+                // Si tenemos un DEVMODE guardado para esta impresora, usamos el
+                // path CreateDC (raw GDI) que respeta el DEVMODE 100% — paper,
+                // calidad, color, bandeja, duplex, todo. PrinterSettings.
+                // SetHdevmode de .NET tiene comportamiento erratico segun driver
+                // (a veces ignora paper size); este path lo evita.
+                if (!string.IsNullOrEmpty(devmodeFile) && File.Exists(devmodeFile) && !string.IsNullOrEmpty(device)) {
+                    try {
+                        byte[] dm = File.ReadAllBytes(devmodeFile);
+                        return PrintViaCreateDC(device, dm, copies);
+                    } catch (Exception dmEx) {
+                        Log("CreateDC path fallo: " + dmEx.Message + " — cayendo a PrintDocument");
+                    }
+                }
+
                 var doc = new PrintDocument();
                 doc.OriginAtMargins = false;
-                doc.DefaultPageSettings.Margins = new Margins(0, 0, 0, 0);
-                doc.DefaultPageSettings.PaperSize = MakePaperSize();
-                doc.DefaultPageSettings.Landscape = false;
                 doc.PrintPage += OnPrintPage;
                 doc.QueryPageSettings += OnQueryPageSettings;
 
@@ -99,6 +137,45 @@ namespace PrintLayoutHelper {
                     doc.PrinterSettings.PrinterName = device;
                 }
                 if (copies > 0) doc.PrinterSettings.Copies = (short)copies;
+
+                // Aplicar DEVMODE guardado si existe — esto setea paper/calidad/
+                // color/duplex/etc. del job sin tocar el DEVMODE del sistema.
+                // PrinterSettings.SetHdevmode pisa Copies y PrinterName
+                // internamente — los re-aplicamos despues.
+                bool devModeApplied = false;
+                if (!string.IsNullOrEmpty(devmodeFile) && File.Exists(devmodeFile)) {
+                    try {
+                        byte[] dm = File.ReadAllBytes(devmodeFile);
+                        ApplyDevModeToPrinterSettings(doc.PrinterSettings, dm);
+                        Log("DEVMODE aplicado desde " + devmodeFile + " (" + dm.Length + "b)");
+                        // Re-pisar copies + printer name por si SetHdevmode los movio
+                        if (!string.IsNullOrEmpty(device)) doc.PrinterSettings.PrinterName = device;
+                        if (copies > 0) doc.PrinterSettings.Copies = (short)copies;
+                        devModeApplied = true;
+                    } catch (Exception dmEx) {
+                        Log("DEVMODE load fallo: " + dmEx.Message);
+                    }
+                }
+
+                _useDevModePaper = devModeApplied;
+                if (devModeApplied) {
+                    // Respetar la PaperSize/Margins/Orientation que vienen del
+                    // DEVMODE configurado. DefaultPageSettings se inicializa
+                    // automaticamente desde PrinterSettings al accederlo despues
+                    // de SetHdevmode — pero forzamos margins 0 (PrintLayout
+                    // dibuja sin sangria propia).
+                    doc.DefaultPageSettings.Margins = new Margins(0, 0, 0, 0);
+                    PaperSize dps = doc.DefaultPageSettings.PaperSize;
+                    Log("usando PaperSize del DEVMODE: "
+                        + (dps != null ? dps.PaperName + " " + dps.Width + "x" + dps.Height : "<null>")
+                        + " landscape=" + doc.DefaultPageSettings.Landscape);
+                } else {
+                    // Sin DEVMODE custom: forzamos el tamano del template como
+                    // source of truth (comportamiento original).
+                    doc.DefaultPageSettings.Margins = new Margins(0, 0, 0, 0);
+                    doc.DefaultPageSettings.PaperSize = MakePaperSize();
+                    doc.DefaultPageSettings.Landscape = false;
+                }
 
                 if (showDialog) {
                     Log("preparing dialog");
@@ -193,6 +270,322 @@ namespace PrintLayoutHelper {
             }
         }
 
+        // ---------------- PRINT via CreateDC (con DEVMODE custom) ----------------
+        // Bypaseamos PrintDocument para evitar el roundtrip via PrinterSettings,
+        // que segun driver puede no aplicar paper size / bandeja del DEVMODE
+        // guardado. CreateDC le pasa el DEVMODE directo al spooler — el driver
+        // imprime con exactamente esas opciones.
+        static int PrintViaCreateDC(string deviceName, byte[] devmode, int copiesOverride) {
+            if (devmode == null || devmode.Length == 0) {
+                WriteResult(false, "DEVMODE vacio para CreateDC.");
+                return 1;
+            }
+
+            // Sobreescribir dmCopies en el DEVMODE para reflejar la eleccion
+            // del usuario en el modal. Offset 86 (despues de dmDeviceName[32]*2 +
+            // dmSpecVersion(2) + dmDriverVersion(2) + dmSize(2) + dmDriverExtra(2)
+            // + dmFields(4) + dmOrientation(2) + dmPaperSize(2) + dmPaperLength(2)
+            // + dmPaperWidth(2) + dmScale(2) = 86).
+            byte[] dm = (byte[])devmode.Clone();
+            if (copiesOverride > 0 && dm.Length >= 92) {
+                try {
+                    short c = (short)Math.Min(copiesOverride, 999);
+                    dm[86] = (byte)(c & 0xff);
+                    dm[87] = (byte)((c >> 8) & 0xff);
+                    // Setear DM_COPIES en dmFields (offset 72).
+                    int f = dm[72] | (dm[73] << 8) | (dm[74] << 16) | (dm[75] << 24);
+                    f |= DM_COPIES;
+                    dm[72] = (byte)(f & 0xff);
+                    dm[73] = (byte)((f >> 8) & 0xff);
+                    dm[74] = (byte)((f >> 16) & 0xff);
+                    dm[75] = (byte)((f >> 24) & 0xff);
+                    Log("dmCopies override = " + c);
+                } catch (Exception ex) {
+                    Log("override copies fallo: " + ex.Message);
+                }
+            }
+
+            IntPtr pDevMode = Marshal.AllocHGlobal(dm.Length);
+            try {
+                Marshal.Copy(dm, 0, pDevMode, dm.Length);
+
+                IntPtr hDC = CreateDC("WINSPOOL", deviceName, null, pDevMode);
+                if (hDC == IntPtr.Zero) {
+                    int err = Marshal.GetLastWin32Error();
+                    WriteResult(false, "CreateDC fallo (err=" + err + ").");
+                    return 1;
+                }
+
+                try {
+                    var di = new DOCINFO {
+                        cbSize = Marshal.SizeOf(typeof(DOCINFO)),
+                        lpszDocName = "PrintLayout",
+                        lpszOutput = null,
+                        lpszDatatype = null,
+                        fwType = 0,
+                    };
+                    int jobId = StartDoc(hDC, ref di);
+                    if (jobId <= 0) {
+                        int err = Marshal.GetLastWin32Error();
+                        WriteResult(false, "StartDoc fallo (err=" + err + ").");
+                        return 1;
+                    }
+
+                    // GetDeviceCaps: dimensiones fisicas y offsets de la pagina
+                    // en pixeles del driver. El DC tiene origen en el inicio del
+                    // area imprimible — para dibujar borde-a-borde, partimos del
+                    // negativo del offset.
+                    int physW = GetDeviceCaps(hDC, PHYSICALWIDTH);
+                    int physH = GetDeviceCaps(hDC, PHYSICALHEIGHT);
+                    int offX = GetDeviceCaps(hDC, PHYSICALOFFSETX);
+                    int offY = GetDeviceCaps(hDC, PHYSICALOFFSETY);
+                    Log("DC: physW=" + physW + " physH=" + physH + " offX=" + offX + " offY=" + offY);
+
+                    using (Graphics g = Graphics.FromHdc(hDC)) {
+                        // Importante: el DC de impresora por default tiene
+                        // PageUnit=Display (1/100 pulgada), no Pixel. Como
+                        // PHYSICALWIDTH/HEIGHT y los offsets vienen en pixeles
+                        // del driver, forzamos PageUnit=Pixel para que el
+                        // rectangulo represente lo que esperamos.
+                        g.PageUnit = GraphicsUnit.Pixel;
+                        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                        g.SmoothingMode = SmoothingMode.HighQuality;
+                        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                        g.CompositingQuality = CompositingQuality.HighQuality;
+
+                        var pageRect = new Rectangle(-offX, -offY, physW, physH);
+
+                        foreach (string pagePath in PagePaths) {
+                            if (StartPage(hDC) <= 0) {
+                                Log("StartPage fallo en " + pagePath);
+                                continue;
+                            }
+                            try {
+                                byte[] bytes = File.ReadAllBytes(pagePath);
+                                using (var ms = new MemoryStream(bytes))
+                                using (var img = Image.FromStream(ms)) {
+                                    g.DrawImage(img, pageRect);
+                                }
+                            } catch (Exception drawEx) {
+                                Log("draw fallo: " + drawEx.Message);
+                            } finally {
+                                EndPage(hDC);
+                            }
+                        }
+
+                        EndDoc(hDC);
+                    }
+
+                    Console.Out.WriteLine("OK=1");
+                    Console.Out.WriteLine("DEVICE=" + deviceName);
+                    Console.Out.WriteLine("COPIES=" + (copiesOverride > 0 ? copiesOverride : 1));
+                    Console.Out.Flush();
+                    return 0;
+                } finally {
+                    DeleteDC(hDC);
+                }
+            } finally {
+                Marshal.FreeHGlobal(pDevMode);
+            }
+        }
+
+        // GDI / spooler P/Invoke para el path CreateDC.
+        [DllImport("gdi32.dll", EntryPoint = "CreateDCW", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern IntPtr CreateDC(string lpszDriver, string lpszDevice, string lpszOutput, IntPtr lpInitData);
+
+        [DllImport("gdi32.dll")]
+        static extern bool DeleteDC(IntPtr hdc);
+
+        [DllImport("gdi32.dll", EntryPoint = "StartDocW", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern int StartDoc(IntPtr hdc, [In] ref DOCINFO lpdi);
+
+        [DllImport("gdi32.dll", SetLastError = true)]
+        static extern int EndDoc(IntPtr hdc);
+
+        [DllImport("gdi32.dll", SetLastError = true)]
+        static extern int StartPage(IntPtr hdc);
+
+        [DllImport("gdi32.dll", SetLastError = true)]
+        static extern int EndPage(IntPtr hdc);
+
+        [DllImport("gdi32.dll")]
+        static extern int GetDeviceCaps(IntPtr hdc, int nIndex);
+
+        const int PHYSICALWIDTH = 110;
+        const int PHYSICALHEIGHT = 111;
+        const int PHYSICALOFFSETX = 112;
+        const int PHYSICALOFFSETY = 113;
+        const int DM_COPIES = 0x00000100;
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        struct DOCINFO {
+            public int cbSize;
+            [MarshalAs(UnmanagedType.LPWStr)] public string lpszDocName;
+            [MarshalAs(UnmanagedType.LPWStr)] public string lpszOutput;
+            [MarshalAs(UnmanagedType.LPWStr)] public string lpszDatatype;
+            public int fwType;
+        }
+
+        // ---------------- CONFIGURE mode ----------------
+        // Abre el dialogo Preferencias del driver sobre una copia en memoria
+        // del DEVMODE. Las elecciones del usuario se aplican SOLO al DEVMODE
+        // resultante — el del sistema queda como estaba.
+        static int RunConfigure(string deviceName, string devmodeFile) {
+            if (string.IsNullOrEmpty(deviceName)) {
+                WriteResult(false, "Falta DEVICE para configurar.");
+                return 1;
+            }
+
+            byte[] inputDm = null;
+            if (!string.IsNullOrEmpty(devmodeFile) && File.Exists(devmodeFile)) {
+                try { inputDm = File.ReadAllBytes(devmodeFile); }
+                catch (Exception ex) { Log("read input devmode fallo: " + ex.Message); }
+            }
+
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+
+            // Owner fantasma TopMost — sin esto el dialog puede aparecer detras
+            // de la ventana de Electron.
+            var owner = new Form {
+                StartPosition = FormStartPosition.Manual,
+                Location = new Point(-32000, -32000),
+                Size = new Size(1, 1),
+                ShowInTaskbar = false,
+                FormBorderStyle = FormBorderStyle.None,
+                Opacity = 0,
+                TopMost = true,
+            };
+            owner.Show();
+            owner.Activate();
+
+            byte[] resultDm = null;
+            DocumentPropertiesResult res;
+            try {
+                res = ShowDocumentProperties(owner.Handle, deviceName, inputDm, out resultDm);
+            } finally {
+                owner.Close();
+                owner.Dispose();
+            }
+
+            if (res == DocumentPropertiesResult.Canceled) {
+                Console.Out.WriteLine("OK=0");
+                Console.Out.WriteLine("CANCELED=1");
+                Console.Out.Flush();
+                return 2;
+            }
+            if (res != DocumentPropertiesResult.Ok || resultDm == null) {
+                WriteResult(false, "DocumentProperties no devolvio DEVMODE.");
+                return 1;
+            }
+
+            Console.Out.WriteLine("OK=1");
+            Console.Out.WriteLine("DEVMODE_OUT=" + Convert.ToBase64String(resultDm));
+            Console.Out.Flush();
+            return 0;
+        }
+
+        enum DocumentPropertiesResult { Ok, Canceled, Error }
+
+        // DocumentPropertiesW: muestra Preferencias del driver. Si DM_IN_BUFFER
+        // esta, parte del DEVMODE proporcionado (asi recordamos la ultima
+        // eleccion). Con DM_OUT_BUFFER, escribe el DEVMODE resultante a un
+        // buffer que el caller proporciona. fMode = 0 devuelve el size
+        // necesario.
+        [DllImport("winspool.drv", EntryPoint = "DocumentPropertiesW", SetLastError = true, CharSet = CharSet.Unicode)]
+        static extern int DocumentProperties(IntPtr hwnd, IntPtr hPrinter, string pDeviceName, IntPtr pDevModeOutput, IntPtr pDevModeInput, int fMode);
+
+        const int DM_OUT_BUFFER = 2;
+        const int DM_IN_PROMPT = 4;
+        const int DM_IN_BUFFER = 8;
+        const int IDOK = 1;
+        const int IDCANCEL = 2;
+
+        static DocumentPropertiesResult ShowDocumentProperties(
+            IntPtr ownerHwnd, string deviceName, byte[] inputDm, out byte[] outputDm)
+        {
+            outputDm = null;
+            IntPtr hPrinter;
+            if (!OpenPrinter(deviceName, out hPrinter, IntPtr.Zero)) {
+                Log("OpenPrinter fallo " + Marshal.GetLastWin32Error());
+                return DocumentPropertiesResult.Error;
+            }
+            try {
+                // 1ra llamada: tamano de buffer requerido por el driver.
+                int needed = DocumentProperties(ownerHwnd, hPrinter, deviceName, IntPtr.Zero, IntPtr.Zero, 0);
+                if (needed <= 0) {
+                    Log("DocumentProperties size = " + needed);
+                    return DocumentPropertiesResult.Error;
+                }
+
+                IntPtr pIn = IntPtr.Zero;
+                IntPtr pOut = IntPtr.Zero;
+                try {
+                    int flags = DM_IN_PROMPT | DM_OUT_BUFFER;
+                    // Si tenemos un DEVMODE previo del mismo size, lo pasamos
+                    // como input para que el dialog arranque en esas opciones.
+                    // Drivers distintos / versiones distintas pueden cambiar el
+                    // size — en ese caso, mejor no pasar nada que pasar basura.
+                    if (inputDm != null && inputDm.Length == needed) {
+                        pIn = Marshal.AllocHGlobal(needed);
+                        Marshal.Copy(inputDm, 0, pIn, needed);
+                        flags |= DM_IN_BUFFER;
+                    }
+                    pOut = Marshal.AllocHGlobal(needed);
+                    // Cero el buffer para evitar que driver lea basura como
+                    // "campos validos" via dmFields antes de poblarlos.
+                    for (int i = 0; i < needed; i++) Marshal.WriteByte(pOut, i, 0);
+
+                    int code = DocumentProperties(ownerHwnd, hPrinter, deviceName, pOut, pIn, flags);
+                    if (code == IDCANCEL) return DocumentPropertiesResult.Canceled;
+                    if (code != IDOK) {
+                        Log("DocumentProperties code=" + code + " err=" + Marshal.GetLastWin32Error());
+                        return DocumentPropertiesResult.Error;
+                    }
+
+                    byte[] buf = new byte[needed];
+                    Marshal.Copy(pOut, buf, 0, needed);
+                    outputDm = buf;
+                    return DocumentPropertiesResult.Ok;
+                } finally {
+                    if (pIn != IntPtr.Zero) Marshal.FreeHGlobal(pIn);
+                    if (pOut != IntPtr.Zero) Marshal.FreeHGlobal(pOut);
+                }
+            } finally {
+                ClosePrinter(hPrinter);
+            }
+        }
+
+        // Aplica un DEVMODE (bytes) a un PrinterSettings via SetHdevmode.
+        // Aloca un HGLOBAL movable con los bytes y se lo pasa; SetHdevmode
+        // copia el contenido, asi que despues podemos liberar nuestro handle.
+        const uint GMEM_MOVEABLE = 0x0002;
+
+        [DllImport("kernel32.dll")]
+        static extern IntPtr GlobalAlloc(uint uFlags, UIntPtr dwBytes);
+
+        static void ApplyDevModeToPrinterSettings(PrinterSettings settings, byte[] devmode) {
+            if (settings == null || devmode == null || devmode.Length == 0) return;
+            IntPtr hMem = GlobalAlloc(GMEM_MOVEABLE, (UIntPtr)devmode.Length);
+            if (hMem == IntPtr.Zero) return;
+            IntPtr ptr = GlobalLock(hMem);
+            if (ptr == IntPtr.Zero) { GlobalFree(hMem); return; }
+            try {
+                Marshal.Copy(devmode, 0, ptr, devmode.Length);
+            } finally {
+                GlobalUnlock(hMem);
+            }
+            try {
+                settings.SetHdevmode(hMem);
+            } catch (Exception ex) {
+                Log("SetHdevmode fallo: " + ex.Message);
+            } finally {
+                // SetHdevmode copia los bytes internamente — el handle ya no
+                // se necesita.
+                try { GlobalFree(hMem); } catch { }
+            }
+        }
+
         static PaperSize MakePaperSize() {
             // PaperSize en System.Drawing usa centesimas de pulgada.
             int widthHi = (int)Math.Round(_widthMm / 25.4f * 100f);
@@ -203,13 +596,22 @@ namespace PrintLayoutHelper {
         }
 
         static void OnQueryPageSettings(object sender, QueryPageSettingsEventArgs e) {
-            // Forzar paper size y margins en cada hoja por si el driver pisa.
-            // Esto reemplaza la PaperSize elegida en Preferencias del driver con
-            // la del PDF/template — la idea es que PrintLayout es source of truth
-            // del tamano fisico de hoja; lo demas del driver (calidad, color,
-            // bandeja, duplex) sigue siendo lo elegido por el usuario.
-            e.PageSettings.PaperSize = MakePaperSize();
+            // Margenes siempre 0 — PrintLayout dibuja exactamente lo que se
+            // imprime, sin que el driver agregue su sangria.
             e.PageSettings.Margins = new Margins(0, 0, 0, 0);
+
+            if (_useDevModePaper) {
+                // Con DEVMODE custom: respetamos PaperSize/Orientation del
+                // driver. e.PageSettings ya hereda de DefaultPageSettings (que
+                // a su vez sale del PrinterSettings post-SetHdevmode), asi que
+                // no hace falta tocar nada mas.
+                return;
+            }
+
+            // Sin DEVMODE custom: forzamos PaperSize del template como source
+            // of truth. Esto reemplaza el PaperSize del driver — apunta a que
+            // PrintLayout maneje el tamano fisico de hoja.
+            e.PageSettings.PaperSize = MakePaperSize();
             e.PageSettings.Landscape = false;
         }
 

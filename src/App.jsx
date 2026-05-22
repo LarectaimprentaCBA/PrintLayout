@@ -20,6 +20,7 @@ import ImageCountPackModal from './components/ImageCountPackModal.jsx';
 import ImageEditorModal from './components/ImageEditorModal.jsx';
 import ImageCropModal from './components/ImageCropModal.jsx';
 import SaveTemplateModal from './components/SaveTemplateModal.jsx';
+import PrintModal from './components/PrintModal.jsx';
 import SaveJobModal from './components/SaveJobModal.jsx';
 import JobsListModal from './components/JobsListModal.jsx';
 import NewTabModal from './components/NewTabModal.jsx';
@@ -199,6 +200,7 @@ export default function App() {
   const [exporting, setExporting] = useState(false);
   const [printing, setPrinting] = useState(false);
   const [saveTemplatePrompt, setSaveTemplatePrompt] = useState(null); // template temporal | null
+  const [printPrompt, setPrintPrompt] = useState(null); // { face } | null
   const [uploading, setUploading] = useState(false);
   const [cutting, setCutting] = useState(false);
   const [toast, setToast] = useState(null);
@@ -241,8 +243,38 @@ export default function App() {
     setSharing(true);
     setToast(null);
     try {
-      const r = await share(template);
+      // Si la plantilla viene de un tab (id sintetico) pero esta backed por
+      // una plantilla guardada (sourceTemplateId), primero pusheamos los
+      // cambios locales del tab al store y despues compartimos esa version.
+      let toShare = template;
+      if (template.temporal && template.sourceTemplateId) {
+        const {
+          id: _ignoredId,
+          temporal: _t,
+          tabBacked: _tb,
+          sourceTemplateId: _sti,
+          ...rest
+        } = template;
+        toShare = await update({ ...rest, id: template.sourceTemplateId });
+      }
+      const r = await share(toShare);
       if (r?.ok) {
+        // Reflejar sharedAt/sharedHash en el tab para que la UI muestre
+        // "Compartida: Sí" y el boton diga "Subir cambios" sin reabrir.
+        if (r.template) {
+          updateActiveTab((tab) => {
+            if (!tab.template) return {};
+            if (tab.template.sourceTemplateId !== r.template.id
+              && tab.template.id !== r.template.id) return {};
+            return {
+              template: {
+                ...tab.template,
+                sharedAt: r.template.sharedAt,
+                sharedHash: r.template.sharedHash,
+              },
+            };
+          });
+        }
         setToast({
           kind: 'success',
           text: `Plantilla "${template.name}" compartida con el equipo.`,
@@ -764,19 +796,41 @@ export default function App() {
   const handleSetCategoria = () => {};
 
   // Convierte el template del tab activo en plantilla permanente del store.
-  // El id se genera nuevo (el del tab es sintetico). El tab sigue trabajando
-  // con su copia local, asi nada se rompe.
+  // Si la tab ya esta backed por un template del store (sourceTemplateId),
+  // updateamos ese. Sino, se crea uno nuevo (id generado por save).
+  // El tab sigue con su id sintetico, pero apuntando al store via
+  // sourceTemplateId, asi aparece el boton Compartir.
   const submitSaveTemplate = async ({ name, categoria }) => {
     const tpl = saveTemplatePrompt;
     setSaveTemplatePrompt(null);
     if (!tpl) return;
     try {
-      // Quitamos id sintetico + temporal para que templatesStore genere id real.
-      const { id: _ignoredId, temporal: _t, ...rest } = tpl;
+      const {
+        id: _ignoredId,
+        temporal: _t,
+        tabBacked: _tb,
+        sourceTemplateId: _sti,
+        ...rest
+      } = tpl;
       const saved = await update({
         ...rest,
+        ...(tpl.sourceTemplateId ? { id: tpl.sourceTemplateId } : {}),
         name,
         categoria: categoria || undefined,
+      });
+      // Apuntar la tab al template guardado para que aparezca "Compartir".
+      updateActiveTab((tab) => {
+        if (!tab.template) return {};
+        return {
+          template: {
+            ...tab.template,
+            sourceTemplateId: saved.id,
+            name: saved.name,
+            categoria: saved.categoria,
+            sharedAt: saved.sharedAt,
+            sharedHash: saved.sharedHash,
+          },
+        };
       });
       setToast({ kind: 'success', text: `Plantilla "${saved.name}" guardada en la lista.` });
     } catch (err) {
@@ -1454,7 +1508,9 @@ export default function App() {
     }
   };
 
-  const handlePrint = async (face = 'front') => {
+  // Abre el PrintModal donde el usuario elige impresora + copias. La
+  // impresion real ocurre en runPrint cuando el modal confirma.
+  const handlePrint = (face = 'front') => {
     if (!selected || printing) return;
     const isBack = face === 'back';
     const assignments = isBack ? layout.assignmentsBack : layout.assignmentsFront;
@@ -1465,19 +1521,32 @@ export default function App() {
       });
       return;
     }
+    setPrintPrompt({ face });
+  };
+
+  const runPrint = async ({ deviceName, copies, pages }) => {
+    const prompt = printPrompt;
+    setPrintPrompt(null);
+    if (!prompt || !selected) return;
+    const face = prompt.face;
+    const isBack = face === 'back';
+    const assignments = isBack ? layout.assignmentsBack : layout.assignmentsFront;
     setPrinting(face);
     setToast(null);
     try {
-      // El helper nativo muestra el PrintDialog estandar de Windows en modo
-      // documento. El usuario elige impresora + toca lo que quiera en
-      // Preferencias del driver — todo se aplica solo a ese trabajo y NO
-      // queda como default del sistema.
+      // Impresion silent: el helper recibe DEVICE+COPIES y NO abre el
+      // dialogo de Windows. Si el usuario eligio un subconjunto de paginas
+      // en el modal, lo pasamos como `pages` (indices 0-based).
       const result = await printLayoutPdf(selected, assignments, layout.imageMap, {
         layoutFitMode,
         embedBackground: !isBack && !selected.singlePage,
         faceLabel: selected.doubleSided ? (isBack ? 'dorso' : 'frente') : undefined,
         paperWidthMm: customPaper?.widthMm,
         paperHeightMm: customPaper?.heightMm,
+        deviceName,
+        copies,
+        pages,
+        showDialog: false,
       });
       if (result?.canceled) {
         setToast(null);
@@ -1656,8 +1725,12 @@ export default function App() {
             }
             return layout.assignments.slice(start, start + count).some((id) => id !== null);
           })()}
-          onDistributeEvenly={(mode) =>
-            layout.distributeImagesEvenly(mode, currentPage)
+          hasOccupiedCellsAllPages={
+            !!selected && layout.assignments.some((id) => id !== null)
+          }
+          totalPages={layout.pageCount}
+          onDistributeEvenly={(mode, scope) =>
+            layout.distributeImagesEvenly(mode, currentPage, scope)
           }
           onUndo={layout.undo}
           onRedo={layout.redo}
@@ -1865,6 +1938,19 @@ export default function App() {
           existingCategories={categoriasList}
           onConfirm={submitSaveTemplate}
           onCancel={() => setSaveTemplatePrompt(null)}
+        />
+
+        <PrintModal
+          open={!!printPrompt}
+          faceLabel={
+            printPrompt && selected?.doubleSided
+              ? (printPrompt.face === 'back' ? 'dorso' : 'frente')
+              : undefined
+          }
+          totalPages={layout.pageCount}
+          currentPage={currentPage}
+          onConfirm={runPrint}
+          onCancel={() => setPrintPrompt(null)}
         />
 
         <SaveJobModal

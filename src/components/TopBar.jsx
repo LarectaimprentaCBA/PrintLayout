@@ -221,6 +221,8 @@ export default function TopBar({
   cellsPerPage,
   imagesLoaded,
   hasOccupiedCells,
+  hasOccupiedCellsAllPages,
+  totalPages,
   onDistributeEvenly,
   onUndo,
   onRedo,
@@ -238,24 +240,41 @@ export default function TopBar({
   const pdfBusy = exporting || printing;
 
   const [distributeModalOpen, setDistributeModalOpen] = useState(false);
+  const [distributeAllPages, setDistributeAllPages] = useState(false);
 
   const canDistribute =
     typeof onDistributeEvenly === 'function' &&
     (cellsPerPage ?? 0) >= 2 &&
     imagesLoaded > 0;
 
+  const multiplePages = (totalPages ?? 1) > 1;
+
+  // Si el modal se abre con el checkbox marcado de una sesion anterior pero ya no
+  // hay varias hojas, reseteamos para que no quede colgado.
+  useEffect(() => {
+    if (!multiplePages && distributeAllPages) setDistributeAllPages(false);
+  }, [multiplePages, distributeAllPages]);
+
+  // Celdas ocupadas en el scope actual del modal (depende del checkbox).
+  const occupiedInScope = distributeAllPages
+    ? !!hasOccupiedCellsAllPages
+    : !!hasOccupiedCells;
+
   const handleDistributeClick = () => {
     if (!canDistribute) return;
-    if (hasOccupiedCells) {
+    // Abrir el modal si hay varias hojas (para que el usuario elija scope)
+    // o si hay celdas ocupadas en la hoja actual (para que elija fill/replace).
+    if (multiplePages || hasOccupiedCells) {
       setDistributeModalOpen(true);
     } else {
-      onDistributeEvenly('fill-empty');
+      onDistributeEvenly('fill-empty', 'page');
     }
   };
 
   const handleDistributeAction = (mode) => {
+    const scope = distributeAllPages ? 'all-pages' : 'page';
     setDistributeModalOpen(false);
-    onDistributeEvenly(mode);
+    onDistributeEvenly(mode, scope);
   };
 
   return (
@@ -510,15 +529,43 @@ export default function TopBar({
       </header>
       <ConfirmModal
         open={distributeModalOpen}
-        title="Ya hay celdas ocupadas en esta hoja"
-        message="¿Querés llenar solo las celdas vacías o reemplazar todas las celdas con un reparto nuevo?"
-        actions={[
-          { label: 'Solo llenar vacías', value: 'fill-empty', variant: 'default' },
-          { label: 'Reemplazar todo', value: 'replace-all', variant: 'primary' },
-        ]}
+        title={
+          occupiedInScope
+            ? distributeAllPages
+              ? 'Ya hay celdas ocupadas en estas hojas'
+              : 'Ya hay celdas ocupadas en esta hoja'
+            : 'Repartir parejo'
+        }
+        message={
+          occupiedInScope
+            ? '¿Querés llenar solo las celdas vacías o reemplazar todas las celdas con un reparto nuevo?'
+            : distributeAllPages
+              ? 'Las imágenes cargadas se van a repartir entre las celdas de todas las hojas.'
+              : 'Las imágenes cargadas se van a repartir entre las celdas de esta hoja.'
+        }
+        actions={
+          occupiedInScope
+            ? [
+                { label: 'Solo llenar vacías', value: 'fill-empty', variant: 'default' },
+                { label: 'Reemplazar todo', value: 'replace-all', variant: 'primary' },
+              ]
+            : [{ label: 'Repartir', value: 'fill-empty', variant: 'primary' }]
+        }
         onAction={handleDistributeAction}
         onCancel={() => setDistributeModalOpen(false)}
-      />
+      >
+        {multiplePages && (
+          <label className="flex items-center gap-2 text-xs text-ink-200 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={distributeAllPages}
+              onChange={(e) => setDistributeAllPages(e.target.checked)}
+              className="h-3.5 w-3.5 accent-accent-600"
+            />
+            <span>Repartir en todas las hojas ({totalPages})</span>
+          </label>
+        )}
+      </ConfirmModal>
     </>
   );
 }

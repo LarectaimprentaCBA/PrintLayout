@@ -566,6 +566,161 @@ function dataUrlToBuffer(dataUrl) {
   return Buffer.from(m[1], 'base64');
 }
 
+// Lista las impresoras instaladas via PowerShell (Get-Printer). El usuario
+// elige cual usar desde nuestro PrintModal y nunca abrimos el dialogo nativo
+// de Windows — eso evita que cualquier toqueteo a Preferencias del driver
+// quede como default del sistema.
+ipcMain.handle('print:list-printers', async () => {
+  return new Promise((resolve) => {
+    const proc = spawn(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        "Get-CimInstance -ClassName Win32_Printer | Select-Object Name, Default | ConvertTo-Json -Compress",
+      ],
+      { windowsHide: true },
+    );
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', (d) => { stdout += d.toString('utf-8'); });
+    proc.stderr.on('data', (d) => { stderr += d.toString('utf-8'); });
+    proc.on('error', (err) => resolve({ ok: false, error: err.message, printers: [] }));
+    proc.on('close', () => {
+      try {
+        const raw = stdout.trim();
+        if (!raw) {
+          resolve({ ok: true, printers: [] });
+          return;
+        }
+        const parsed = JSON.parse(raw);
+        const list = Array.isArray(parsed) ? parsed : [parsed];
+        const printers = list
+          .filter((p) => p && p.Name)
+          .map((p) => ({
+            name: p.Name,
+            displayName: p.Name,
+            isDefault: !!p.Default,
+          }));
+        resolve({ ok: true, printers });
+      } catch (err) {
+        resolve({
+          ok: false,
+          error: `No se pudo parsear lista de impresoras: ${err.message}. ${stderr}`,
+          printers: [],
+        });
+      }
+    });
+  });
+});
+
+// Path del DEVMODE guardado por PrintLayout para una impresora dada. Lo
+// guardamos en userData/printer-devmodes/<hash>.bin (hash del nombre porque
+// los nombres pueden tener \, /, :, etc. invalidos en filename).
+function devmodeFilePath(deviceName) {
+  if (!deviceName) return null;
+  const crypto = require('node:crypto');
+  const hash = crypto.createHash('sha1').update(deviceName, 'utf-8').digest('hex').slice(0, 16);
+  const dir = path.join(app.getPath('userData'), 'printer-devmodes');
+  try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+  return path.join(dir, `${hash}.bin`);
+}
+
+// Abre Preferencias del driver para configurar una impresora — pero sobre
+// una COPIA EN MEMORIA del DEVMODE. Las elecciones del usuario se guardan
+// en un archivo local de PrintLayout, NO se escriben al DEVMODE del sistema.
+// Comportamiento estilo Adobe Reader: lo que configures aca se usa solo en
+// PrintLayout, sin pisar defaults de otras apps.
+ipcMain.handle('print:open-printer-config', async (_evt, payload) => {
+  const { deviceName } = payload ?? {};
+  if (!deviceName || typeof deviceName !== 'string') {
+    return { ok: false, error: 'Falta el nombre de la impresora.' };
+  }
+  const helperExe = resolvePrintHelper();
+  if (!helperExe) {
+    return { ok: false, error: 'No se encontro PrintHelper.exe.' };
+  }
+  const dmFile = devmodeFilePath(deviceName);
+
+  return await new Promise((resolve) => {
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const settle = (r) => { if (settled) return; settled = true; resolve(r); };
+
+    let proc;
+    try {
+      proc = spawn(helperExe, [], { windowsHide: false });
+    } catch (err) {
+      settle({ ok: false, error: `No se pudo iniciar PrintHelper: ${err.message}` });
+      return;
+    }
+
+    proc.stdout.on('data', (d) => { stdout += d.toString('utf-8'); });
+    proc.stderr.on('data', (d) => { stderr += d.toString('utf-8'); });
+    proc.on('error', (err) => settle({ ok: false, error: `PrintHelper fallo: ${err.message}` }));
+    proc.on('close', (code) => {
+      const result = {};
+      for (const ln of stdout.split(/\r?\n/)) {
+        const eq = ln.indexOf('=');
+        if (eq <= 0) continue;
+        result[ln.slice(0, eq)] = ln.slice(eq + 1);
+      }
+      if (result.OK === '1' && result.DEVMODE_OUT) {
+        try {
+          const buf = Buffer.from(result.DEVMODE_OUT, 'base64');
+          fs.writeFileSync(dmFile, buf);
+          settle({ ok: true, configured: true, bytes: buf.length });
+        } catch (err) {
+          settle({ ok: false, error: `No se pudo guardar DEVMODE: ${err.message}` });
+        }
+      } else if (result.CANCELED === '1' || code === 2) {
+        settle({ ok: true, canceled: true });
+      } else {
+        const errMsg = result.ERROR || stderr.trim() || `PrintHelper exit ${code}`;
+        settle({ ok: false, error: errMsg });
+      }
+    });
+
+    // Input al helper.
+    const lines = [
+      'MODE=configure',
+      `DEVICE=${deviceName}`,
+    ];
+    if (fs.existsSync(dmFile)) lines.push(`DEVMODE_FILE=${dmFile}`);
+    lines.push('END=1');
+    try {
+      proc.stdin.write(lines.join('\n') + '\n', 'utf-8');
+      proc.stdin.end();
+    } catch (err) {
+      settle({ ok: false, error: `No se pudo enviar input al helper: ${err.message}` });
+    }
+  });
+});
+
+// Permite resetear las preferencias guardadas por PrintLayout para una
+// impresora (volver a usar los defaults del sistema).
+ipcMain.handle('print:reset-printer-config', async (_evt, payload) => {
+  const { deviceName } = payload ?? {};
+  if (!deviceName) return { ok: false, error: 'Falta el nombre de la impresora.' };
+  const dmFile = devmodeFilePath(deviceName);
+  try {
+    if (fs.existsSync(dmFile)) fs.unlinkSync(dmFile);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// Indica si hay un DEVMODE guardado por PrintLayout para esta impresora.
+ipcMain.handle('print:has-printer-config', async (_evt, payload) => {
+  const { deviceName } = payload ?? {};
+  if (!deviceName) return { ok: true, exists: false };
+  const dmFile = devmodeFilePath(deviceName);
+  return { ok: true, exists: fs.existsSync(dmFile) };
+});
+
 ipcMain.handle('print:pdf', async (_evt, payload) => {
   const {
     images,
@@ -604,7 +759,7 @@ ipcMain.handle('print:pdf', async (_evt, payload) => {
   }
 
   // Construir input del helper. Ver protocolo en helper/PrintHelper.cs.
-  const lines = [];
+  const lines = ['MODE=print'];
   if (deviceName) lines.push(`DEVICE=${deviceName}`);
   if (typeof copies === 'number' && copies > 0) {
     lines.push(`COPIES=${Math.floor(copies)}`);
@@ -614,6 +769,12 @@ ipcMain.handle('print:pdf', async (_evt, payload) => {
   lines.push(`SHOW_DIALOG=${showDialog === false ? '0' : '1'}`);
   lines.push(`WIDTH_MM=${pageWidthMm}`);
   lines.push(`HEIGHT_MM=${pageHeightMm}`);
+  // Si existe un DEVMODE guardado por PrintLayout para esta impresora, lo
+  // pasamos para que el job use esas preferencias (papel/calidad/color/duplex).
+  if (deviceName) {
+    const dmFile = devmodeFilePath(deviceName);
+    if (fs.existsSync(dmFile)) lines.push(`DEVMODE_FILE=${dmFile}`);
+  }
   for (const p of pagePaths) lines.push(`PAGE=${p}`);
   lines.push('END=1');
 

@@ -368,11 +368,23 @@ export async function exportDoubleSidedLayoutToPdf(
 export async function printLayoutPdf(template, assignments, imageMap, options) {
   const bytes = await buildPdf(template, assignments, imageMap, options);
   // Rasterizamos con pdfjs para mandarle PNG por hoja al PrintHelper nativo.
-  // El helper muestra el PrintDialog estandar (document mode) — los settings
-  // del driver elegidos en Preferencias quedan solo para ese job, NO como
-  // defaults del sistema. Es lo que hace Adobe Reader.
+  // Por default mandamos showDialog:false para impresion silent (el caller
+  // ya eligio impresora+copias en nuestro PrintModal). El helper aplica el
+  // DEVMODE guardado por PrintLayout para esta impresora sin tocar el del
+  // sistema.
   const dpi = options?.printDpi ?? 240;
-  const images = await renderPdfBytesToImages(bytes, dpi);
+  const allImages = await renderPdfBytesToImages(bytes, dpi);
+  // Si el caller pidio solo un subconjunto de paginas (indices 0-based),
+  // filtramos. Indices fuera de rango se ignoran.
+  let images = allImages;
+  if (Array.isArray(options?.pages) && options.pages.length > 0) {
+    images = options.pages
+      .map((idx) => allImages[idx])
+      .filter((img) => !!img);
+    if (images.length === 0) {
+      return { ok: false, error: 'No hay páginas válidas para imprimir.' };
+    }
+  }
   const paperWidthMm = options?.paperWidthMm ?? template.pageWidthMm;
   const paperHeightMm = options?.paperHeightMm ?? template.pageHeightMm;
   const result = await window.printlayout.pdf.print({
@@ -380,6 +392,9 @@ export async function printLayoutPdf(template, assignments, imageMap, options) {
     images,
     pageWidthMm: paperWidthMm,
     pageHeightMm: paperHeightMm,
+    deviceName: options?.deviceName,
+    copies: options?.copies,
+    showDialog: options?.showDialog,
   });
   return result;
 }

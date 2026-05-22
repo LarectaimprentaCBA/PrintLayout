@@ -548,7 +548,7 @@ export default function PropertiesSidebar({
                 {template.doubleSided ? 'Sí' : 'No'}
               </dd>
             </div>
-            {!template.temporal && (
+            {(!template.temporal || template.sourceTemplateId) && (
               <>
                 <div className="flex items-center justify-between">
                   <dt className="text-ink-400">Compartida</dt>
