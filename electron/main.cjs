@@ -538,6 +538,47 @@ ipcMain.handle('shell:show-item', (_evt, p) => {
   shell.showItemInFolder(p);
 });
 
+// PDF → Imagen: el renderer rasterizo las paginas y nos manda los bytes raw
+// (ArrayBuffer/Uint8Array vía structured clone). Aca pedimos carpeta destino y
+// guardamos cada archivo. Usar bytes directos en vez de dataURL evita el
+// limite practico de canvas.toDataURL a alto DPI (V8 no construye strings
+// base64 de cientos de MB).
+ipcMain.handle('pdf-to-image:save-batch', async (evt, payload) => {
+  const win = BrowserWindow.fromWebContents(evt.sender);
+  const files = Array.isArray(payload?.files) ? payload.files : [];
+  if (files.length === 0) return { canceled: true };
+
+  const pick = await dialog.showOpenDialog(win, {
+    title: 'Elegí carpeta donde guardar las imágenes',
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  if (pick.canceled || !pick.filePaths?.[0]) return { canceled: true };
+
+  const outDir = pick.filePaths[0];
+  const saved = [];
+  const errors = [];
+  for (const f of files) {
+    try {
+      let buf;
+      if (f.buffer) {
+        // ArrayBuffer/Uint8Array via structured clone -> Buffer sin copia extra.
+        buf = Buffer.from(f.buffer);
+      } else if (f.dataUrl) {
+        buf = dataUrlToBuffer(f.dataUrl);
+      } else {
+        throw new Error('Sin datos para guardar.');
+      }
+      const safeName = String(f.name || 'pagina.png').replace(/[\\/:*?"<>|]/g, '_');
+      const fullPath = path.join(outDir, safeName);
+      fs.writeFileSync(fullPath, buf);
+      saved.push(fullPath);
+    } catch (err) {
+      errors.push({ name: f.name, error: err.message });
+    }
+  }
+  return { canceled: false, dir: outDir, saved, errors };
+});
+
 // PrintHelper.exe: nativo .NET que muestra PrintDialog estandar (document
 // mode) — los settings que el usuario toque en Preferencias del driver se
 // aplican solo a ese trabajo, NUNCA persisten como defaults del sistema.

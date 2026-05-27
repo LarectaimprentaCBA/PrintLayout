@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { useDraggable } from '@dnd-kit/core';
 
 const FIT_CYCLE = [
@@ -30,6 +31,18 @@ export default function SidebarImageItem({
     data: { source: 'sidebar', imageId: image.id },
   });
 
+  const liRef = useRef(null);
+  const setRefs = (el) => {
+    liRef.current = el;
+    setNodeRef(el);
+  };
+
+  useEffect(() => {
+    if (isSelected && liRef.current) {
+      liRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [isSelected]);
+
   const filledAll = totalCells > 0 && used === totalCells;
   const faceCount = image.faces?.length ?? 0;
   const canAutoZoom = faceCount > 0 && !image.autoZoomed;
@@ -39,7 +52,7 @@ export default function SidebarImageItem({
 
   return (
     <li
-      ref={setNodeRef}
+      ref={setRefs}
       onClick={(e) => {
         e.stopPropagation();
         if (used > 0) onSelect?.(image.id);

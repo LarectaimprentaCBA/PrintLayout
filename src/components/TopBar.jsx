@@ -235,6 +235,8 @@ export default function TopBar({
   onSaveJob,
   onSaveJobAs,
   onOpenJob,
+  // Utilidades globales
+  onOpenPdfToImage,
 }) {
   const fitDisabled = !onLayoutFitChange;
   const pdfBusy = exporting || printing;
@@ -331,6 +333,16 @@ export default function TopBar({
                 className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:bg-ink-700 disabled:opacity-40"
               >
                 Guardar como…
+              </button>
+            )}
+            {onOpenPdfToImage && (
+              <button
+                type="button"
+                onClick={onOpenPdfToImage}
+                title="Convertir un PDF en imágenes JPG/PNG"
+                className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:bg-ink-700"
+              >
+                PDF→Imagen
               </button>
             )}
           </div>

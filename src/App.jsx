@@ -14,6 +14,7 @@ import PropertiesSidebar from './components/PropertiesSidebar.jsx';
 import PromptModal from './components/PromptModal.jsx';
 import PdfUploadModal from './components/PdfUploadModal.jsx';
 import PdfImageExtractModal from './components/PdfImageExtractModal.jsx';
+import PdfToImageModal from './components/PdfToImageModal.jsx';
 import GridUploadModal from './components/GridUploadModal.jsx';
 import ImagePackModal from './components/ImagePackModal.jsx';
 import ImageCountPackModal from './components/ImageCountPackModal.jsx';
@@ -90,6 +91,9 @@ export default function App() {
     activeTab,
     activeTabId,
     restoring: tabsRestoring,
+    pendingRestore,
+    confirmRestore,
+    discardRestore,
     createTab,
     closeTab,
     switchTab,
@@ -100,6 +104,7 @@ export default function App() {
   const [sharing, setSharing] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [presetsModalOpen, setPresetsModalOpen] = useState(false);
+  const [pdfToImageOpen, setPdfToImageOpen] = useState(false);
 
   const runSyncWithToast = async ({ silent = false } = {}) => {
     setSyncing(true);
@@ -1742,6 +1747,7 @@ export default function App() {
           onSaveJob={handleSaveJobShortcut}
           onSaveJobAs={handleSaveJobAs}
           onOpenJob={handleOpenJobsList}
+          onOpenPdfToImage={() => setPdfToImageOpen(true)}
         />
         <TabsBar
           tabs={tabs}
@@ -1904,6 +1910,38 @@ export default function App() {
           onSyncPull={syncPullPaperPresets}
           onSyncPush={syncPushPaperPresets}
           onClose={() => setPresetsModalOpen(false)}
+        />
+
+        <PdfToImageModal
+          open={pdfToImageOpen}
+          onClose={() => setPdfToImageOpen(false)}
+        />
+
+        <ConfirmModal
+          open={!!pendingRestore}
+          title="¿Restaurar sesión anterior?"
+          message={
+            pendingRestore
+              ? `Tenías ${pendingRestore.tabs.length} pestaña${
+                  pendingRestore.tabs.length === 1 ? '' : 's'
+                } abierta${pendingRestore.tabs.length === 1 ? '' : 's'} la última vez (${
+                  pendingRestore.tabs
+                    .slice(0, 3)
+                    .map((t) => t.name || 'Sin titulo')
+                    .join(', ')
+                }${pendingRestore.tabs.length > 3 ? '…' : ''}).`
+              : ''
+          }
+          cancelLabel={null}
+          actions={[
+            { label: 'Empezar nuevo', value: 'discard', variant: 'default' },
+            { label: 'Restaurar', value: 'restore', variant: 'primary' },
+          ]}
+          onAction={(v) => {
+            if (v === 'restore') confirmRestore();
+            else discardRestore();
+          }}
+          onCancel={() => {}}
         />
 
         <PdfImageExtractModal

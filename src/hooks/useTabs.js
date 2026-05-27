@@ -67,14 +67,20 @@ function sanitizeTab(t) {
 export function useTabs() {
   // Mientras restauramos del disco, arrancamos con una tab vacia. Asi App.jsx
   // siempre tiene activeTab !== null y no hay loading state que romper.
-  // Si el restore async encuentra tabs persistidas, las reemplaza.
+  // Si el restore async encuentra tabs persistidas, las dejamos en pending y
+  // pedimos al usuario que confirme antes de aplicarlas (asi no se le carga
+  // un trabajo viejo gigante sin pedirselo).
   const [tabs, setTabs] = useState(() => [createEmptyTab('Sin titulo 1')]);
   const [activeTabId, setActiveTabId] = useState(() => tabs?.[0]?.id ?? null);
   const [restoring, setRestoring] = useState(true);
+  // null = nada para restaurar. Objeto = { tabs, activeTabId } esperando
+  // confirmacion del usuario via confirmRestore/discardRestore.
+  const [pendingRestore, setPendingRestore] = useState(null);
 
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0] || null;
 
-  // Restore async al mount.
+  // Restore async al mount. NO aplica solo: deja en pendingRestore para que
+  // App.jsx muestre un modal de confirmacion.
   useEffect(() => {
     const api = typeof window !== 'undefined' ? window.printlayout?.openTabs : null;
     if (!api?.load) {
@@ -88,10 +94,12 @@ export function useTabs() {
         ? data.tabs.map(sanitizeTab).filter(Boolean)
         : [];
       if (list.length > 0) {
-        setTabs(list);
         const wantId = data?.activeTabId;
         const exists = wantId && list.some((t) => t.id === wantId);
-        setActiveTabId(exists ? wantId : list[0].id);
+        setPendingRestore({
+          tabs: list,
+          activeTabId: exists ? wantId : list[0].id,
+        });
       }
       setRestoring(false);
     }).catch((err) => {
@@ -101,13 +109,53 @@ export function useTabs() {
     return () => { cancelled = true; };
   }, []);
 
+  // Aplica el restore pendiente: reemplaza las tabs en memoria por las
+  // persistidas y limpia el pending. El auto-save reanudara guardando esta
+  // misma lista (no hay pisada).
+  const confirmRestore = useCallback(() => {
+    setPendingRestore((pending) => {
+      if (!pending) return null;
+      setTabs(pending.tabs);
+      setActiveTabId(pending.activeTabId);
+      return null;
+    });
+  }, []);
+
+  // Descarta el restore pendiente: borra las tabs persistidas del disco y los
+  // work-states asociados (asi al proximo arranque empieza realmente limpio).
+  // Mantiene la tab vacia inicial.
+  const discardRestore = useCallback(() => {
+    setPendingRestore((pending) => {
+      if (!pending) return null;
+      const wsApi = typeof window !== 'undefined' ? window.printlayout?.workStates : null;
+      const tabsApi = typeof window !== 'undefined' ? window.printlayout?.openTabs : null;
+      // Borrar work-state de cada template descartado, asi no quedan huerfanos
+      // (los templates sinteticos de grilla/auto/count no se referencian desde
+      // ningun lado mas).
+      if (wsApi?.delete) {
+        for (const t of pending.tabs) {
+          const tplId = t?.template?.id;
+          if (tplId) wsApi.delete(tplId).catch(() => {});
+        }
+      }
+      // Pisar el archivo de openTabs con el estado actual (tab vacia inicial)
+      // sin esperar al debounce, asi un cierre rapido no recupera lo viejo.
+      if (tabsApi?.save) {
+        tabsApi.save({ tabs, activeTabId }).catch(() => {});
+      }
+      return null;
+    });
+  }, [tabs, activeTabId]);
+
   // Auto-save debounced de la lista de tabs (+ activeTabId). No persistimos
   // mientras restoring=true (sino el primer write pisaria lo que estamos por
-  // cargar). En cada cambio cancelamos el timer anterior: solo el ultimo
-  // cambio dispara el write.
+  // cargar) ni mientras pendingRestore != null (el usuario todavia no decidio
+  // si restaurar o no — un write con la tab vacia inicial pisaria lo
+  // persistido y perderia la sesion anterior). En cada cambio cancelamos el
+  // timer anterior: solo el ultimo cambio dispara el write.
   const saveTimerRef = useRef(null);
   useEffect(() => {
-    if (restoring) return undefined;
+    if (restoring || pendingRestore) return undefined;
     const api = typeof window !== 'undefined' ? window.printlayout?.openTabs : null;
     if (!api?.save) return undefined;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
@@ -116,7 +164,7 @@ export function useTabs() {
       api.save(snapshot).catch((err) => console.warn('[open-tabs] save fallo:', err));
     }, SAVE_DEBOUNCE_MS);
     return undefined; // dejar fire si se desmonta
-  }, [tabs, activeTabId, restoring]);
+  }, [tabs, activeTabId, restoring, pendingRestore]);
 
   // Crea una tab nueva. `init` puede traer cualquier subset del shape de tab.
   // Si no se pasa name, asigna "Sin titulo N". Activa la tab por default.
@@ -207,6 +255,9 @@ export function useTabs() {
     activeTab,
     activeTabId,
     restoring,
+    pendingRestore,
+    confirmRestore,
+    discardRestore,
     createTab,
     closeTab,
     switchTab,

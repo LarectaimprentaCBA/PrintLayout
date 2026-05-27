@@ -63,6 +63,8 @@ contextBridge.exposeInMainWorld('printlayout', {
       ipcRenderer.invoke('pdf:read-extracted-image', { path: filePath }),
     cleanupExtracted: (tmpDir) =>
       ipcRenderer.invoke('pdf:cleanup-extracted', { tmpDir }),
+    toImageSaveBatch: (files) =>
+      ipcRenderer.invoke('pdf-to-image:save-batch', { files }),
   },
   shell: {
     showItem: (p) => ipcRenderer.invoke('shell:show-item', p),

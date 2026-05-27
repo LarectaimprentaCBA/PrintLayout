@@ -106,6 +106,97 @@ export async function renderPdfBytesToImages(bytes, dpi = 240) {
   }
 }
 
+// Rasteriza paginas elegidas de un PDF a un formato/calidad arbitrario. Usado
+// por el modal "PDF a imagen": el usuario elige DPI + formato (JPG/PNG) y
+// guarda cada pagina como archivo.
+// - pageIndices: array de indices 1-based; si null, todas.
+// - format: 'image/jpeg' | 'image/png'
+// - quality: solo aplica a JPEG (0..1)
+// - as: 'dataurl' (default, para thumbs/preview) | 'arraybuffer' (para
+//   guardar al disco — evita el limite practico de canvas.toDataURL que a
+//   alto DPI devuelve "data:," vacio porque V8 no puede construir el string
+//   base64 gigante).
+// - onProgress: callback(donePages, totalPages) opcional para feedback UI.
+export async function rasterizePdfPagesAt(bytes, opts = {}) {
+  const {
+    dpi = 150,
+    format = 'image/png',
+    quality = 0.92,
+    pageIndices = null,
+    as = 'dataurl',
+    onProgress = null,
+  } = opts;
+  // Clonar: pdfjs transfiere ownership del ArrayBuffer al worker. Si el caller
+  // reusa los bytes (thumbs + render final), la segunda llamada recibe un
+  // ArrayBuffer detached y revienta.
+  const data = bytes.slice();
+  const doc = await pdfjsLib.getDocument({ data }).promise;
+  try {
+    const total = doc.numPages;
+    const indices = Array.isArray(pageIndices) && pageIndices.length > 0
+      ? pageIndices.filter((i) => i >= 1 && i <= total)
+      : Array.from({ length: total }, (_, k) => k + 1);
+    const out = [];
+    const PT_TO_MM = 25.4 / 72;
+    let done = 0;
+    for (const i of indices) {
+      const page = await doc.getPage(i);
+      const vp1 = page.getViewport({ scale: 1 });
+      const widthMm = vp1.width * PT_TO_MM;
+      const heightMm = vp1.height * PT_TO_MM;
+      const viewport = page.getViewport({ scale: dpi / 72 });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      const ctx = canvas.getContext('2d');
+      // Fondo blanco siempre: JPEG no soporta transparencia y PNG vacio sale
+      // gris al verlo en visores.
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({ canvasContext: ctx, viewport }).promise;
+
+      const entry = {
+        pageIndex: i,
+        widthPx: canvas.width,
+        heightPx: canvas.height,
+        widthMm,
+        heightMm,
+      };
+
+      if (as === 'arraybuffer') {
+        const blob = await new Promise((resolve, reject) => {
+          canvas.toBlob(
+            (b) => (b ? resolve(b) : reject(new Error(
+              `Render fallido a ${canvas.width}×${canvas.height}px (demasiado grande para el navegador). Probá un DPI menor.`,
+            ))),
+            format,
+            quality,
+          );
+        });
+        entry.buffer = await blob.arrayBuffer();
+        entry.byteLength = entry.buffer.byteLength;
+      } else {
+        const dataUrl = format === 'image/jpeg'
+          ? canvas.toDataURL('image/jpeg', quality)
+          : canvas.toDataURL('image/png');
+        if (!dataUrl || dataUrl.length < 30) {
+          throw new Error(
+            `Render fallido a ${canvas.width}×${canvas.height}px (canvas demasiado grande para toDataURL). Probá un DPI menor.`,
+          );
+        }
+        entry.dataUrl = dataUrl;
+      }
+
+      out.push(entry);
+      done += 1;
+      onProgress?.(done, indices.length);
+    }
+    return out;
+  } finally {
+    doc.destroy();
+  }
+}
+
 export async function renderPdfPage1Preview(template, dpi = 96) {
   if (!template?.pdfBase64) return null;
   const key = `${template.id}:${dpi}`;
