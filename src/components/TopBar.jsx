@@ -224,6 +224,7 @@ export default function TopBar({
   hasOccupiedCellsAllPages,
   totalPages,
   onDistributeEvenly,
+  onOpenQuantities,
   onUndo,
   onRedo,
   canUndo,
@@ -487,6 +488,22 @@ export default function TopBar({
               className="rounded-md border border-ink-700 bg-ink-800 px-3 py-1.5 text-sm font-medium text-ink-100 hover:bg-ink-700 disabled:opacity-40"
             >
               Repartir parejo
+            </button>
+          )}
+
+          {(cellsPerPage ?? 0) >= 2 && typeof onOpenQuantities === 'function' && (
+            <button
+              type="button"
+              onClick={() => onOpenQuantities()}
+              disabled={imagesLoaded === 0}
+              title={
+                imagesLoaded === 0
+                  ? 'Cargá fotos primero'
+                  : 'Elegir cuántas copias de cada foto y acomodarlas (agrega hojas si hace falta)'
+              }
+              className="rounded-md border border-ink-700 bg-ink-800 px-3 py-1.5 text-sm font-medium text-ink-100 hover:bg-ink-700 disabled:opacity-40"
+            >
+              Por cantidad
             </button>
           )}
 

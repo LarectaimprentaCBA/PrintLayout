@@ -1,0 +1,179 @@
+import { useEffect, useMemo, useState } from 'react';
+
+// Panel para elegir cuántas copias de cada foto cargada. Defaultea 1 por foto.
+// Al aplicar, devuelve { [imageId]: cantidad } al caller, que rellena la
+// plantilla repitiendo hojas según haga falta.
+export default function ImageQuantitiesModal({
+  open,
+  images = [],
+  cellsPerPage = 0,
+  onConfirm,
+  onCancel,
+}) {
+  const [counts, setCounts] = useState({});
+
+  // Al abrir (o cambiar las imágenes), arrancar todas en 1.
+  useEffect(() => {
+    if (!open) return;
+    const init = {};
+    for (const img of images) init[img.id] = 1;
+    setCounts(init);
+  }, [open, images]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') onCancel?.();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onCancel]);
+
+  const setOne = (id, value) => {
+    const n = Math.max(0, Math.floor(Number(value) || 0));
+    setCounts((prev) => ({ ...prev, [id]: n }));
+  };
+
+  const bump = (id, delta) => {
+    setCounts((prev) => ({
+      ...prev,
+      [id]: Math.max(0, (Math.floor(Number(prev[id]) || 0)) + delta),
+    }));
+  };
+
+  const setAll = (value) => {
+    const n = Math.max(0, Math.floor(Number(value) || 0));
+    const next = {};
+    for (const img of images) next[img.id] = n;
+    setCounts(next);
+  };
+
+  const totalCopies = useMemo(
+    () => images.reduce((s, img) => s + (Math.floor(Number(counts[img.id]) || 0)), 0),
+    [images, counts],
+  );
+
+  const pages = cellsPerPage > 0 ? Math.ceil(totalCopies / cellsPerPage) : 0;
+
+  if (!open) return null;
+
+  const submit = (e) => {
+    e?.preventDefault();
+    if (totalCopies <= 0) return;
+    onConfirm?.(counts);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <form
+        onSubmit={submit}
+        className="flex max-h-[90vh] w-[40rem] max-w-[95vw] flex-col rounded-lg border border-ink-700 bg-ink-900 shadow-2xl"
+      >
+        <div className="border-b border-ink-700 p-4">
+          <h3 className="text-sm font-semibold text-ink-100">Cantidad por foto</h3>
+          <p className="mt-1 text-xs text-ink-400">
+            Indicá cuántas copias querés de cada foto. Se acomodan en la
+            plantilla y, si falta lugar, se agregan hojas nuevas con la misma
+            plantilla.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2 border-b border-ink-700 px-4 py-2 text-xs text-ink-300">
+          <span>Poner a todas:</span>
+          {[1, 2, 5, 10].map((n) => (
+            <button
+              key={n}
+              type="button"
+              onClick={() => setAll(n)}
+              className="rounded border border-ink-700 bg-ink-800 px-2 py-0.5 hover:bg-ink-700"
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-3">
+          {images.length === 0 ? (
+            <p className="p-4 text-center text-xs text-ink-400">
+              No hay fotos cargadas. Cargá fotos primero.
+            </p>
+          ) : (
+            <ul className="space-y-1.5">
+              {images.map((img) => (
+                <li
+                  key={img.id}
+                  className="flex items-center gap-3 rounded border border-ink-700 bg-ink-800 p-2"
+                >
+                  <div className="h-12 w-12 shrink-0 overflow-hidden rounded bg-ink-700">
+                    {img.dataUrl && (
+                      <img
+                        src={img.dataUrl}
+                        alt={img.name || ''}
+                        className="h-full w-full object-cover"
+                      />
+                    )}
+                  </div>
+                  <span className="flex-1 truncate text-xs text-ink-200" title={img.name}>
+                    {img.name || 'foto'}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => bump(img.id, -1)}
+                      className="h-7 w-7 rounded border border-ink-700 bg-ink-900 text-ink-200 hover:bg-ink-700"
+                    >
+                      −
+                    </button>
+                    <input
+                      type="number"
+                      min="0"
+                      value={counts[img.id] ?? 1}
+                      onChange={(e) => setOne(img.id, e.target.value)}
+                      className="w-14 rounded border border-ink-700 bg-ink-900 px-1.5 py-1 text-center text-sm text-ink-100 outline-none focus:border-accent-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => bump(img.id, 1)}
+                      className="h-7 w-7 rounded border border-ink-700 bg-ink-900 text-ink-200 hover:bg-ink-700"
+                    >
+                      +
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-ink-700 p-4">
+          <span className="mr-auto text-xs text-ink-300">
+            Total:{' '}
+            <span className="font-semibold text-accent-400">{totalCopies}</span>{' '}
+            copia{totalCopies === 1 ? '' : 's'}
+            {pages > 0 && (
+              <>
+                {' '}en{' '}
+                <span className="font-semibold text-accent-400">{pages}</span>{' '}
+                hoja{pages === 1 ? '' : 's'}
+              </>
+            )}
+          </span>
+          <button
+            type="button"
+            onClick={() => onCancel?.()}
+            className="rounded border border-ink-700 px-3 py-1 text-xs text-ink-200 hover:bg-ink-800"
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            disabled={totalCopies <= 0}
+            className="rounded bg-accent-600 px-3 py-1 text-xs font-medium text-white hover:bg-accent-500 disabled:opacity-40"
+          >
+            Acomodar
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}

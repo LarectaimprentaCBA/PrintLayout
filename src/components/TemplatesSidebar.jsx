@@ -103,7 +103,7 @@ export default function TemplatesSidebar({
       <input
         ref={autoPackRef}
         type="file"
-        accept="image/jpeg,image/png,image/jpg"
+        accept="image/jpeg,image/png,image/jpg,image/heic,image/heif,.heic,.heif"
         multiple
         className="hidden"
         onChange={handleAutoPackPick}
@@ -111,7 +111,7 @@ export default function TemplatesSidebar({
       <input
         ref={countPackRef}
         type="file"
-        accept="image/jpeg,image/png,image/jpg"
+        accept="image/jpeg,image/png,image/jpg,image/heic,image/heif,.heic,.heif"
         multiple
         className="hidden"
         onChange={handleCountPackPick}

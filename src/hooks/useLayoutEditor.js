@@ -626,6 +626,30 @@ export function useLayoutEditor(template, face = 'front') {
     [cellsPerPage, isMultiPage, template, isFront, images, assignments, applyMutation],
   );
 
+  // Reparte por CANTIDAD por imagen: countsById es { imageId: cantidad }.
+  // Arma una secuencia agrupada (imagen A repetida qA veces, luego B qB veces,
+  // ...) en el orden de `images`, y la coloca desde la primera celda. En modo
+  // legacy las hojas crecen solas para alojar todas las copias. Reemplaza el
+  // contenido de la cara activa. Devuelve { totalCopies, pages } (estimado) o
+  // null si no aplica.
+  const applyImageQuantities = useCallback(
+    (countsById) => {
+      if (isMultiPage || cellsPerPage === 0 || images.length === 0) return null;
+      const seq = [];
+      for (const img of images) {
+        const q = Math.max(0, Math.floor(Number(countsById?.[img.id]) || 0));
+        for (let k = 0; k < q; k++) seq.push(img.id);
+      }
+      if (seq.length === 0) return null;
+      applyMutation(() => seq.slice());
+      return {
+        totalCopies: seq.length,
+        pages: Math.ceil(seq.length / cellsPerPage),
+      };
+    },
+    [isMultiPage, cellsPerPage, images, applyMutation],
+  );
+
   const clearCell = useCallback(
     (cellIdx) => {
       applyMutation((arr) => {
@@ -730,6 +754,7 @@ export function useLayoutEditor(template, face = 'front') {
     assignImageToCell,
     fillAllWith,
     distributeImagesEvenly,
+    applyImageQuantities,
     swapCells,
     clearCell,
     removeImage,

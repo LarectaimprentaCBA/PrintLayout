@@ -1,5 +1,6 @@
 import { detectFaces } from './faceDetection.js';
 import { readImageDpi } from './imageMetadata.js';
+import { prepareIncomingImageFiles } from './heic.js';
 
 // Re-codifica la imagen pasandola por canvas. Esto:
 // 1) Descarta cualquier perfil ICC embebido (canvas siempre trabaja en sRGB),
@@ -11,15 +12,32 @@ import { readImageDpi } from './imageMetadata.js';
 //    driver no deposita tinta y se ve el papel.
 // 4) Sale como PNG porque JPEG, aun en quality 1.0, puede correr el (255,255,255)
 //    snapeado de vuelta a (254,254,254) por la compresion.
+// 5) Si la imagen es mas grande que MAX_LONG_EDGE px de lado, la achica. La
+//    impresion rasteriza a 240 DPI y exportamos a <=300 DPI; una foto de iPhone
+//    (4032px) tiene mucho mas detalle del que cualquier impresion usa. Achicar
+//    al tope no cambia la calidad impresa y baja MUCHO el peso (PNG sin
+//    perdida pesa proporcional al numero de pixeles), por lo que armar el PDF
+//    y mandarlo a la impresora es mucho mas rapido.
+// MAX_LONG_EDGE = 3000px: a 240 DPI cubre una hoja A4 entera con margen, y a
+// 300 DPI cubre fotos de hasta ~25 cm. Mas que suficiente para fotos.
+const MAX_LONG_EDGE = 3000;
+
 function normalizeImageToSrgb(img) {
   const canvas = document.createElement('canvas');
   // img puede ser HTMLImageElement (naturalWidth) o ImageBitmap (width).
-  canvas.width = img.naturalWidth ?? img.width;
-  canvas.height = img.naturalHeight ?? img.height;
+  const srcW = img.naturalWidth ?? img.width;
+  const srcH = img.naturalHeight ?? img.height;
+  const longEdge = Math.max(srcW, srcH);
+  const scale = longEdge > MAX_LONG_EDGE ? MAX_LONG_EDGE / longEdge : 1;
+  canvas.width = Math.max(1, Math.round(srcW * scale));
+  canvas.height = Math.max(1, Math.round(srcH * scale));
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(img, 0, 0);
+  // Interpolacion de calidad al achicar (sino se ve dentado).
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
   // Snap conservador: solo pixeles donde min(R,G,B) >= 253 y la dispersion
   // entre canales es <= 2. Asi atrapamos (255,255,254) y artefactos JPEG
@@ -42,7 +60,11 @@ function normalizeImageToSrgb(img) {
   }
   ctx.putImageData(data, 0, 0);
 
-  return canvas.toDataURL('image/png');
+  return {
+    dataUrl: canvas.toDataURL('image/png'),
+    width: canvas.width,
+    height: canvas.height,
+  };
 }
 
 export async function readImageFile(file, opts = {}) {
@@ -56,9 +78,16 @@ export async function readImageFile(file, opts = {}) {
   } catch (err) {
     throw new Error(`Imagen inválida: ${file.name}`);
   }
+  // Dimensiones ORIGINALES (en px del archivo). Se usan solo para calcular el
+  // tamano fisico a partir del DPI embebido (un dato del mundo real, ajeno a
+  // nuestro reescalado interno).
   const w = bitmap.width;
   const h = bitmap.height;
-  const normalizedDataUrl = normalizeImageToSrgb(bitmap);
+  // normalizeImageToSrgb puede achicar la imagen; devuelve sus dimensiones
+  // reales (nw, nh). El dataUrl, las caras y width/height del objeto resultante
+  // viven todos en ese mismo espacio de pixeles, asi que recorte/caras quedan
+  // consistentes.
+  const { dataUrl: normalizedDataUrl, width: nw, height: nh } = normalizeImageToSrgb(bitmap);
   bitmap.close?.();
 
   const faces = await detectFaces(normalizedDataUrl);
@@ -96,8 +125,8 @@ export async function readImageFile(file, opts = {}) {
     id: `img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
     name: file.name,
     dataUrl: normalizedDataUrl,
-    width: w,
-    height: h,
+    width: nw,
+    height: nh,
     mime: 'image/png',
     faces,
     physicalSizeMm,
@@ -106,7 +135,8 @@ export async function readImageFile(file, opts = {}) {
 }
 
 export async function readImageFiles(fileList) {
-  const arr = Array.from(fileList);
+  // Convierte HEIC/HEIF del iPhone a JPEG. Los que ya son jpg/png pasan igual.
+  const arr = await prepareIncomingImageFiles(fileList);
   const results = [];
   for (const f of arr) {
     if (!/^image\/(jpe?g|png)$/i.test(f.type) && !/\.(jpe?g|png)$/i.test(f.name)) {

@@ -18,6 +18,7 @@ import PdfToImageModal from './components/PdfToImageModal.jsx';
 import GridUploadModal from './components/GridUploadModal.jsx';
 import ImagePackModal from './components/ImagePackModal.jsx';
 import ImageCountPackModal from './components/ImageCountPackModal.jsx';
+import ImageQuantitiesModal from './components/ImageQuantitiesModal.jsx';
 import ImageEditorModal from './components/ImageEditorModal.jsx';
 import ImageCropModal from './components/ImageCropModal.jsx';
 import SaveTemplateModal from './components/SaveTemplateModal.jsx';
@@ -33,6 +34,7 @@ import { useTabs } from './hooks/useTabs.js';
 import { BUILTIN_PAPER_PRESETS } from './lib/grid.js';
 import { useLayoutEditor } from './hooks/useLayoutEditor.js';
 import { readImageFiles, readImageFile } from './lib/images.js';
+import { prepareIncomingImageFiles } from './lib/heic.js';
 import {
   exportLayoutToPdf,
   exportDoubleSidedLayoutToPdf,
@@ -314,6 +316,7 @@ export default function App() {
   const [pdfUpload, setPdfUpload] = useState(null);
   // Modal de grilla rapida (plantilla en memoria, sin PDF).
   const [gridModalOpen, setGridModalOpen] = useState(false);
+  const [quantitiesOpen, setQuantitiesOpen] = useState(false);
   // Imagen abierta en el editor.
   const [editingImageId, setEditingImageId] = useState(null);
   // Imagen abierta en el modal de recorte manual.
@@ -1112,14 +1115,27 @@ export default function App() {
     }
   };
 
-  const handleStartAutoPack = (files) => {
-    if (!files?.length) return;
-    setAutoPackFiles(files);
+  // Convierte HEIC/HEIF a JPEG antes de abrir el modal de pack, asi las vistas
+  // previas y el calculo de dimensiones (que usan <img>) funcionan.
+  const convertHeicWithToast = async (files) => {
+    return prepareIncomingImageFiles(files, {
+      onHeicStart: (n) => setToast({
+        kind: 'info',
+        text: `Convirtiendo ${n} foto${n === 1 ? '' : 's'} de iPhone (HEIC)…`,
+      }),
+    });
   };
 
-  const handleStartCountPack = (files) => {
+  const handleStartAutoPack = async (files) => {
     if (!files?.length) return;
-    setCountPackFiles(files);
+    const prepared = await convertHeicWithToast(files);
+    if (prepared.length) setAutoPackFiles(prepared);
+  };
+
+  const handleStartCountPack = async (files) => {
+    if (!files?.length) return;
+    const prepared = await convertHeicWithToast(files);
+    if (prepared.length) setCountPackFiles(prepared);
   };
 
   const submitCountPack = async ({
@@ -1737,6 +1753,7 @@ export default function App() {
           onDistributeEvenly={(mode, scope) =>
             layout.distributeImagesEvenly(mode, currentPage, scope)
           }
+          onOpenQuantities={() => setQuantitiesOpen(true)}
           onUndo={layout.undo}
           onRedo={layout.redo}
           canUndo={layout.canUndo}
@@ -1867,7 +1884,7 @@ export default function App() {
         <input
           ref={cellPickerRef}
           type="file"
-          accept="image/jpeg,image/png,image/jpg"
+          accept="image/jpeg,image/png,image/jpg,image/heic,image/heif,.heic,.heif"
           className="hidden"
           onChange={handleCellPickerChange}
         />
@@ -1899,6 +1916,25 @@ export default function App() {
             onOpenPresetsEditor={() => setPresetsModalOpen(true)}
           />
         )}
+
+        <ImageQuantitiesModal
+          open={quantitiesOpen}
+          images={layout.images}
+          cellsPerPage={layout.cellsPerPage}
+          onConfirm={(counts) => {
+            const res = layout.applyImageQuantities(counts);
+            setQuantitiesOpen(false);
+            setCurrentPage(0);
+            layout.setSelectedCell(null);
+            if (res) {
+              setToast({
+                kind: 'success',
+                text: `${res.totalCopies} copia${res.totalCopies === 1 ? '' : 's'} acomodada${res.totalCopies === 1 ? '' : 's'} en ${res.pages} hoja${res.pages === 1 ? '' : 's'}.`,
+              });
+            }
+          }}
+          onCancel={() => setQuantitiesOpen(false)}
+        />
 
         <PaperPresetsModal
           open={presetsModalOpen}
@@ -2041,7 +2077,7 @@ export default function App() {
         <input
           ref={newTabAutoPickerRef}
           type="file"
-          accept="image/jpeg,image/png,image/jpg"
+          accept="image/jpeg,image/png,image/jpg,image/heic,image/heif,.heic,.heif"
           multiple
           className="hidden"
           onChange={(e) => {
@@ -2053,7 +2089,7 @@ export default function App() {
         <input
           ref={newTabCountPickerRef}
           type="file"
-          accept="image/jpeg,image/png,image/jpg"
+          accept="image/jpeg,image/png,image/jpg,image/heic,image/heif,.heic,.heif"
           multiple
           className="hidden"
           onChange={(e) => {
@@ -2121,16 +2157,22 @@ export default function App() {
             className={`pointer-events-auto fixed bottom-6 left-1/2 z-40 flex max-w-[80vw] -translate-x-1/2 items-start gap-3 rounded-lg border px-5 py-3 text-sm font-medium text-white shadow-2xl ring-1 ring-black/40 ${
               toast.kind === 'success'
                 ? 'border-emerald-400 bg-emerald-700'
+                : toast.kind === 'info'
+                ? 'border-sky-400 bg-sky-700'
                 : 'border-red-400 bg-red-700'
             }`}
           >
             <span
               className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-                toast.kind === 'success' ? 'bg-emerald-500' : 'bg-red-500'
+                toast.kind === 'success'
+                  ? 'bg-emerald-500'
+                  : toast.kind === 'info'
+                  ? 'bg-sky-500'
+                  : 'bg-red-500'
               }`}
               aria-hidden
             >
-              {toast.kind === 'success' ? '✓' : '!'}
+              {toast.kind === 'success' ? '✓' : toast.kind === 'info' ? '…' : '!'}
             </span>
             <span className="whitespace-pre-wrap break-words">{toast.text}</span>
             {toast.path && (

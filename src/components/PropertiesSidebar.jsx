@@ -149,8 +149,8 @@ export default function PropertiesSidebar({
     || /\.pdf$/i.test(f?.name || '');
 
   const isImg = (f) =>
-    /^image\/(jpe?g|png)$/i.test(f?.type || '')
-    || /\.(jpe?g|png)$/i.test(f?.name || '');
+    /^image\/(jpe?g|png|heic|heif)$/i.test(f?.type || '')
+    || /\.(jpe?g|png|heic|heif)$/i.test(f?.name || '');
 
   const handleDragEnter = (e) => {
     if (!e.dataTransfer?.types?.includes('Files')) return;
@@ -215,7 +215,7 @@ export default function PropertiesSidebar({
       <input
         ref={multiInputRef}
         type="file"
-        accept="image/jpeg,image/png,image/jpg"
+        accept="image/jpeg,image/png,image/jpg,image/heic,image/heif,.heic,.heif"
         multiple
         className="hidden"
         onChange={handleMultiPick}
@@ -223,7 +223,7 @@ export default function PropertiesSidebar({
       <input
         ref={singleInputRef}
         type="file"
-        accept="image/jpeg,image/png,image/jpg"
+        accept="image/jpeg,image/png,image/jpg,image/heic,image/heif,.heic,.heif"
         className="hidden"
         onChange={handleSinglePick}
       />
