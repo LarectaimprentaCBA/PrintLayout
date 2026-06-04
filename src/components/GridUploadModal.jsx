@@ -33,6 +33,7 @@ export default function GridUploadModal({
   const [spacingY, setSpacingY] = useState('0');
   const [cutMargin, setCutMargin] = useState('0');
   const [markMargin, setMarkMargin] = useState('10');
+  const [doubleSided, setDoubleSided] = useState(false);
   const [cutShape, setCutShape] = useState('rect'); // 'rect' | 'circle'
   const [diameter, setDiameter] = useState('60');
   const [rotateMode, setRotateMode] = useState('auto'); // 'auto' | 'direct' | 'rotated'
@@ -134,6 +135,7 @@ export default function GridUploadModal({
       cutMarginMm,
       markMarginMm,
       cutShape,
+      doubleSided,
     });
   };
 
@@ -405,6 +407,25 @@ export default function GridUploadModal({
                 />
               </label>
             </div>
+          </div>
+
+          <div className="pt-2 mt-2 border-t border-ink-700">
+            <label className="flex cursor-pointer items-start gap-2">
+              <input
+                type="checkbox"
+                checked={doubleSided}
+                onChange={(e) => setDoubleSided(e.target.checked)}
+                className="mt-0.5 accent-accent-600"
+              />
+              <span className="text-xs">
+                <span className="block text-ink-200">Doble faz</span>
+                <span className="block text-[10px] leading-snug text-ink-500">
+                  Agrega una cara de dorso con la misma grilla. Vas a poder
+                  cargar imágenes en frente y dorso, e imprimir cada cara por
+                  separado.
+                </span>
+              </span>
+            </label>
           </div>
         </div>
 

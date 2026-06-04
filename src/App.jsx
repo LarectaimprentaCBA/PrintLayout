@@ -208,6 +208,7 @@ export default function App() {
   const [printing, setPrinting] = useState(false);
   const [saveTemplatePrompt, setSaveTemplatePrompt] = useState(null); // template temporal | null
   const [printPrompt, setPrintPrompt] = useState(null); // { face } | null
+  const [exportMarksPrompt, setExportMarksPrompt] = useState(false); // pregunta marcas al exportar
   const [uploading, setUploading] = useState(false);
   const [cutting, setCutting] = useState(false);
   const [toast, setToast] = useState(null);
@@ -854,14 +855,18 @@ export default function App() {
     cutMarginMm = 0,
     markMarginMm = 0,
     cutShape = 'rect',
+    doubleSided = false,
   }) => {
     // Solo generamos cortes si va a poder usarlos (necesita marcas L para
     // que el plotter alinee). Con markMarginMm=0 la grilla es sin corte.
     const cortes = markMarginMm > 0
       ? generateCuts(cells, { cutShape, cutMarginMm })
       : [];
+    // Doble faz: el dorso usa la misma grilla (celdasDorso vacio => cellPositions
+    // cae en celdas). Asi el editor muestra el toggle frente/dorso y se imprime
+    // cada cara por separado, igual que la plantilla de tarjetas doble faz.
     const tpl = {
-      name: 'Grilla rápida',
+      name: doubleSided ? 'Grilla rápida doble faz' : 'Grilla rápida',
       pdfBase64: null,
       pageWidthMm: paperWidthMm,
       pageHeightMm: paperHeightMm,
@@ -872,10 +877,10 @@ export default function App() {
       cutMarginMm,
       markMarginMm,
       cutShape,
-      doubleSided: false,
+      doubleSided,
       singlePage: true,
     };
-    openInTab(tpl, { name: 'Grilla rapida', forceNew: true });
+    openInTab(tpl, { name: tpl.name, forceNew: true });
     setGridModalOpen(false);
   };
 
@@ -1483,7 +1488,29 @@ export default function App() {
     }
   };
 
-  const handleExport = async () => {
+  // ¿La plantilla actual tiene marcas de corte GENERADAS por nosotros (grilla
+  // rápida)? Solo en ese caso se puede elegir imprimir/exportar con o sin marcas;
+  // las marcas embebidas en un PDF de fondo no se pueden quitar desde acá.
+  const selectedHasGeneratedMarks =
+    !!selected
+    && !selected.pdfBase64
+    && typeof selected.markMarginMm === 'number'
+    && selected.markMarginMm > 0
+    && Array.isArray(selected.cortes)
+    && selected.cortes.length > 0;
+
+  const handleExport = () => {
+    if (!selected || exporting) return;
+    // Si la plantilla tiene marcas generadas, preguntamos con/sin marcas.
+    // Si no, exportamos directo (sin fricción).
+    if (selectedHasGeneratedMarks) {
+      setExportMarksPrompt(true);
+      return;
+    }
+    doExport(true);
+  };
+
+  const doExport = async (drawMarks) => {
     if (!selected || exporting) return;
     setExporting(true);
     setToast(null);
@@ -1501,6 +1528,7 @@ export default function App() {
               layoutFitMode,
               paperWidthMm: customPaper?.widthMm,
               paperHeightMm: customPaper?.heightMm,
+              drawMarks,
             },
           )
         : await exportLayoutToPdf(
@@ -1512,6 +1540,7 @@ export default function App() {
               embedBackground: !selected.singlePage,
               paperWidthMm: customPaper?.widthMm,
               paperHeightMm: customPaper?.heightMm,
+              drawMarks,
             },
           );
       if (result?.canceled) {
@@ -1545,7 +1574,7 @@ export default function App() {
     setPrintPrompt({ face });
   };
 
-  const runPrint = async ({ deviceName, copies, pages }) => {
+  const runPrint = async ({ deviceName, copies, pages, cutMarks }) => {
     const prompt = printPrompt;
     setPrintPrompt(null);
     if (!prompt || !selected) return;
@@ -1561,12 +1590,17 @@ export default function App() {
       const result = await printLayoutPdf(selected, assignments, layout.imageMap, {
         layoutFitMode,
         embedBackground: !isBack && !selected.singlePage,
+        // Cara explicita: sino buildPdf la infiere de embedBackground y, en una
+        // grilla doble faz (singlePage), el frente se tomaria como dorso y no
+        // dibujaria las marcas de corte.
+        face,
         faceLabel: selected.doubleSided ? (isBack ? 'dorso' : 'frente') : undefined,
         paperWidthMm: customPaper?.widthMm,
         paperHeightMm: customPaper?.heightMm,
         deviceName,
         copies,
         pages,
+        drawMarks: cutMarks !== false,
         showDialog: false,
       });
       if (result?.canceled) {
@@ -2023,8 +2057,24 @@ export default function App() {
           }
           totalPages={layout.pageCount}
           currentPage={currentPage}
+          showCutMarksOption={selectedHasGeneratedMarks}
           onConfirm={runPrint}
           onCancel={() => setPrintPrompt(null)}
+        />
+
+        <ConfirmModal
+          open={exportMarksPrompt}
+          title="Exportar PDF"
+          message="¿Querés incluir las marcas de corte (las L de las esquinas que usa el plotter)?"
+          actions={[
+            { label: 'Sin marcas', value: 'without', variant: 'default' },
+            { label: 'Con marcas', value: 'with', variant: 'primary' },
+          ]}
+          onAction={(value) => {
+            setExportMarksPrompt(false);
+            doExport(value === 'with');
+          }}
+          onCancel={() => setExportMarksPrompt(false)}
         />
 
         <SaveJobModal

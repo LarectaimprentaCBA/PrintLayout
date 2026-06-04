@@ -46,6 +46,7 @@ export default function PrintModal({
   faceLabel,
   totalPages = 1,
   currentPage = 0,
+  showCutMarksOption = false,
   onConfirm,
   onCancel,
 }) {
@@ -58,12 +59,16 @@ export default function PrintModal({
   const [hasCustomPrefs, setHasCustomPrefs] = useState(false);
   const [pageMode, setPageMode] = useState('all'); // 'all' | 'current' | 'range'
   const [rangeText, setRangeText] = useState('');
+  // Marcas de corte: por default se imprimen (comportamiento histórico). El
+  // checkbox solo se muestra cuando la plantilla tiene marcas generadas.
+  const [cutMarks, setCutMarks] = useState(true);
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setCutMarks(true);
     (async () => {
       try {
         const r = await window.printlayout.pdf.listPrinters();
@@ -154,7 +159,13 @@ export default function PrintModal({
       localStorage.setItem(LS_LAST_PRINTER, deviceName);
       localStorage.setItem(LS_LAST_COPIES, String(copies));
     } catch {}
-    onConfirm?.({ deviceName, copies, pages: pagesToPrint });
+    onConfirm?.({
+      deviceName,
+      copies,
+      pages: pagesToPrint,
+      // Si la plantilla no ofrece la opción, mandamos true (no cambia nada).
+      cutMarks: showCutMarksOption ? cutMarks : true,
+    });
   };
 
   const handleOpenConfig = async () => {
@@ -331,6 +342,24 @@ export default function PrintModal({
                 </p>
               )}
             </div>
+          )}
+
+          {showCutMarksOption && (
+            <label className="flex cursor-pointer items-start gap-2 rounded border border-ink-700 bg-ink-950/40 px-2 py-1.5">
+              <input
+                type="checkbox"
+                checked={cutMarks}
+                onChange={(e) => setCutMarks(e.target.checked)}
+                className="mt-0.5 accent-accent-600"
+              />
+              <span>
+                <span className="block text-ink-200">Imprimir marcas de corte</span>
+                <span className="block text-[10px] leading-snug text-ink-500">
+                  Las marcas en L de las esquinas que usa el plotter para
+                  alinear. Destildá si solo vas a posar las fotos sin cortar.
+                </span>
+              </span>
+            </label>
           )}
         </div>
 

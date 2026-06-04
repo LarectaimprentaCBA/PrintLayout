@@ -111,6 +111,11 @@ function base64ToBytes(base64) {
 // en frente y dorso se embeban una sola vez.
 async function appendFaceToDoc(doc, ctx, template, assignments, options) {
   const { layoutFitMode, embedBackground, face, paperWmm, paperHmm } = options;
+  // drawMarks: si es false, NO se dibujan las marcas L de corte aunque la
+  // plantilla las tenga generadas. Default true (comportamiento histórico).
+  // Solo aplica a marcas generadas (grilla rápida); las marcas embebidas en
+  // el PDF de fondo no se pueden quitar desde acá.
+  const drawMarks = options.drawMarks !== false;
   const { imageMap, embedCache } = ctx;
 
   const templateWpt = template.pageWidthMm * MM_TO_PT;
@@ -198,7 +203,8 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
         height: templateHpt,
       });
     } else if (
-      typeof template.markMarginMm === 'number'
+      drawMarks
+      && typeof template.markMarginMm === 'number'
       && template.markMarginMm > 0
       && Array.isArray(template.cortes)
       && template.cortes.length > 0
@@ -287,6 +293,7 @@ export async function buildPdf(template, assignments, imageMap, options = {}) {
     face,
     paperWmm,
     paperHmm,
+    drawMarks: options.drawMarks,
   });
 
   return doc.save();
@@ -318,6 +325,7 @@ export async function buildDoubleSidedPdf(
     face: 'front',
     paperWmm,
     paperHmm,
+    drawMarks: options.drawMarks,
   });
   await appendFaceToDoc(doc, ctx, template, assignmentsBack, {
     layoutFitMode,

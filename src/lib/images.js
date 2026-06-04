@@ -5,7 +5,11 @@ import { prepareIncomingImageFiles } from './heic.js';
 // Re-codifica la imagen pasandola por canvas. Esto:
 // 1) Descarta cualquier perfil ICC embebido (canvas siempre trabaja en sRGB),
 //    asi los JPG con Adobe RGB de Corel dejan de salir shifteados en el PDF.
-// 2) Aplana transparencia contra fondo blanco (PNG ya no sale negro).
+// 2) PRESERVA la transparencia (PNG circulares/recortados se editan como tales).
+//    Antes aplanabamos contra blanco aca, pero eso rompia los PNG con alpha. El
+//    blanco para impresion ya lo pone el rasterizador (pdfPreview.js rellena la
+//    hoja de blanco antes de render), asi que no hace falta aplanar al cargar:
+//    lo impreso sale igual y el editor muestra la transparencia real.
 // 3) "Snappea" pixeles casi-blancos a (255,255,255) exactos. Corel exporta
 //    JPGs con blanco = (255,255,254) que en RGB->CMYK le pide una pizca de
 //    tinta al driver y sale azulado en papel. Llevandolo a blanco puro, el
@@ -32,8 +36,9 @@ function normalizeImageToSrgb(img) {
   canvas.width = Math.max(1, Math.round(srcW * scale));
   canvas.height = Math.max(1, Math.round(srcH * scale));
   const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  // Sin relleno blanco: el canvas arranca transparente y drawImage conserva el
+  // alpha del PNG. Para imagenes opacas (JPEG) el resultado es identico porque
+  // cubren toda la superficie.
   // Interpolacion de calidad al achicar (sino se ve dentado).
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';

@@ -24,8 +24,8 @@ export function rotateImageDataUrl90CW(dataUrl) {
       canvas.width = h;
       canvas.height = w;
       const ctx = canvas.getContext('2d');
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, h, w);
+      // Sin relleno blanco: conserva la transparencia del PNG al rotar. El
+      // blanco para impresion lo pone el rasterizador (ver normalizeImageToSrgb).
       ctx.translate(h / 2, w / 2);
       ctx.rotate(Math.PI / 2);
       ctx.drawImage(img, -w / 2, -h / 2);

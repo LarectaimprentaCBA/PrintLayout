@@ -25,8 +25,8 @@ export async function cropImageDataUrl(dataUrl, pageRect, viewBoxW, viewBoxH) {
   canvas.width = clampedW;
   canvas.height = clampedH;
   const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, clampedW, clampedH);
+  // Sin relleno blanco: conserva la transparencia del PNG al recortar. El
+  // blanco para impresion lo pone el rasterizador (ver normalizeImageToSrgb).
   ctx.drawImage(img, sx, sy, clampedW, clampedH, 0, 0, clampedW, clampedH);
   // PNG para preservar el snap-a-blanco-puro de normalizeImageToSrgb. JPEG
   // re-corre (255,255,255) a (254,254,254) y eso le pide tinta al driver.
