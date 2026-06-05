@@ -13,6 +13,7 @@ export default function CellSlot({
   cellWmm = 0,
   cellHmm = 0,
   cutMarginMm = 0,
+  cellNumber = null,
 }) {
   const draggable = useDraggable({
     id: `cell:${cellIdx}`,
@@ -106,6 +107,14 @@ export default function CellSlot({
         <span className="pointer-events-none text-2xl font-light">+</span>
       )}
       {circleOverlay}
+      {cellNumber != null && (
+        <span
+          className="pointer-events-none absolute left-0 top-0 rounded-br bg-accent-600/85 px-1 text-[10px] font-semibold leading-tight text-white"
+          aria-hidden
+        >
+          {cellNumber}
+        </span>
+      )}
     </div>
   );
 }

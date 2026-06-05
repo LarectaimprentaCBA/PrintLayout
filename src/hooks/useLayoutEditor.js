@@ -650,6 +650,46 @@ export function useLayoutEditor(template, face = 'front') {
     [isMultiPage, cellsPerPage, images, applyMutation],
   );
 
+  // Posa pares frente/dorso emparejados por indice. `cards` es una lista YA
+  // expandida por cantidad: [{ front: imageObj|null, back: imageObj|null }, ...].
+  // La tarjeta i ocupa la celda i del frente (front) y la celda i del dorso
+  // (back). Como en una grilla doble faz celdasDorso[i] es el espejo de
+  // celdas[i], el dorso de cada tarjeta cae detras de su frente al girar la
+  // hoja. Reemplaza imagenes + ambas asignaciones (es un layout completo).
+  // Permite pares incompletos (front o back en null => esa celda queda vacia).
+  // Solo aplica en plantillas legacy doble faz. Devuelve { cards, pages } o null.
+  const applyFrontBackPairs = useCallback(
+    (cards) => {
+      if (isMultiPage || cellsPerPage === 0) return null;
+      if (!Array.isArray(cards) || cards.length === 0) return null;
+      // Imagenes unicas usadas (frente + dorso), sin duplicar por id.
+      const imgById = new Map();
+      for (const c of cards) {
+        if (c?.front) imgById.set(c.front.id, c.front);
+        if (c?.back) imgById.set(c.back.id, c.back);
+      }
+      const newImages = [...imgById.values()];
+      // Largo redondeado a multiplo de cellsPerPage (hojas completas).
+      const want = Math.max(
+        cellsPerPage,
+        Math.ceil(cards.length / cellsPerPage) * cellsPerPage,
+      );
+      const front = Array(want).fill(null);
+      const back = Array(want).fill(null);
+      for (let i = 0; i < cards.length; i++) {
+        front[i] = cards[i]?.front?.id ?? null;
+        back[i] = cards[i]?.back?.id ?? null;
+      }
+      // Set directo de los 3 estados (React los batchea => un solo snapshot).
+      setImages(newImages);
+      setAssignmentsFront(front);
+      setAssignmentsBack(back);
+      setSelectedCell(null);
+      return { cards: cards.length, pages: Math.ceil(cards.length / cellsPerPage) };
+    },
+    [isMultiPage, cellsPerPage],
+  );
+
   const clearCell = useCallback(
     (cellIdx) => {
       applyMutation((arr) => {
@@ -755,6 +795,7 @@ export function useLayoutEditor(template, face = 'front') {
     fillAllWith,
     distributeImagesEvenly,
     applyImageQuantities,
+    applyFrontBackPairs,
     swapCells,
     clearCell,
     removeImage,

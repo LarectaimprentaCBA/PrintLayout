@@ -96,11 +96,59 @@ export function hasCuts(template) {
   return Array.isArray(template?.cortes) && template.cortes.length > 0;
 }
 
+// Eje de espejado del dorso. Posicion y rotacion del dorso son INDEPENDIENTES:
+//  - backMirror 'x' => espejo izquierda-derecha (x -> W - x - w).
+//  - backMirror 'y' => espejo arriba-abajo (y -> H - y - h).  [default]
+// Compat: plantillas viejas con backFlip ('tb'|'lr') se mapean ('lr' -> 'x').
+export function backMirrorAxis(template) {
+  if (template?.backMirror === 'x' || template?.backMirror === 'y') {
+    return template.backMirror;
+  }
+  return template?.backFlip === 'lr' ? 'x' : 'y';
+}
+
+// Si el dorso debe rotar 180° su contenido (independiente del espejo).
+// Compat: el modo viejo 'tb' rotaba; 'lr' no.
+export function backRotate180(template) {
+  if (typeof template?.backRotate180 === 'boolean') return template.backRotate180;
+  return template?.backFlip != null && template.backFlip !== 'lr';
+}
+
+// Espeja una lista de celdas del frente para obtener las del dorso. Mantiene el
+// mismo orden/id, asi el dorso de la tarjeta i sigue emparejado con su frente i
+// y cae fisicamente detras al girar la hoja.
+export function mirrorCellsForBack(cells, pageWidthMm, pageHeightMm, axis) {
+  if (!Array.isArray(cells)) return [];
+  const mirrorX = axis === 'x';
+  const W = pageWidthMm;
+  const H = pageHeightMm;
+  return cells.map((c) => ({
+    id: c.id,
+    x: mirrorX ? W - c.x - c.w : c.x,
+    y: mirrorX ? c.y : H - c.y - c.h,
+    w: c.w,
+    h: c.h,
+  }));
+}
+
 export function cellPositions(template, face = 'front') {
   if (!template) return [];
-  if (face === 'back' && Array.isArray(template.celdasDorso)
-      && template.celdasDorso.length > 0) {
-    return template.celdasDorso;
+  if (face === 'back') {
+    // Dorso con celdas propias (plantillas que ya traen su layout de dorso).
+    if (Array.isArray(template.celdasDorso) && template.celdasDorso.length > 0) {
+      return template.celdasDorso;
+    }
+    // Doble faz sin dorso propio: derivamos el dorso espejando el frente segun
+    // el eje elegido. Asi cada celda del dorso cae detras de su par del frente
+    // sin tener que guardar un layout aparte.
+    if (template.doubleSided && Array.isArray(template.celdas) && template.celdas.length > 0) {
+      return mirrorCellsForBack(
+        template.celdas,
+        template.pageWidthMm,
+        template.pageHeightMm,
+        backMirrorAxis(template),
+      );
+    }
   }
   return template.celdas ?? [];
 }
@@ -111,8 +159,22 @@ export function cellsForPage(template, pageIdx, face = 'front') {
   if (isMultiPage(template)) {
     const p = template.pages[pageIdx];
     if (!p) return [];
-    if (face === 'back' && Array.isArray(p.celdasDorso) && p.celdasDorso.length > 0) {
-      return p.celdasDorso;
+    if (face === 'back') {
+      // Dorso propio de la pagina, si lo trae.
+      if (Array.isArray(p.celdasDorso) && p.celdasDorso.length > 0) {
+        return p.celdasDorso;
+      }
+      // Doble faz sin dorso propio: espejamos las celdas del frente de ESTA
+      // pagina (igual criterio que cellPositions, para que editor y PDF
+      // coincidan tambien en multi-page).
+      if (template.doubleSided && Array.isArray(p.celdas) && p.celdas.length > 0) {
+        return mirrorCellsForBack(
+          p.celdas,
+          template.pageWidthMm,
+          template.pageHeightMm,
+          backMirrorAxis(template),
+        );
+      }
     }
     return p.celdas ?? [];
   }

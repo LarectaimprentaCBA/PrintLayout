@@ -19,6 +19,7 @@ import GridUploadModal from './components/GridUploadModal.jsx';
 import ImagePackModal from './components/ImagePackModal.jsx';
 import ImageCountPackModal from './components/ImageCountPackModal.jsx';
 import ImageQuantitiesModal from './components/ImageQuantitiesModal.jsx';
+import ImageFrontBackPoseModal from './components/ImageFrontBackPoseModal.jsx';
 import ImageEditorModal from './components/ImageEditorModal.jsx';
 import ImageCropModal from './components/ImageCropModal.jsx';
 import SaveTemplateModal from './components/SaveTemplateModal.jsx';
@@ -48,6 +49,8 @@ import {
   cellsCountOnPage,
   pageStartOffset,
   findCellPageInfo,
+  backMirrorAxis,
+  backRotate180,
 } from './lib/templates.js';
 import { generateCuts } from './lib/grid.js';
 import { rasterizePdfPages } from './lib/pdfPreview.js';
@@ -318,6 +321,7 @@ export default function App() {
   // Modal de grilla rapida (plantilla en memoria, sin PDF).
   const [gridModalOpen, setGridModalOpen] = useState(false);
   const [quantitiesOpen, setQuantitiesOpen] = useState(false);
+  const [poseFrontBackOpen, setPoseFrontBackOpen] = useState(false);
   // Imagen abierta en el editor.
   const [editingImageId, setEditingImageId] = useState(null);
   // Imagen abierta en el modal de recorte manual.
@@ -862,9 +866,10 @@ export default function App() {
     const cortes = markMarginMm > 0
       ? generateCuts(cells, { cutShape, cutMarginMm })
       : [];
-    // Doble faz: el dorso usa la misma grilla (celdasDorso vacio => cellPositions
-    // cae en celdas). Asi el editor muestra el toggle frente/dorso y se imprime
-    // cada cara por separado, igual que la plantilla de tarjetas doble faz.
+    // Doble faz: NO horneamos las celdas del dorso. Se derivan al vuelo desde
+    // `celdas` espejando segun backMirror (cellPositions/mirrorCellsForBack).
+    // Posicion (backMirror) y rotacion (backRotate180) son INDEPENDIENTES y se
+    // ajustan con dos toggles en la UI. Default: espejo arriba-abajo, sin rotar.
     const tpl = {
       name: doubleSided ? 'Grilla rápida doble faz' : 'Grilla rápida',
       pdfBase64: null,
@@ -878,6 +883,8 @@ export default function App() {
       markMarginMm,
       cutShape,
       doubleSided,
+      backMirror: doubleSided ? 'y' : undefined,
+      backRotate180: doubleSided ? false : undefined,
       singlePage: true,
     };
     openInTab(tpl, { name: tpl.name, forceNew: true });
@@ -1706,7 +1713,7 @@ export default function App() {
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
-      <div className="flex h-screen flex-col bg-ink-950 text-ink-100">
+      <div className="flex h-screen w-screen flex-col overflow-hidden bg-ink-950 text-ink-100">
         {updateInfo && (
           <div className="flex items-center justify-between gap-3 bg-accent-600 px-4 py-1.5 text-xs text-white">
             <span>
@@ -1742,6 +1749,32 @@ export default function App() {
             setViewingFace(f);
             layout.setSelectedCell(null);
           }}
+          backMirror={selected ? backMirrorAxis(selected) : 'y'}
+          backRotate180={selected ? backRotate180(selected) : false}
+          onChangeBackMirror={selected?.doubleSided ? (axis) => {
+            // Resolvemos AMBOS campos y borramos el backFlip viejo, asi no queda
+            // estado mixto en plantillas que venian del modo acoplado anterior.
+            updateActiveTab((tab) => ({
+              template: {
+                ...tab.template,
+                backMirror: axis,
+                backRotate180: backRotate180(tab.template),
+                backFlip: undefined,
+              },
+              isDirty: true,
+            }));
+          } : undefined}
+          onChangeBackRotate180={selected?.doubleSided ? (val) => {
+            updateActiveTab((tab) => ({
+              template: {
+                ...tab.template,
+                backRotate180: !!val,
+                backMirror: backMirrorAxis(tab.template),
+                backFlip: undefined,
+              },
+              isDirty: true,
+            }));
+          } : undefined}
           exporting={exporting}
           printing={printing}
           cutting={cutting}
@@ -1788,6 +1821,7 @@ export default function App() {
             layout.distributeImagesEvenly(mode, currentPage, scope)
           }
           onOpenQuantities={() => setQuantitiesOpen(true)}
+          onOpenFrontBackPose={() => setPoseFrontBackOpen(true)}
           onUndo={layout.undo}
           onRedo={layout.redo}
           canUndo={layout.canUndo}
@@ -1968,6 +2002,25 @@ export default function App() {
             }
           }}
           onCancel={() => setQuantitiesOpen(false)}
+        />
+
+        <ImageFrontBackPoseModal
+          open={poseFrontBackOpen}
+          cellsPerPage={layout.cellsPerPage}
+          initialImages={layout.images}
+          onConfirm={(cards) => {
+            const res = layout.applyFrontBackPairs(cards);
+            setPoseFrontBackOpen(false);
+            setCurrentPage(0);
+            layout.setSelectedCell(null);
+            if (res) {
+              setToast({
+                kind: 'success',
+                text: `${res.cards} tarjeta${res.cards === 1 ? '' : 's'} posada${res.cards === 1 ? '' : 's'} (frente y dorso) en ${res.pages} hoja${res.pages === 1 ? '' : 's'}.`,
+              });
+            }
+          }}
+          onCancel={() => setPoseFrontBackOpen(false)}
         />
 
         <PaperPresetsModal

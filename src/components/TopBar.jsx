@@ -195,12 +195,63 @@ function BladeOffsetControl({ value, onChange }) {
   );
 }
 
+// Menú desplegable que agrupa las acciones de acomodado para no saturar la
+// barra superior. Recibe items ya filtrados: [{ label, onClick, disabled, title }].
+function AcomodarMenu({ items }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDocClick = (e) => {
+      if (!rootRef.current?.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [open]);
+
+  if (items.length === 0) return null;
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1 rounded-md border border-ink-700 bg-ink-800 px-3 py-1.5 text-sm font-medium text-ink-100 hover:bg-ink-700"
+      >
+        <span>Acomodar</span>
+        <span className="text-ink-400">▾</span>
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-30 mt-1 w-56 overflow-hidden rounded-md border border-ink-700 bg-ink-800 py-1 shadow-lg">
+          {items.map((it) => (
+            <button
+              key={it.label}
+              type="button"
+              disabled={it.disabled}
+              title={it.title}
+              onClick={() => { setOpen(false); it.onClick?.(); }}
+              className="block w-full px-3 py-1.5 text-left text-sm text-ink-100 hover:bg-ink-700 disabled:opacity-40 disabled:hover:bg-transparent"
+            >
+              {it.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function TopBar({
   canExport,
   canCut,
   doubleSided,
   viewingFace,
   onChangeFace,
+  backMirror,
+  onChangeBackMirror,
+  backRotate180,
+  onChangeBackRotate180,
   exporting,
   printing,
   cutting,
@@ -225,6 +276,7 @@ export default function TopBar({
   totalPages,
   onDistributeEvenly,
   onOpenQuantities,
+  onOpenFrontBackPose,
   onUndo,
   onRedo,
   canUndo,
@@ -282,8 +334,8 @@ export default function TopBar({
 
   return (
     <>
-      <header className="flex h-12 shrink-0 items-center justify-between border-b border-ink-700 bg-ink-900 px-4">
-        <div className="flex items-center gap-2">
+      <header className="flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-ink-700 bg-ink-900 px-4 py-1.5">
+        <div className="flex shrink-0 items-center gap-2">
           <div className="h-5 w-5 rounded bg-accent-500" />
           <h1 className="text-sm font-semibold tracking-wide">PrintLayout</h1>
           <span
@@ -389,7 +441,7 @@ export default function TopBar({
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           {doubleSided && (
             <div className="flex items-center gap-2" title="¿Qué cara estás editando?">
               <span className="text-[11px] uppercase tracking-wider text-ink-400">Cara</span>
@@ -415,6 +467,67 @@ export default function TopBar({
                   }`}
                 >
                   Dorso
+                </button>
+              </div>
+            </div>
+          )}
+
+          {doubleSided && viewingFace === 'back' && typeof onChangeBackMirror === 'function' && (
+            <div
+              className="flex items-center gap-1"
+              title="Ajustes del dorso. Espejo: si el dorso cae mal ubicado (no detrás de su frente), probá el otro. Rotar: si el dorso sale cabeza abajo, ponelo en 180°."
+            >
+              <span className="text-[10px] uppercase tracking-wide text-ink-400">Dorso</span>
+              <div className="flex overflow-hidden rounded-md border border-ink-700 bg-ink-800">
+                <button
+                  type="button"
+                  onClick={() => onChangeBackMirror('y')}
+                  title="Espejo arriba-abajo"
+                  className={`px-2 py-1 text-xs ${
+                    (backMirror ?? 'y') === 'y'
+                      ? 'bg-accent-600 text-white'
+                      : 'text-ink-200 hover:bg-ink-700'
+                  }`}
+                >
+                  ↕
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onChangeBackMirror('x')}
+                  title="Espejo izquierda-derecha"
+                  className={`border-l border-ink-700 px-2 py-1 text-xs ${
+                    (backMirror ?? 'y') === 'x'
+                      ? 'bg-accent-600 text-white'
+                      : 'text-ink-200 hover:bg-ink-700'
+                  }`}
+                >
+                  ↔
+                </button>
+              </div>
+              <div className="flex overflow-hidden rounded-md border border-ink-700 bg-ink-800">
+                <button
+                  type="button"
+                  onClick={() => onChangeBackRotate180(false)}
+                  title="Dorso sin rotar"
+                  className={`px-2 py-1 text-xs ${
+                    !backRotate180
+                      ? 'bg-accent-600 text-white'
+                      : 'text-ink-200 hover:bg-ink-700'
+                  }`}
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onChangeBackRotate180(true)}
+                  title="Rotar dorso 180° (si sale cabeza abajo)"
+                  className={`border-l border-ink-700 px-2 py-1 text-xs ${
+                    backRotate180
+                      ? 'bg-accent-600 text-white'
+                      : 'text-ink-200 hover:bg-ink-700'
+                  }`}
+                >
+                  180°
                 </button>
               </div>
             </div>
@@ -476,35 +589,31 @@ export default function TopBar({
           )}
 
           {(cellsPerPage ?? 0) >= 2 && (
-            <button
-              type="button"
-              onClick={handleDistributeClick}
-              disabled={!canDistribute}
-              title={
-                imagesLoaded === 0
-                  ? 'Cargá imágenes primero'
-                  : 'Repartir las imágenes cargadas en las celdas de esta hoja'
-              }
-              className="rounded-md border border-ink-700 bg-ink-800 px-3 py-1.5 text-sm font-medium text-ink-100 hover:bg-ink-700 disabled:opacity-40"
-            >
-              Repartir parejo
-            </button>
-          )}
-
-          {(cellsPerPage ?? 0) >= 2 && typeof onOpenQuantities === 'function' && (
-            <button
-              type="button"
-              onClick={() => onOpenQuantities()}
-              disabled={imagesLoaded === 0}
-              title={
-                imagesLoaded === 0
-                  ? 'Cargá fotos primero'
-                  : 'Elegir cuántas copias de cada foto y acomodarlas (agrega hojas si hace falta)'
-              }
-              className="rounded-md border border-ink-700 bg-ink-800 px-3 py-1.5 text-sm font-medium text-ink-100 hover:bg-ink-700 disabled:opacity-40"
-            >
-              Por cantidad
-            </button>
+            <AcomodarMenu
+              items={[
+                {
+                  label: 'Repartir parejo',
+                  onClick: handleDistributeClick,
+                  disabled: !canDistribute,
+                  title: imagesLoaded === 0
+                    ? 'Cargá imágenes primero'
+                    : 'Repartir las imágenes cargadas en las celdas de esta hoja',
+                },
+                ...(typeof onOpenQuantities === 'function' ? [{
+                  label: 'Por cantidad',
+                  onClick: () => onOpenQuantities(),
+                  disabled: imagesLoaded === 0,
+                  title: imagesLoaded === 0
+                    ? 'Cargá fotos primero'
+                    : 'Elegir cuántas copias de cada foto y acomodarlas',
+                }] : []),
+                ...(doubleSided && typeof onOpenFrontBackPose === 'function' ? [{
+                  label: 'Posar frente/dorso',
+                  onClick: () => onOpenFrontBackPose(),
+                  title: 'Cargar pares frente/dorso con cantidad y posarlos emparejados',
+                }] : []),
+              ]}
+            />
           )}
 
           {doubleSided ? (

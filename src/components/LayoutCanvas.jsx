@@ -216,6 +216,7 @@ export default function LayoutCanvas({
                   cellWmm={cell.w}
                   cellHmm={cell.h}
                   cutMarginMm={template.cutMarginMm ?? 0}
+                  cellNumber={template.doubleSided ? globalIdx + 1 : null}
                 />
               );
             })}

@@ -1,9 +1,10 @@
-import { PDFDocument, rgb } from 'pdf-lib';
+import { PDFDocument, rgb, degrees } from 'pdf-lib';
 import {
   cellPositions,
   cellsForPage,
   pageStartOffset,
   fixedPageCount,
+  backRotate180,
 } from './templates.js';
 import { coverCropRect, coverObjectPosition } from './faceDetection.js';
 import { cropImageDataUrl } from './imageCrop.js';
@@ -116,6 +117,11 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
   // Solo aplica a marcas generadas (grilla rápida); las marcas embebidas en
   // el PDF de fondo no se pueden quitar desde acá.
   const drawMarks = options.drawMarks !== false;
+  // rotateContent180: gira cada imagen 180° dentro de su celda. Lo usamos en el
+  // dorso de la grilla doble faz con volteo arriba-abajo (backFlip: 'tb'): la
+  // hoja se gira sobre el eje horizontal, asi que el contenido del dorso, que
+  // se imprime derecho, saldria cabeza abajo. Lo pre-rotamos para compensar.
+  const rotate180 = options.rotateContent180 === true;
   const { imageMap, embedCache } = ctx;
 
   const templateWpt = template.pageWidthMm * MM_TO_PT;
@@ -241,11 +247,14 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
 
       if (cellFitMode === 'cover') {
         const embedded = await embedCoverCrop(image, cell.w, cell.h);
+        // Al rotar 180° el ancla (x,y) de pdf-lib queda en la esquina opuesta,
+        // por eso desplazamos al vertice superior-derecho del rectangulo.
         page.drawImage(embedded, {
-          x: baseX,
-          y: baseYBottom,
+          x: rotate180 ? baseX + cellWpt : baseX,
+          y: rotate180 ? baseYBottom + cellHpt : baseYBottom,
           width: cellWpt,
           height: cellHpt,
+          rotate: rotate180 ? degrees(180) : undefined,
         });
       } else {
         const embedded = await embedFull(image);
@@ -255,11 +264,14 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
           embedded.width,
           embedded.height,
         );
+        const drawX = baseX + dx;
+        const drawY = baseYBottom + dy;
         page.drawImage(embedded, {
-          x: baseX + dx,
-          y: baseYBottom + dy,
+          x: rotate180 ? drawX + drawW : drawX,
+          y: rotate180 ? drawY + drawH : drawY,
           width: drawW,
           height: drawH,
+          rotate: rotate180 ? degrees(180) : undefined,
         });
       }
     }
@@ -294,6 +306,9 @@ export async function buildPdf(template, assignments, imageMap, options = {}) {
     paperWmm,
     paperHmm,
     drawMarks: options.drawMarks,
+    // Rotacion del dorso: independiente del espejo de posicion. La controla el
+    // flag backRotate180 de la plantilla (toggle "Rotar dorso" en la UI).
+    rotateContent180: face === 'back' && template.doubleSided && backRotate180(template),
   });
 
   return doc.save();
@@ -333,6 +348,9 @@ export async function buildDoubleSidedPdf(
     face: 'back',
     paperWmm,
     paperHmm,
+    // Rotacion del dorso: independiente del espejo de posicion (flag
+    // backRotate180, toggle "Rotar dorso" en la UI).
+    rotateContent180: backRotate180(template),
   });
 
   return doc.save();

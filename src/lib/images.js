@@ -1,6 +1,7 @@
 import { detectFaces } from './faceDetection.js';
 import { readImageDpi } from './imageMetadata.js';
 import { prepareIncomingImageFiles } from './heic.js';
+import { rasterizePdfPagesAt } from './pdfPreview.js';
 
 // Re-codifica la imagen pasandola por canvas. Esto:
 // 1) Descarta cualquier perfil ICC embebido (canvas siempre trabaja en sRGB),
@@ -137,6 +138,70 @@ export async function readImageFile(file, opts = {}) {
     physicalSizeMm,
     physicalSizeMmTrusted,
   };
+}
+
+function isPdfFile(file) {
+  return (file?.type || '').toLowerCase() === 'application/pdf'
+    || /\.pdf$/i.test(file?.name || '');
+}
+
+// Carga UN archivo (imagen JPG/PNG/HEIC o PDF) y devuelve un objeto imagen
+// listo para el editor. Para PDF rasteriza la PAGINA 1 a 300 DPI. Reusa el
+// mismo pipeline (normalizacion sRGB + downscale + caras) via readImageFile.
+export async function readAnyFileToImage(file) {
+  if (isPdfFile(file)) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const pages = await rasterizePdfPagesAt(bytes, {
+      dpi: 300,
+      format: 'image/png',
+      pageIndices: [1],
+      as: 'arraybuffer',
+    });
+    const first = pages?.[0];
+    if (!first?.buffer) throw new Error(`No se pudo leer el PDF: ${file.name}`);
+    const baseName = (file.name || 'pdf').replace(/\.pdf$/i, '');
+    const pngFile = new File([first.buffer], `${baseName}.png`, { type: 'image/png' });
+    return readImageFile(pngFile);
+  }
+  // Imagen: convierte HEIC si hace falta y procesa.
+  const [converted] = await prepareIncomingImageFiles([file]);
+  if (!converted) throw new Error(`Archivo no soportado: ${file?.name}`);
+  return readImageFile(converted);
+}
+
+// Carga varios archivos (imagenes y/o PDFs) a objetos imagen. Un PDF se
+// expande a UNA imagen por pagina (300 DPI), util para "muchos frentes/dorsos
+// en un PDF". Las imagenes pasan por el pipeline normal (HEIC, normalizacion,
+// downscale). Devuelve la lista plana en el orden de entrada.
+export async function readFilesToImages(fileList) {
+  const files = Array.from(fileList || []);
+  const out = [];
+  for (const file of files) {
+    try {
+      if (isPdfFile(file)) {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const pages = await rasterizePdfPagesAt(bytes, {
+          dpi: 300,
+          format: 'image/png',
+          pageIndices: null, // todas
+          as: 'arraybuffer',
+        });
+        const baseName = (file.name || 'pdf').replace(/\.pdf$/i, '');
+        for (const pg of pages) {
+          if (!pg?.buffer) continue;
+          const label = pages.length > 1 ? ` p${pg.pageIndex}` : '';
+          const pngFile = new File([pg.buffer], `${baseName}${label}.png`, { type: 'image/png' });
+          out.push(await readImageFile(pngFile));
+        }
+      } else {
+        const [converted] = await prepareIncomingImageFiles([file]);
+        if (converted) out.push(await readImageFile(converted));
+      }
+    } catch (err) {
+      console.error(`No se pudo cargar ${file?.name}:`, err);
+    }
+  }
+  return out;
 }
 
 export async function readImageFiles(fileList) {
