@@ -287,15 +287,15 @@ async function publishCatalog(rows) {
   }
 }
 
-async function removeCatalog(ids) {
+async function publishConfig(clave, valor) {
   const cfg = getConfig();
   if (!configStore.isLaRecta(cfg)) return { ok: false, error: 'Esta PC no está en modo La Recta.' };
   try {
-    await supabase.removeCatalogRows(cfg, ids);
-    log(`Quitada/s ${Array.isArray(ids) ? ids.length : 0} plancha/s del catálogo.`);
+    await supabase.upsertConfig(cfg, clave, valor);
+    log(`Config publicada: ${clave}.`);
     return { ok: true };
   } catch (err) {
-    log(`Error quitando del catálogo: ${err.message}`, 'error');
+    log(`Error publicando config ${clave}: ${err.message}`, 'error');
     return { ok: false, error: err.message };
   }
 }
@@ -311,5 +311,5 @@ module.exports = {
   readFile,
   orderBuilt,
   publishCatalog,
-  removeCatalog,
+  publishConfig,
 };

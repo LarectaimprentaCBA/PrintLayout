@@ -70,23 +70,36 @@ se puede borrar ni editar (badge "oficial" + 🔒). En modo La Recta hay un bot�
 "Marcar/Quitar oficial" en el listado de plantillas (Nuevo trabajo).
 
 ## Catálogo de planchas (PrintLayout = fuente de verdad)
-Al marcar oficial / con el botón "Publicar catálogo", se hace upsert a la tabla
-`planchas_catalogo`. Una fila por plancha oficial + una fila `personalizado` con
-el criterioHoja global. **Los precios NO van acá** (los maneja el CRM).
+Al marcar oficial (Mariano tipea el **id de catálogo**, ej. "polaroid") o con el
+botón "Publicar catálogo", se hace upsert a `planchas_catalogo`. Al **quitar**
+oficial → baja lógica (`activo=false`, NO se borra la fila). **Los precios NO van
+acá** (los maneja el CRM, vía `precios_planchas.plancha_id = id`).
+
+- `id` = id ESTABLE de catálogo/negocio (lo confirma Mariano). Enganche con la web
+  (`items.tamano.id`) y el CRM. Se mantiene aunque cambie la plantilla interna.
+- `plantilla_printlayout` = id interno de la plantilla (cómo la carga PrintLayout).
 
 DDL sugerida en Supabase:
 ```sql
 create table if not exists planchas_catalogo (
-  id text primary key,            -- = id interno de la plantilla (estable)
+  id text primary key,             -- id de catálogo/negocio (ej. "polaroid")
   label text,
-  wmm numeric,                    -- tamaño de la foto (null en 'personalizado')
+  wmm numeric,
   hmm numeric,
   fotos_por_plancha int,
-  criterio_hoja jsonb,            -- hoja base + márgenes + espaciado (custom)
+  plantilla_printlayout text,      -- id interno de la plantilla en PrintLayout
+  activo boolean default true,     -- baja lógica; la web filtra activo=true
   updated_at timestamptz default now()
 );
+
+-- Key-value de config de fotos. El criterio del "A medida" va acá:
+create table if not exists config_fotos (
+  clave text primary key,
+  valor jsonb,
+  updated_at timestamptz default now()
+);
+-- clave='criterio_hoja_custom' → valor {paperW,paperH,marginX,marginY,spacingX,spacingY}
 ```
-El id `personalizado` es la fila con el criterioHoja para tamaños custom.
 
 ## Seguridad
 La service key vive **sólo** en `userData/intake-config.json`. No poner claves

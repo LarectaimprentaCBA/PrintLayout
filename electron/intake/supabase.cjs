@@ -126,18 +126,20 @@ async function upsertCatalog(cfg, rows) {
   return true;
 }
 
-// Borra filas del catálogo por id (al quitar el flag oficial).
-async function removeCatalogRows(cfg, ids) {
+// Upsert de una clave de configuración (tabla key-value `config_fotos`, PK clave).
+async function upsertConfig(cfg, clave, valor) {
   assertCfg(cfg);
-  const list = (ids || []).filter(Boolean);
-  if (list.length === 0) return true;
-  const inList = list.map((i) => encodeURIComponent(i)).join(',');
-  const url = `${cfg.supabaseUrl}/rest/v1/planchas_catalogo?id=in.(${inList})`;
+  const url = `${cfg.supabaseUrl}/rest/v1/config_fotos`;
   const res = await net.fetch(url, {
-    method: 'DELETE',
-    headers: { ...authHeaders(cfg), Prefer: 'return=minimal' },
+    method: 'POST',
+    headers: {
+      ...authHeaders(cfg),
+      'Content-Type': 'application/json',
+      Prefer: 'resolution=merge-duplicates,return=minimal',
+    },
+    body: JSON.stringify([{ clave, valor }]),
   });
-  if (!res.ok) throw await readErr(res, 'Catálogo delete');
+  if (!res.ok) throw await readErr(res, 'config_fotos upsert');
   return true;
 }
 
@@ -148,5 +150,5 @@ module.exports = {
   markProcessed,
   removeObjects,
   upsertCatalog,
-  removeCatalogRows,
+  upsertConfig,
 };

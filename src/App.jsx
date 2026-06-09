@@ -55,7 +55,13 @@ import {
 } from './lib/templates.js';
 import { generateCuts } from './lib/grid.js';
 import { buildOrderJobs } from './intake/buildOrderJob.js';
-import { buildCatalogRows } from './intake/catalog.js';
+import {
+  buildCatalogRows,
+  catalogRowForTemplate,
+  slugifyCatalogId,
+  buildCriterioCustomValue,
+  CRITERIO_CUSTOM_KEY,
+} from './intake/catalog.js';
 import { rasterizePdfPages } from './lib/pdfPreview.js';
 import { facesBoundingBox } from './lib/faceDetection.js';
 import { cropImageDataUrl } from './lib/imageCrop.js';
@@ -326,6 +332,9 @@ export default function App() {
 
   // Modal de margen (solo para editar margen de plantilla existente).
   const [marginPrompt, setMarginPrompt] = useState(null);
+  // { templateId, defaultValue } al marcar una plancha como oficial: pide el id
+  // de catálogo (ej. "polaroid").
+  const [oficialPrompt, setOficialPrompt] = useState(null);
   // Modal de subida de PDF (margen + doble faz).
   const [pdfUpload, setPdfUpload] = useState(null);
   // Modal de grilla rapida (plantilla en memoria, sin PDF).
@@ -1452,46 +1461,69 @@ export default function App() {
   };
 
   // Marca/desmarca una plancha como oficial (solo modo La Recta). Opera sobre
-  // la plantilla GUARDADA (id real). El publicado al catálogo se engancha en
-  // el Commit 8.
+  // la plantilla GUARDADA (id real). MARCAR pide el id de catálogo (lo confirma
+  // Mariano); QUITAR es baja lógica en el catálogo (activo=false, no borra).
   const handleToggleOficial = async (tpl) => {
     if (!isLaRecta) return;
     const stored = templates.find((t) => t.id === tpl.id);
     if (!stored) return;
-    try {
-      const updated = await update({ ...stored, oficial: !stored.oficial });
-      // Reflejar el cambio en el catálogo de Supabase (sin esperar al refresh
-      // del hook: reconstruimos la lista con el cambio).
-      const nextTemplates = templates.map((t) => (t.id === updated.id ? updated : t));
-      let catalogMsg = '';
-      try {
-        if (updated.oficial) {
-          const r = await window.printlayout.intake.publishCatalog(buildCatalogRows(nextTemplates));
-          catalogMsg = r?.ok ? ' Catálogo publicado.' : ` (catálogo: ${r?.error || 'no publicado'})`;
-        } else {
-          const r = await window.printlayout.intake.removeCatalog([updated.id]);
-          catalogMsg = r?.ok ? ' Quitada del catálogo.' : ` (catálogo: ${r?.error || 'no quitada'})`;
-        }
-      } catch (e) {
-        catalogMsg = ` (catálogo: ${e.message})`;
-      }
-      setToast({
-        kind: 'success',
-        text: (updated.oficial
-          ? `"${updated.name}" marcada como oficial.`
-          : `"${updated.name}" ya no es oficial.`) + catalogMsg,
+    if (!stored.oficial) {
+      // Pedir el id de catálogo (ej. "polaroid").
+      setOficialPrompt({
+        templateId: stored.id,
+        defaultValue: stored.catalogoId || slugifyCatalogId(stored.name),
       });
+      return;
+    }
+    // Quitar de oficial → baja lógica (activo=false). Mantenemos catalogoId.
+    try {
+      const updated = await update({ ...stored, oficial: false });
+      let msg = '';
+      if (updated.catalogoId) {
+        const r = await window.printlayout.intake.publishCatalog([catalogRowForTemplate(updated, false)]);
+        msg = r?.ok ? ' Marcada inactiva en el catálogo.' : ` (catálogo: ${r?.error || 'no actualizado'})`;
+      }
+      setToast({ kind: 'success', text: `"${updated.name}" ya no es oficial.${msg}` });
     } catch (err) {
       setToast({ kind: 'error', text: `No se pudo cambiar: ${err.message}` });
     }
   };
 
-  // Publica TODO el catálogo de planchas oficiales (botón "Publicar catálogo"
-  // del panel). Útil para poblar/re-sincronizar de una.
-  const handlePublishCatalog = useCallback(
-    () => window.printlayout.intake.publishCatalog(buildCatalogRows(templates)),
-    [templates],
-  );
+  // Confirma el id de catálogo y marca la plancha como oficial + la publica.
+  const submitOficialPrompt = async (rawId) => {
+    const ctx = oficialPrompt;
+    setOficialPrompt(null);
+    if (!ctx?.templateId) return;
+    const stored = templates.find((t) => t.id === ctx.templateId);
+    if (!stored) return;
+    const catalogoId = String(rawId || '').trim();
+    if (!catalogoId) {
+      setToast({ kind: 'error', text: 'El id de catálogo no puede estar vacío.' });
+      return;
+    }
+    // No permitir que dos planchas usen el mismo id de catálogo.
+    const clash = templates.find((t) => t.id !== stored.id && t.catalogoId === catalogoId);
+    if (clash) {
+      setToast({ kind: 'error', text: `El id "${catalogoId}" ya lo usa "${clash.name}". Elegí otro.` });
+      return;
+    }
+    try {
+      const updated = await update({ ...stored, oficial: true, catalogoId });
+      const r = await window.printlayout.intake.publishCatalog([catalogRowForTemplate(updated, true)]);
+      const msg = r?.ok ? ' Publicada al catálogo.' : ` (catálogo: ${r?.error || 'no publicada'})`;
+      setToast({ kind: 'success', text: `"${updated.name}" es oficial — id catálogo: ${catalogoId}.${msg}` });
+    } catch (err) {
+      setToast({ kind: 'error', text: `No se pudo marcar oficial: ${err.message}` });
+    }
+  };
+
+  // Publica TODO el catálogo de planchas oficiales + el criterio del "A medida"
+  // a config_fotos (botón "Publicar catálogo" del panel). Para poblar de una.
+  const handlePublishCatalog = useCallback(async () => {
+    const r = await window.printlayout.intake.publishCatalog(buildCatalogRows(templates));
+    await window.printlayout.intake.publishConfig(CRITERIO_CUSTOM_KEY, buildCriterioCustomValue());
+    return r;
+  }, [templates]);
 
   // Click en plantilla del sidebar: adopt en la tab actual si esta vacia,
   // sino crea tab nueva con esa plantilla.
@@ -2134,6 +2166,17 @@ export default function App() {
           placeholder="10"
           onConfirm={submitMarginPrompt}
           onCancel={() => setMarginPrompt(null)}
+        />
+
+        <PromptModal
+          open={!!oficialPrompt}
+          title="Marcar como plancha oficial"
+          message="ID de catálogo (el enganche con la web y el CRM). Estable: no lo cambies después. Ej: polaroid, 10x15."
+          defaultValue={oficialPrompt?.defaultValue ?? ''}
+          placeholder="polaroid"
+          confirmLabel="Marcar oficial"
+          onConfirm={submitOficialPrompt}
+          onCancel={() => setOficialPrompt(null)}
         />
 
         <PdfUploadModal

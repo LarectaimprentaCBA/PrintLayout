@@ -90,7 +90,7 @@ contextBridge.exposeInMainWorld('printlayout', {
     readFile: (localPath) => ipcRenderer.invoke('intake:read-file', localPath),
     orderBuilt: (payload) => ipcRenderer.invoke('intake:order-built', payload),
     publishCatalog: (rows) => ipcRenderer.invoke('intake:publish-catalog', rows),
-    removeCatalog: (ids) => ipcRenderer.invoke('intake:remove-catalog', ids),
+    publishConfig: (clave, valor) => ipcRenderer.invoke('intake:publish-config', { clave, valor }),
     // Eventos push del main:
     onOrderReady: (cb) => {
       const handler = (_evt, payload) => cb(payload);
