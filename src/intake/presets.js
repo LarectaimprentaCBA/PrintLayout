@@ -14,8 +14,16 @@ export const WEB_PRESET_IDS = [
   // TODO(Mariano): completar con el resto del catálogo de la web.
 ];
 
-// Busca la plantilla estándar guardada cuyo id == presetId.
+// Busca la plancha cuyo ID DE CATÁLOGO (catalogoId) == el id que manda la web.
+// El id de catálogo es el que Mariano confirma al "Marcar oficial" (ej.
+// "polaroid"); es el enganche estable con la web y el CRM (planchas_catalogo.id).
+// Fallback de compatibilidad: si ninguna matchea por catalogoId, probamos el id
+// interno por si alguna plantilla vieja lo usaba directamente.
 export function resolvePresetTemplate(templates, presetId) {
   if (!Array.isArray(templates) || !presetId) return null;
-  return templates.find((t) => t && t.id === presetId) || null;
+  return (
+    templates.find((t) => t && t.catalogoId === presetId)
+    || templates.find((t) => t && t.id === presetId)
+    || null
+  );
 }

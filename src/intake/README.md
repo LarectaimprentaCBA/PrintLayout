@@ -27,10 +27,11 @@ El job se **guarda** (jobs-store) con nombre `P-<numero_presupuesto>-fotos` y se
 
 ### 1) Plantillas estándar (presets)
 Cada tamaño "preset" del carrito web trae `tamano.id` (p.ej. `polaroid`,
-`10x15`). El armador busca una **plantilla guardada en PrintLayout cuyo `id` sea
-igual a ese `tamano.id`**. Mariano debe **crear esas plantillas** (medidas,
-márgenes, marco, corte) con el id correspondiente. Si falta, ese tamaño se
-saltea con un mensaje claro (no inventa medidas).
+`10x15`). El armador busca la **plancha oficial cuyo `id de catálogo`
+(`catalogoId`) sea igual a ese `tamano.id`**. Mariano crea la plantilla
+normalmente (medidas, márgenes, marco, corte), la guarda, y la **marca oficial
+tipeando ese id de catálogo** (ej. `polaroid`). Si no hay ninguna que matchee,
+ese tamaño se saltea con un mensaje claro (no inventa medidas).
 
 Checklist de ids esperados: ver `WEB_PRESET_IDS` en `presets.js` (mantenerlo en
 sync con el catálogo de la web).
