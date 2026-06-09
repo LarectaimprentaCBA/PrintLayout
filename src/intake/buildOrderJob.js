@@ -86,7 +86,7 @@ export async function buildOrderJobs(order, { templates, readFileBytes }) {
         continue;
       }
       template = cloneTemplate(found);
-    } else {
+    } else if (tamano.tipo === 'custom') {
       const wmm = Number(tamano.wmm);
       const hmm = Number(tamano.hmm);
       if (!(wmm > 0 && hmm > 0)) {
@@ -94,6 +94,16 @@ export async function buildOrderJobs(order, { templates, readFileBytes }) {
         continue;
       }
       template = buildCustomGridTemplate(wmm, hmm, tamano.label);
+    } else {
+      // Tipo desconocido o faltante: NO inventamos una hoja custom por defecto
+      // (eso armaría medidas inventadas en silencio). Salteamos con un mensaje claro.
+      skipped.push({
+        label: sizeLabel,
+        reason: tamano.tipo
+          ? `tipo de tamaño desconocido: "${tamano.tipo}" (esperaba "preset" o "custom")`
+          : 'el tamaño no indica tipo (preset/custom)',
+      });
+      continue;
     }
 
     const cellsPerPage = Array.isArray(template.celdas) ? template.celdas.length : 0;
