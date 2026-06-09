@@ -288,6 +288,7 @@ export default function TopBar({
   onSaveJob,
   onSaveJobAs,
   onOpenJob,
+  onOpenIntake,
   // Utilidades globales
   onOpenPdfToImage,
 }) {
@@ -396,6 +397,16 @@ export default function TopBar({
                 className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:bg-ink-700"
               >
                 PDF→Imagen
+              </button>
+            )}
+            {onOpenIntake && (
+              <button
+                type="button"
+                onClick={onOpenIntake}
+                title="Entrada automática de pedidos de fotos desde la web"
+                className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:bg-ink-700"
+              >
+                Pedidos
               </button>
             )}
           </div>

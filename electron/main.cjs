@@ -941,6 +941,19 @@ ipcMain.handle('intake:set-active', (_evt, activo) => {
     return { ok: false, error: err.message };
   }
 });
+ipcMain.handle('intake:choose-dir', async () => {
+  try {
+    const win = BrowserWindow.getFocusedWindow();
+    const r = await dialog.showOpenDialog(win, {
+      title: 'Carpeta de salida de pedidos',
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (r.canceled || !r.filePaths || !r.filePaths[0]) return { canceled: true };
+    return { ok: true, path: r.filePaths[0] };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
 ipcMain.handle('intake:test-connection', () => intakeService.testConnection());
 ipcMain.handle('intake:poll-now', () => intakeService.pollNow());
 ipcMain.handle('intake:read-file', (_evt, localPath) => intakeService.readFile(localPath));

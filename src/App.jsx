@@ -20,6 +20,7 @@ import ImagePackModal from './components/ImagePackModal.jsx';
 import ImageCountPackModal from './components/ImageCountPackModal.jsx';
 import ImageQuantitiesModal from './components/ImageQuantitiesModal.jsx';
 import ImageFrontBackPoseModal from './components/ImageFrontBackPoseModal.jsx';
+import IntakePanelModal from './components/IntakePanelModal.jsx';
 import ImageEditorModal from './components/ImageEditorModal.jsx';
 import ImageCropModal from './components/ImageCropModal.jsx';
 import SaveTemplateModal from './components/SaveTemplateModal.jsx';
@@ -111,6 +112,7 @@ export default function App() {
   const [syncing, setSyncing] = useState(false);
   const [presetsModalOpen, setPresetsModalOpen] = useState(false);
   const [pdfToImageOpen, setPdfToImageOpen] = useState(false);
+  const [intakePanelOpen, setIntakePanelOpen] = useState(false);
 
   const runSyncWithToast = async ({ silent = false } = {}) => {
     setSyncing(true);
@@ -1923,6 +1925,7 @@ export default function App() {
           onSaveJobAs={handleSaveJobAs}
           onOpenJob={handleOpenJobsList}
           onOpenPdfToImage={() => setPdfToImageOpen(true)}
+          onOpenIntake={() => setIntakePanelOpen(true)}
         />
         <TabsBar
           tabs={tabs}
@@ -2128,6 +2131,11 @@ export default function App() {
         <PdfToImageModal
           open={pdfToImageOpen}
           onClose={() => setPdfToImageOpen(false)}
+        />
+
+        <IntakePanelModal
+          open={intakePanelOpen}
+          onClose={() => setIntakePanelOpen(false)}
         />
 
         <ConfirmModal

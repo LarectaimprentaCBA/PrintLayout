@@ -83,6 +83,7 @@ contextBridge.exposeInMainWorld('printlayout', {
     getConfig: () => ipcRenderer.invoke('intake:get-config'),
     setConfig: (patch) => ipcRenderer.invoke('intake:set-config', patch),
     setActive: (activo) => ipcRenderer.invoke('intake:set-active', activo),
+    chooseDir: () => ipcRenderer.invoke('intake:choose-dir'),
     testConnection: () => ipcRenderer.invoke('intake:test-connection'),
     pollNow: () => ipcRenderer.invoke('intake:poll-now'),
     readFile: (localPath) => ipcRenderer.invoke('intake:read-file', localPath),
