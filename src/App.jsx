@@ -28,6 +28,7 @@ import PrintModal from './components/PrintModal.jsx';
 import SaveJobModal from './components/SaveJobModal.jsx';
 import JobsListModal from './components/JobsListModal.jsx';
 import NewTabModal from './components/NewTabModal.jsx';
+import TemplatesManagerModal from './components/TemplatesManagerModal.jsx';
 import PaperPresetsModal from './components/PaperPresetsModal.jsx';
 import { useTemplates } from './hooks/useTemplates.js';
 import { usePaperPresets } from './hooks/usePaperPresets.js';
@@ -339,6 +340,9 @@ export default function App() {
   const [pdfUpload, setPdfUpload] = useState(null);
   // Modal de grilla rapida (plantilla en memoria, sin PDF).
   const [gridModalOpen, setGridModalOpen] = useState(false);
+  // Editor de plantillas (botón "Plantillas" de la barra) + edición de medidas.
+  const [templatesManagerOpen, setTemplatesManagerOpen] = useState(false);
+  const [editGeometryTemplate, setEditGeometryTemplate] = useState(null);
   const [quantitiesOpen, setQuantitiesOpen] = useState(false);
   const [poseFrontBackOpen, setPoseFrontBackOpen] = useState(false);
   // Imagen abierta en el editor.
@@ -891,6 +895,7 @@ export default function App() {
     markMarginMm = 0,
     cutShape = 'rect',
     doubleSided = false,
+    gridParams,
   }) => {
     // Solo generamos cortes si va a poder usarlos (necesita marcas L para
     // que el plotter alinee). Con markMarginMm=0 la grilla es sin corte.
@@ -917,6 +922,8 @@ export default function App() {
       backMirror: doubleSided ? 'y' : undefined,
       backRotate180: doubleSided ? false : undefined,
       singlePage: true,
+      // Guardamos los parámetros crudos para poder re-editar medidas exacto.
+      gridParams,
     };
     openInTab(tpl, { name: tpl.name, forceNew: true });
     setGridModalOpen(false);
@@ -1533,6 +1540,192 @@ export default function App() {
     openInTab(tpl, { name: tpl.name });
   };
 
+  // --- Editor de plantillas (modal "Plantillas") ---
+
+  // Parámetros de grilla para re-editar medidas. Usa los guardados (gridParams)
+  // y, si no están (plantillas viejas), los reconstruye desde las celdas lo mejor
+  // posible para dar un punto de partida; el preview en vivo permite ajustar.
+  const gridParamsForEdit = (t) => {
+    const round = (n) => Math.round((Number(n) || 0) * 10) / 10;
+    if (t?.gridParams) return t.gridParams;
+    const cells = Array.isArray(t?.celdas) ? t.celdas : [];
+    if (cells.length === 0) {
+      return {
+        paperW: t?.pageWidthMm, paperH: t?.pageHeightMm,
+        cellW: 50, cellH: 50, margin: 0, spacingX: 0, spacingY: 0,
+        cutMargin: t?.cutMarginMm || 0, markMargin: t?.markMarginMm ?? 10,
+        cutShape: t?.cutShape || 'rect', diameter: 0, rotateMode: 'auto',
+      };
+    }
+    const xs = cells.map((c) => Number(c.x));
+    const ys = cells.map((c) => Number(c.y));
+    const cellW = round(cells[0].w);
+    const cellH = round(cells[0].h);
+    const uniq = (arr) => Array.from(new Set(arr.map((n) => round(n)))).sort((a, b) => a - b);
+    const colXs = uniq(xs);
+    const rowYs = uniq(ys);
+    const spacingX = colXs.length > 1 ? round(colXs[1] - colXs[0] - cellW) : 0;
+    const spacingY = rowYs.length > 1 ? round(rowYs[1] - rowYs[0] - cellH) : 0;
+    const isCircle = t?.cutShape === 'circle';
+    return {
+      paperW: t?.pageWidthMm, paperH: t?.pageHeightMm,
+      cellW, cellH,
+      margin: Math.max(0, Math.min(round(Math.min(...xs)), round(Math.min(...ys)))),
+      spacingX: Math.max(0, spacingX), spacingY: Math.max(0, spacingY),
+      cutMargin: t?.cutMarginMm || 0, markMargin: t?.markMarginMm ?? 10,
+      cutShape: t?.cutShape || 'rect',
+      diameter: isCircle ? cellW : 0,
+      rotateMode: 'auto',
+    };
+  };
+
+  const handleSaveTemplateDetails = async (template, { name, categoria, catalogoId }) => {
+    if (template.oficial && !isLaRecta) {
+      setToast({ kind: 'error', text: 'Es una plancha oficial: solo La Recta puede editarla.' });
+      return;
+    }
+    const trimmedName = (name || '').trim();
+    // El id de catálogo solo se toca en oficiales y en modo La Recta.
+    const idEditable = template.oficial && isLaRecta && catalogoId !== undefined;
+    let nextCatId = template.catalogoId;
+    if (idEditable) {
+      const next = (catalogoId || '').trim();
+      if (!next) {
+        setToast({ kind: 'error', text: 'El id de catálogo no puede quedar vacío.' });
+        return;
+      }
+      const clash = templates.find((t) => t.id !== template.id && t.catalogoId === next);
+      if (clash) {
+        setToast({ kind: 'error', text: `El id "${next}" ya lo usa "${clash.name}". Elegí otro.` });
+        return;
+      }
+      nextCatId = next;
+    }
+    const idChanged = idEditable && nextCatId !== template.catalogoId;
+    try {
+      const updated = await update({
+        ...template,
+        name: trimmedName,
+        categoria: (categoria || '').trim() || undefined,
+        ...(idEditable ? { catalogoId: nextCatId } : {}),
+      });
+      let msg = '';
+      if (idChanged) {
+        // Reacomodar el catálogo: baja la fila vieja (activo=false) y publica la
+        // nueva. La fila vieja conserva su id (PK) pero queda inactiva.
+        try {
+          const oldId = template.catalogoId;
+          if (oldId) {
+            await window.printlayout.intake.publishCatalog([
+              { ...catalogRowForTemplate(updated, false), id: oldId },
+            ]);
+          }
+          const r = await window.printlayout.intake.publishCatalog([
+            catalogRowForTemplate(updated, true),
+          ]);
+          msg = r?.ok ? ' Catálogo actualizado.' : ` (catálogo: ${r?.error || 'no actualizado'})`;
+        } catch (e) {
+          msg = ` (catálogo: ${e.message})`;
+        }
+      }
+      setToast({ kind: 'success', text: `Plantilla "${updated.name}" actualizada.${msg}` });
+    } catch (err) {
+      setToast({ kind: 'error', text: `No se pudo guardar: ${err.message}` });
+    }
+  };
+
+  const handleDuplicateTemplate = async (template) => {
+    try {
+      // Copia EDITABLE: id nuevo, sin estado de oficial/compartido.
+      const {
+        id: _i, oficial: _o, catalogoId: _c,
+        sharedAt: _sa, sharedHash: _sh, createdAt: _ca, updatedAt: _ua,
+        ...rest
+      } = template;
+      const saved = await update({ ...rest, name: `${template.name} (copia)` });
+      setToast({ kind: 'success', text: `Se creó "${saved.name}".` });
+    } catch (err) {
+      setToast({ kind: 'error', text: `No se pudo duplicar: ${err.message}` });
+    }
+  };
+
+  const handleEditTemplateGeometry = (template) => {
+    if (template.oficial && !isLaRecta) {
+      setToast({ kind: 'error', text: 'Es una plancha oficial: solo La Recta puede editarla.' });
+      return;
+    }
+    if (template.pdfBase64) {
+      setToast({ kind: 'error', text: 'Las plantillas de PDF se editan subiendo el PDF de nuevo, no acá.' });
+      return;
+    }
+    setEditGeometryTemplate(template);
+  };
+
+  // Guarda nuevas medidas sobre la MISMA plantilla (conserva id/nombre/carpeta/
+  // oficial). Regenera cortes y, si es doble faz, conserva espejo/rotación.
+  const submitEditGeometry = async ({
+    paperWidthMm, paperHeightMm, cells,
+    cutMarginMm = 0, markMarginMm = 0, cutShape = 'rect', doubleSided = false, gridParams,
+  }) => {
+    const base = editGeometryTemplate;
+    setEditGeometryTemplate(null);
+    if (!base) return;
+    const cortes = markMarginMm > 0
+      ? generateCuts(cells, { cutShape, cutMarginMm })
+      : [];
+    try {
+      await update({
+        ...base,
+        pageWidthMm: paperWidthMm,
+        pageHeightMm: paperHeightMm,
+        pageCount: 1,
+        celdas: cells,
+        celdasDorso: [],
+        cortes,
+        cutMarginMm,
+        markMarginMm,
+        cutShape,
+        doubleSided,
+        backMirror: doubleSided ? (base.backMirror || 'y') : undefined,
+        backRotate180: doubleSided ? !!base.backRotate180 : undefined,
+        backFlip: undefined,
+        singlePage: true,
+        gridParams,
+      });
+      setToast({ kind: 'success', text: `Medidas de "${base.name}" actualizadas.` });
+    } catch (err) {
+      setToast({ kind: 'error', text: `No se pudo guardar: ${err.message}` });
+    }
+  };
+
+  const handleOpenTemplateFromManager = (id) => {
+    setTemplatesManagerOpen(false);
+    handleSelectTemplate(id);
+  };
+
+  // Renombra una carpeta = mueve TODAS sus plantillas a la nueva categoría.
+  // (La carpeta "General" = sin carpeta, no se renombra; para crear una nueva,
+  // se asigna desde el editor de cada plantilla.)
+  const handleRenameCategoria = async (oldId, newName) => {
+    const target = (newName || '').trim();
+    if (!oldId || oldId === 'General' || target === oldId) return;
+    const affected = templates.filter((t) => (t.categoria || '').trim() === oldId);
+    if (affected.length === 0) return;
+    try {
+      for (const t of affected) {
+        await update({ ...t, categoria: target || undefined });
+      }
+      setToast({
+        kind: 'success',
+        text: target
+          ? `Carpeta "${oldId}" → "${target}" (${affected.length} plantilla${affected.length === 1 ? '' : 's'}).`
+          : `Carpeta "${oldId}" eliminada; sus plantillas quedaron sin carpeta.`,
+      });
+    } catch (err) {
+      setToast({ kind: 'error', text: `No se pudo renombrar la carpeta: ${err.message}` });
+    }
+  };
+
   const handleCellClick = (cellIdx) => {
     if (cellIdx === null) {
       layout.setSelectedCell(null);
@@ -2032,6 +2225,7 @@ export default function App() {
           onSaveJob={handleSaveJobShortcut}
           onSaveJobAs={handleSaveJobAs}
           onOpenJob={handleOpenJobsList}
+          onOpenTemplates={() => setTemplatesManagerOpen(true)}
           onOpenPdfToImage={() => setPdfToImageOpen(true)}
           onOpenIntake={isLaRecta ? () => setIntakePanelOpen(true) : undefined}
         />
@@ -2170,6 +2364,7 @@ export default function App() {
 
         <PromptModal
           open={!!oficialPrompt}
+          zClass="z-[60]"
           title="Marcar como plancha oficial"
           message="ID de catálogo (el enganche con la web y el CRM). Estable: no lo cambies después. Ej: polaroid, 10x15."
           defaultValue={oficialPrompt?.defaultValue ?? ''}
@@ -2192,6 +2387,39 @@ export default function App() {
             open
             onConfirm={handleCreateGrid}
             onCancel={() => setGridModalOpen(false)}
+            presets={paperPresetList}
+            onOpenPresetsEditor={() => setPresetsModalOpen(true)}
+          />
+        )}
+
+        <TemplatesManagerModal
+          open={templatesManagerOpen}
+          templates={templates}
+          categorias={categoriasList}
+          isLaRecta={isLaRecta}
+          onSaveDetails={handleSaveTemplateDetails}
+          onDuplicate={handleDuplicateTemplate}
+          onDelete={handleDelete}
+          onToggleOficial={handleToggleOficial}
+          onEditGeometry={handleEditTemplateGeometry}
+          onOpenInTab={handleOpenTemplateFromManager}
+          onRenameCategoria={handleRenameCategoria}
+          onClose={() => setTemplatesManagerOpen(false)}
+        />
+
+        {editGeometryTemplate && (
+          <GridUploadModal
+            open
+            key={editGeometryTemplate.id}
+            initial={{
+              ...gridParamsForEdit(editGeometryTemplate),
+              doubleSided: !!editGeometryTemplate.doubleSided,
+            }}
+            title={`Editar medidas — ${editGeometryTemplate.name}`}
+            description="Cambiá medidas, márgenes, separación y cortes. Se guarda sobre la misma plantilla."
+            submitLabel="Guardar medidas"
+            onConfirm={submitEditGeometry}
+            onCancel={() => setEditGeometryTemplate(null)}
             presets={paperPresetList}
             onOpenPresetsEditor={() => setPresetsModalOpen(true)}
           />

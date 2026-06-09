@@ -290,6 +290,7 @@ export default function TopBar({
   onOpenJob,
   onOpenIntake,
   // Utilidades globales
+  onOpenTemplates,
   onOpenPdfToImage,
 }) {
   const fitDisabled = !onLayoutFitChange;
@@ -387,6 +388,16 @@ export default function TopBar({
                 className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:bg-ink-700 disabled:opacity-40"
               >
                 Guardar como…
+              </button>
+            )}
+            {onOpenTemplates && (
+              <button
+                type="button"
+                onClick={onOpenTemplates}
+                title="Ver y editar las plantillas guardadas"
+                className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:bg-ink-700"
+              >
+                Plantillas
               </button>
             )}
             {onOpenPdfToImage && (

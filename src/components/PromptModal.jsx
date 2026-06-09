@@ -10,6 +10,9 @@ export default function PromptModal({
   cancelLabel = 'Cancelar',
   onConfirm,
   onCancel,
+  // Nivel de apilado: subir (ej. 'z-[60]') cuando el prompt se abre ENCIMA de
+  // otro modal que ya está en z-50 (sino quedaría detrás).
+  zClass = 'z-50',
 }) {
   const [value, setValue] = useState(String(defaultValue));
   const inputRef = useRef(null);
@@ -30,7 +33,7 @@ export default function PromptModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      className={`fixed inset-0 ${zClass} flex items-center justify-center bg-black/60 backdrop-blur-sm`}
       onClick={(e) => {
         if (e.target === e.currentTarget) onCancel?.();
       }}

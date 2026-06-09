@@ -16,27 +16,38 @@ export default function GridUploadModal({
   onCancel,
   presets,
   onOpenPresetsEditor,
+  // Modo edición: si `initial` viene cargado, el modal arranca con esos valores
+  // (medidas de una plantilla existente) y cambian los textos. Montar con un
+  // `key` distinto por plantilla para que el prefill se aplique en limpio.
+  initial = null,
+  title = 'Nueva grilla rápida',
+  description = 'Hoja en blanco con celdas uniformes. No se guarda como plantilla — al cerrar la app se descarta.',
+  submitLabel = 'Crear grilla',
 }) {
   const paperList = useMemo(
     () => (Array.isArray(presets) && presets.length > 0 ? presets : BUILTIN_PAPER_PRESETS),
     [presets],
   );
 
+  const ini = initial || {};
+  const s = (v, d) => (v != null && v !== '' ? String(v) : d);
   const defaultPaperId = paperList[0]?.id || 'a4';
-  const [paperId, setPaperId] = useState(defaultPaperId);
-  const [paperW, setPaperW] = useState('210');
-  const [paperH, setPaperH] = useState('297');
-  const [cellW, setCellW] = useState('70');
-  const [cellH, setCellH] = useState('50');
-  const [margin, setMargin] = useState('0');
-  const [spacingX, setSpacingX] = useState('0');
-  const [spacingY, setSpacingY] = useState('0');
-  const [cutMargin, setCutMargin] = useState('0');
-  const [markMargin, setMarkMargin] = useState('10');
-  const [doubleSided, setDoubleSided] = useState(false);
-  const [cutShape, setCutShape] = useState('rect'); // 'rect' | 'circle'
-  const [diameter, setDiameter] = useState('60');
-  const [rotateMode, setRotateMode] = useState('auto'); // 'auto' | 'direct' | 'rotated'
+  // En edición arrancamos en "custom" con la hoja de la plantilla (así el
+  // efecto de sync de presets no pisa las medidas prefilled).
+  const [paperId, setPaperId] = useState(initial ? 'custom' : defaultPaperId);
+  const [paperW, setPaperW] = useState(s(ini.paperW, '210'));
+  const [paperH, setPaperH] = useState(s(ini.paperH, '297'));
+  const [cellW, setCellW] = useState(s(ini.cellW, '70'));
+  const [cellH, setCellH] = useState(s(ini.cellH, '50'));
+  const [margin, setMargin] = useState(s(ini.margin, '0'));
+  const [spacingX, setSpacingX] = useState(s(ini.spacingX, '0'));
+  const [spacingY, setSpacingY] = useState(s(ini.spacingY, '0'));
+  const [cutMargin, setCutMargin] = useState(s(ini.cutMargin, '0'));
+  const [markMargin, setMarkMargin] = useState(s(ini.markMargin, '10'));
+  const [doubleSided, setDoubleSided] = useState(!!ini.doubleSided);
+  const [cutShape, setCutShape] = useState(ini.cutShape || 'rect'); // 'rect' | 'circle'
+  const [diameter, setDiameter] = useState(s(ini.diameter, '60'));
+  const [rotateMode, setRotateMode] = useState(ini.rotateMode || 'auto'); // 'auto' | 'direct' | 'rotated'
   const cellWRef = useRef(null);
 
   useEffect(() => {
@@ -136,6 +147,22 @@ export default function GridUploadModal({
       markMarginMm,
       cutShape,
       doubleSided,
+      // Parámetros crudos de la grilla: se guardan en la plantilla para poder
+      // re-editar las medidas con exactitud más adelante.
+      gridParams: {
+        paperW: params.paperW,
+        paperH: params.paperH,
+        cellW: params.cellW,
+        cellH: params.cellH,
+        margin: parseNum(margin) || 0,
+        spacingX: params.spacingX,
+        spacingY: params.spacingY,
+        cutMargin: cutMarginMm,
+        markMargin: markMarginMm,
+        cutShape,
+        diameter: parseNum(diameter) || 0,
+        rotateMode,
+      },
     });
   };
 
@@ -197,11 +224,8 @@ export default function GridUploadModal({
 
           {/* Formulario a la derecha, scrolleable */}
           <div className="flex w-[24rem] shrink-0 flex-col overflow-y-auto border-l border-ink-700 p-4">
-            <h3 className="text-sm font-semibold text-ink-100">Nueva grilla r&aacute;pida</h3>
-            <p className="mt-1 text-xs text-ink-400">
-              Hoja en blanco con celdas uniformes. No se guarda como plantilla &mdash;
-              al cerrar la app se descarta.
-            </p>
+            <h3 className="text-sm font-semibold text-ink-100">{title}</h3>
+            <p className="mt-1 text-xs text-ink-400">{description}</p>
 
             <div className="mt-4 space-y-3">
           <label className="block text-xs text-ink-300">
@@ -464,7 +488,7 @@ export default function GridUploadModal({
             disabled={!result || result.cells.length === 0}
             className="rounded bg-accent-600 px-3 py-1 text-xs font-medium text-white hover:bg-accent-500 disabled:opacity-40"
           >
-            Crear grilla
+            {submitLabel}
           </button>
         </div>
       </form>
