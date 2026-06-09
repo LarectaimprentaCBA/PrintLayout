@@ -78,4 +78,30 @@ contextBridge.exposeInMainWorld('printlayout', {
     installNow: () => ipcRenderer.invoke('updater:install-now'),
     checkNow: () => ipcRenderer.invoke('updater:check-now'),
   },
+  // Entrada automática de pedidos de fotos (Supabase).
+  intake: {
+    getConfig: () => ipcRenderer.invoke('intake:get-config'),
+    setConfig: (patch) => ipcRenderer.invoke('intake:set-config', patch),
+    setActive: (activo) => ipcRenderer.invoke('intake:set-active', activo),
+    testConnection: () => ipcRenderer.invoke('intake:test-connection'),
+    pollNow: () => ipcRenderer.invoke('intake:poll-now'),
+    readFile: (localPath) => ipcRenderer.invoke('intake:read-file', localPath),
+    orderBuilt: (payload) => ipcRenderer.invoke('intake:order-built', payload),
+    // Eventos push del main:
+    onOrderReady: (cb) => {
+      const handler = (_evt, payload) => cb(payload);
+      ipcRenderer.on('intake:order-ready', handler);
+      return () => ipcRenderer.removeListener('intake:order-ready', handler);
+    },
+    onStatus: (cb) => {
+      const handler = (_evt, payload) => cb(payload);
+      ipcRenderer.on('intake:status', handler);
+      return () => ipcRenderer.removeListener('intake:status', handler);
+    },
+    onLog: (cb) => {
+      const handler = (_evt, payload) => cb(payload);
+      ipcRenderer.on('intake:log', handler);
+      return () => ipcRenderer.removeListener('intake:log', handler);
+    },
+  },
 });

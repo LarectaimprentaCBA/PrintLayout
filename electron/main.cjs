@@ -11,6 +11,7 @@ const paperPresetsSync = require('./paper-presets-sync.cjs');
 const workStatesStore = require('./work-states-store.cjs');
 const jobsStore = require('./jobs-store.cjs');
 const openTabsStore = require('./open-tabs-store.cjs');
+const intakeService = require('./intake/service.cjs');
 
 autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
@@ -923,10 +924,33 @@ ipcMain.handle('updater:check-now', async () => {
   }
 });
 
+// Entrada automática de pedidos de fotos (Supabase). El servicio vive en
+// electron/intake/. La config (con la service key) está SOLO en userData.
+ipcMain.handle('intake:get-config', () => intakeService.getConfig());
+ipcMain.handle('intake:set-config', (_evt, patch) => {
+  try {
+    return { ok: true, config: intakeService.setConfig(patch) };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+ipcMain.handle('intake:set-active', (_evt, activo) => {
+  try {
+    return { ok: true, config: intakeService.setActive(activo) };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+ipcMain.handle('intake:test-connection', () => intakeService.testConnection());
+ipcMain.handle('intake:poll-now', () => intakeService.pollNow());
+ipcMain.handle('intake:read-file', (_evt, localPath) => intakeService.readFile(localPath));
+ipcMain.handle('intake:order-built', (_evt, payload) => intakeService.orderBuilt(payload));
+
 app.whenReady().then(() => {
   createWindow();
   const win = BrowserWindow.getAllWindows()[0];
   setupAutoUpdate(win);
+  intakeService.start(win);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
