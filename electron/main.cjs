@@ -927,6 +927,7 @@ ipcMain.handle('updater:check-now', async () => {
 // Entrada automática de pedidos de fotos (Supabase). El servicio vive en
 // electron/intake/. La config (con la service key) está SOLO en userData.
 ipcMain.handle('intake:get-config', () => intakeService.getConfig());
+ipcMain.handle('intake:is-la-recta', () => intakeService.isLaRecta());
 ipcMain.handle('intake:set-config', (_evt, patch) => {
   try {
     return { ok: true, config: intakeService.setConfig(patch) };

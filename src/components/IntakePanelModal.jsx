@@ -131,6 +131,21 @@ export default function IntakePanelModal({ open, onClose }) {
             <p className="text-xs text-ink-400">Cargando…</p>
           ) : (
             <>
+              <label className="mb-3 flex cursor-pointer items-center gap-2 rounded border border-ink-700 bg-ink-950/40 px-3 py-2 text-xs text-ink-200">
+                <input
+                  type="checkbox"
+                  checked={!!cfg.laRecta}
+                  onChange={(e) => patch({ laRecta: e.target.checked })}
+                  className="h-4 w-4 accent-accent-500"
+                />
+                <span>
+                  <span className="font-medium text-ink-100">Esta PC es de La Recta</span>
+                  <span className="block text-[11px] text-ink-400">
+                    Habilita bajar pedidos y administrar/publicar las planchas oficiales. En las demás PCs dejalo destildado.
+                  </span>
+                </span>
+              </label>
+
               <label className="block text-xs text-ink-300">
                 <span className="mb-1 block">URL de Supabase</span>
                 <input

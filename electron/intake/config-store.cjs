@@ -19,6 +19,9 @@ const DEFAULTS = {
   pollSeconds: 60,
   outputDir: '',
   activo: false,
+  // "Esta PC es de La Recta": habilita bajar pedidos y administrar/publicar
+  // plantillas oficiales. En las demás PCs queda en false (panel oculto).
+  laRecta: false,
 };
 
 function getFilePath() {
@@ -37,7 +40,16 @@ function sanitize(cfg) {
     pollSeconds: poll,
     outputDir: typeof c.outputDir === 'string' ? c.outputDir : '',
     activo: !!c.activo,
+    laRecta: !!c.laRecta,
   };
+}
+
+// "Modo La Recta": esta PC administra. Requiere la clave secreta presente Y el
+// flag explícito. Sin esto, el panel de pedidos y las acciones de admin se
+// ocultan, y las plantillas oficiales quedan solo-lectura.
+function isLaRecta(cfg) {
+  const c = cfg || load();
+  return !!(c.serviceKey && c.laRecta);
 }
 
 function load() {
@@ -62,4 +74,4 @@ function save(patch) {
   return merged;
 }
 
-module.exports = { load, save, MIN_POLL, DEFAULTS };
+module.exports = { load, save, isLaRecta, MIN_POLL, DEFAULTS };

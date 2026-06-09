@@ -81,6 +81,7 @@ contextBridge.exposeInMainWorld('printlayout', {
   // Entrada automática de pedidos de fotos (Supabase).
   intake: {
     getConfig: () => ipcRenderer.invoke('intake:get-config'),
+    isLaRecta: () => ipcRenderer.invoke('intake:is-la-recta'),
     setConfig: (patch) => ipcRenderer.invoke('intake:set-config', patch),
     setActive: (activo) => ipcRenderer.invoke('intake:set-active', activo),
     chooseDir: () => ipcRenderer.invoke('intake:choose-dir'),

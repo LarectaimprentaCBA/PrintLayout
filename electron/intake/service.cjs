@@ -58,6 +58,10 @@ function setActive(activo) {
   return setConfig({ activo: !!activo });
 }
 
+function isLaRecta() {
+  return configStore.isLaRecta();
+}
+
 // Raíz de la carpeta temporal donde bajamos las fotos. Usa outputDir si está
 // configurada; si no, userData/intake.
 function tmpRoot(cfg) {
@@ -129,6 +133,10 @@ async function processOrder(cfg, order) {
 async function tick(manual = false) {
   if (busy) return { ok: false, error: 'Ya hay un ciclo en curso.' };
   const cfg = getConfig();
+  // Solo la PC de La Recta baja pedidos (clave + flag presentes).
+  if (!configStore.isLaRecta(cfg)) {
+    return { ok: false, error: 'Esta PC no está en modo La Recta.' };
+  }
   if (!manual && !cfg.activo) return { ok: false, error: 'Servicio en pausa.' };
   if (!cfg.supabaseUrl || !cfg.serviceKey) {
     log('Falta URL o service key.', 'warn');
@@ -169,7 +177,12 @@ function reschedule(cfg) {
     timer = null;
   }
   const c = cfg || getConfig();
-  status({ activo: c.activo, pollSeconds: c.pollSeconds });
+  const laRecta = configStore.isLaRecta(c);
+  status({ activo: c.activo, pollSeconds: c.pollSeconds, laRecta });
+  if (!laRecta) {
+    // Sin modo La Recta el servicio queda completamente inerte.
+    return;
+  }
   if (!c.activo) {
     log('Servicio en pausa.');
     return;
@@ -265,6 +278,7 @@ module.exports = {
   getConfig,
   setConfig,
   setActive,
+  isLaRecta,
   pollNow,
   testConnection,
   readFile,

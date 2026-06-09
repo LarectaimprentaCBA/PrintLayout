@@ -113,6 +113,12 @@ export default function App() {
   const [presetsModalOpen, setPresetsModalOpen] = useState(false);
   const [pdfToImageOpen, setPdfToImageOpen] = useState(false);
   const [intakePanelOpen, setIntakePanelOpen] = useState(false);
+  // Modo La Recta: esta PC administra (baja pedidos, edita/publica oficiales).
+  // En las demás PCs el panel "Pedidos" se oculta y las oficiales son read-only.
+  const [isLaRecta, setIsLaRecta] = useState(false);
+  const refreshLaRecta = useCallback(() => {
+    window.printlayout?.intake?.isLaRecta?.().then((v) => setIsLaRecta(!!v)).catch(() => {});
+  }, []);
 
   const runSyncWithToast = async ({ silent = false } = {}) => {
     setSyncing(true);
@@ -1376,6 +1382,20 @@ export default function App() {
     return api.onOrderReady((order) => { handleIntakeOrder(order); });
   }, [handleIntakeOrder]);
 
+  // Estado del modo La Recta + atajo OCULTO para la configuración inicial (en
+  // las demás PCs el botón "Pedidos" no se muestra). Ctrl+Shift+L abre el panel.
+  useEffect(() => {
+    refreshLaRecta();
+    const onKey = (e) => {
+      if (e.ctrlKey && e.shiftKey && !e.altKey && (e.key === 'L' || e.key === 'l')) {
+        e.preventDefault();
+        setIntakePanelOpen(true);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [refreshLaRecta]);
+
   // Marca dirty en la tab activa cuando hay una accion real del usuario.
   // mutationTick incrementa SOLO con acciones (no en restore por switch de
   // tab, no en undo/redo, no en loadFromJob). Asi switchear entre tabs no
@@ -1925,7 +1945,7 @@ export default function App() {
           onSaveJobAs={handleSaveJobAs}
           onOpenJob={handleOpenJobsList}
           onOpenPdfToImage={() => setPdfToImageOpen(true)}
-          onOpenIntake={() => setIntakePanelOpen(true)}
+          onOpenIntake={isLaRecta ? () => setIntakePanelOpen(true) : undefined}
         />
         <TabsBar
           tabs={tabs}
@@ -2135,7 +2155,7 @@ export default function App() {
 
         <IntakePanelModal
           open={intakePanelOpen}
-          onClose={() => setIntakePanelOpen(false)}
+          onClose={() => { setIntakePanelOpen(false); refreshLaRecta(); }}
         />
 
         <ConfirmModal
