@@ -833,6 +833,11 @@ export default function App() {
     const tpl = saveTemplatePrompt;
     setSaveTemplatePrompt(null);
     if (!tpl) return;
+    // No sobreescribir una plancha oficial desde otra PC.
+    if (tpl.sourceTemplateId && isTemplateOfficial(tpl.sourceTemplateId) && !isLaRecta) {
+      setToast({ kind: 'error', text: 'Es una plancha oficial: solo La Recta puede editarla.' });
+      return;
+    }
     try {
       const {
         id: _ignoredId,
@@ -1430,11 +1435,39 @@ export default function App() {
     }
   };
 
+  // Una plancha "oficial" (alimenta la web/CRM) es solo-lectura salvo en modo
+  // La Recta: no se puede borrar ni sobreescribir desde otras PCs.
+  const isTemplateOfficial = (id) => !!templates.find((t) => t.id === id)?.oficial;
+
   const handleDelete = async (id) => {
+    if (isTemplateOfficial(id) && !isLaRecta) {
+      setToast({ kind: 'error', text: 'Es una plancha oficial: solo La Recta puede borrarla.' });
+      return;
+    }
     // Borra la plantilla del sidebar (lista permanente). Si alguna tab
     // adopto una copia derivada, sigue funcionando: el template de la tab
     // es self-contained.
     await remove(id);
+  };
+
+  // Marca/desmarca una plancha como oficial (solo modo La Recta). Opera sobre
+  // la plantilla GUARDADA (id real). El publicado al catálogo se engancha en
+  // el Commit 8.
+  const handleToggleOficial = async (tpl) => {
+    if (!isLaRecta) return;
+    const stored = templates.find((t) => t.id === tpl.id);
+    if (!stored) return;
+    try {
+      const updated = await update({ ...stored, oficial: !stored.oficial });
+      setToast({
+        kind: 'success',
+        text: updated.oficial
+          ? `"${updated.name}" marcada como oficial.`
+          : `"${updated.name}" ya no es oficial.`,
+      });
+    } catch (err) {
+      setToast({ kind: 'error', text: `No se pudo cambiar: ${err.message}` });
+    }
   };
 
   // Click en plantilla del sidebar: adopt en la tab actual si esta vacia,
@@ -2286,6 +2319,8 @@ export default function App() {
           syncing={syncing}
           onSync={() => runSyncWithToast()}
           onDeleteTemplate={handleDelete}
+          isLaRecta={isLaRecta}
+          onToggleOficial={handleToggleOficial}
           onClose={() => setNewTabModalOpen(false)}
           onPickTemplate={(id) => handleSelectTemplate(id)}
           onCreateGrid={() => setGridModalOpen(true)}

@@ -21,6 +21,8 @@ export default function NewTabModal({
   onSync,
   onDeleteTemplate,
   onPickTemplate,
+  isLaRecta = false,
+  onToggleOficial,
   onCreateGrid,
   onAutoPack,
   onCountPack,
@@ -289,6 +291,14 @@ export default function NewTabModal({
                           >
                             <div className="flex items-center gap-1.5 truncate text-sm font-medium text-ink-100">
                               <span className="truncate">{t.name}</span>
+                              {t.oficial && (
+                                <span
+                                  className="shrink-0 rounded bg-amber-500/20 px-1 text-[9px] font-semibold uppercase tracking-wide text-amber-300"
+                                  title="Plancha oficial (alimenta la web/CRM)"
+                                >
+                                  oficial
+                                </span>
+                              )}
                               {t.sharedAt && (
                                 <span className="shrink-0 text-accent-400" title="Compartida con el equipo">☁</span>
                               )}
@@ -303,7 +313,22 @@ export default function NewTabModal({
                               {Math.round(t.pageWidthMm)}×{Math.round(t.pageHeightMm)} mm
                             </div>
                           </button>
-                          {onDeleteTemplate && (
+                          {isLaRecta && onToggleOficial && (
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); onToggleOficial(t); }}
+                              className={`shrink-0 rounded border px-2 py-1 text-[11px] opacity-0 transition group-hover:opacity-100 ${
+                                t.oficial
+                                  ? 'border-amber-500/40 text-amber-300 hover:bg-amber-500/15'
+                                  : 'border-ink-600 text-ink-300 hover:bg-ink-700'
+                              }`}
+                              title={t.oficial ? 'Quitar de oficiales (deja de alimentar la web)' : 'Marcar como oficial (alimenta la web/CRM)'}
+                            >
+                              {t.oficial ? 'Quitar oficial' : 'Marcar oficial'}
+                            </button>
+                          )}
+                          {/* Borrar: bloqueado para oficiales salvo modo La Recta. */}
+                          {onDeleteTemplate && (!t.oficial || isLaRecta) && (
                             <button
                               type="button"
                               onClick={(e) => {
@@ -317,6 +342,14 @@ export default function NewTabModal({
                             >
                               Eliminar
                             </button>
+                          )}
+                          {t.oficial && !isLaRecta && (
+                            <span
+                              className="shrink-0 text-[10px] text-ink-500"
+                              title="Plancha oficial: solo La Recta puede editarla o borrarla"
+                            >
+                              🔒
+                            </span>
                           )}
                         </div>
                       </li>
