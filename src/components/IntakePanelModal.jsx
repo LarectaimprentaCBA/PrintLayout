@@ -7,12 +7,13 @@ import { useEffect, useRef, useState } from 'react';
 
 const EMPTY = { supabaseUrl: '', serviceKey: '', pollSeconds: 60, outputDir: '', activo: false };
 
-export default function IntakePanelModal({ open, onClose }) {
+export default function IntakePanelModal({ open, onClose, onPublishCatalog }) {
   const [cfg, setCfg] = useState(EMPTY);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [polling, setPolling] = useState(false);
+  const [publishing, setPublishing] = useState(false);
   const [feedback, setFeedback] = useState(null); // { kind, text }
   const [status, setStatus] = useState(null); // { activo, busy, pollSeconds, lastRun }
   const [logs, setLogs] = useState([]);
@@ -106,6 +107,22 @@ export default function IntakePanelModal({ open, onClose }) {
       );
     } finally {
       setPolling(false);
+    }
+  };
+
+  const publishCatalog = async () => {
+    if (!onPublishCatalog) return;
+    setPublishing(true);
+    setFeedback(null);
+    try {
+      const r = await onPublishCatalog();
+      setFeedback(
+        r?.ok
+          ? { kind: 'ok', text: `Catálogo publicado (${r.count ?? 0} fila/s).` }
+          : { kind: 'err', text: `Falló: ${r?.error || 'sin detalle'}` },
+      );
+    } finally {
+      setPublishing(false);
     }
   };
 
@@ -265,6 +282,17 @@ export default function IntakePanelModal({ open, onClose }) {
           >
             {polling ? 'Buscando…' : 'Buscar ahora'}
           </button>
+          {onPublishCatalog && (
+            <button
+              type="button"
+              onClick={publishCatalog}
+              disabled={publishing || !loaded}
+              title="Publica todas las planchas oficiales al catálogo (Supabase)"
+              className="rounded border border-ink-700 px-3 py-1 text-xs text-ink-200 hover:bg-ink-800 disabled:opacity-40"
+            >
+              {publishing ? 'Publicando…' : 'Publicar catálogo'}
+            </button>
+          )}
           <button
             type="button"
             onClick={onClose}

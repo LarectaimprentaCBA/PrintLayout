@@ -55,6 +55,7 @@ import {
 } from './lib/templates.js';
 import { generateCuts } from './lib/grid.js';
 import { buildOrderJobs } from './intake/buildOrderJob.js';
+import { buildCatalogRows } from './intake/catalog.js';
 import { rasterizePdfPages } from './lib/pdfPreview.js';
 import { facesBoundingBox } from './lib/faceDetection.js';
 import { cropImageDataUrl } from './lib/imageCrop.js';
@@ -1459,16 +1460,38 @@ export default function App() {
     if (!stored) return;
     try {
       const updated = await update({ ...stored, oficial: !stored.oficial });
+      // Reflejar el cambio en el catálogo de Supabase (sin esperar al refresh
+      // del hook: reconstruimos la lista con el cambio).
+      const nextTemplates = templates.map((t) => (t.id === updated.id ? updated : t));
+      let catalogMsg = '';
+      try {
+        if (updated.oficial) {
+          const r = await window.printlayout.intake.publishCatalog(buildCatalogRows(nextTemplates));
+          catalogMsg = r?.ok ? ' Catálogo publicado.' : ` (catálogo: ${r?.error || 'no publicado'})`;
+        } else {
+          const r = await window.printlayout.intake.removeCatalog([updated.id]);
+          catalogMsg = r?.ok ? ' Quitada del catálogo.' : ` (catálogo: ${r?.error || 'no quitada'})`;
+        }
+      } catch (e) {
+        catalogMsg = ` (catálogo: ${e.message})`;
+      }
       setToast({
         kind: 'success',
-        text: updated.oficial
+        text: (updated.oficial
           ? `"${updated.name}" marcada como oficial.`
-          : `"${updated.name}" ya no es oficial.`,
+          : `"${updated.name}" ya no es oficial.`) + catalogMsg,
       });
     } catch (err) {
       setToast({ kind: 'error', text: `No se pudo cambiar: ${err.message}` });
     }
   };
+
+  // Publica TODO el catálogo de planchas oficiales (botón "Publicar catálogo"
+  // del panel). Útil para poblar/re-sincronizar de una.
+  const handlePublishCatalog = useCallback(
+    () => window.printlayout.intake.publishCatalog(buildCatalogRows(templates)),
+    [templates],
+  );
 
   // Click en plantilla del sidebar: adopt en la tab actual si esta vacia,
   // sino crea tab nueva con esa plantilla.
@@ -2189,6 +2212,7 @@ export default function App() {
         <IntakePanelModal
           open={intakePanelOpen}
           onClose={() => { setIntakePanelOpen(false); refreshLaRecta(); }}
+          onPublishCatalog={handlePublishCatalog}
         />
 
         <ConfirmModal

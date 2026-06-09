@@ -106,10 +106,47 @@ async function removeObjects(cfg, paths) {
   return true;
 }
 
+// Upsert del catálogo de planchas (PrintLayout es la fuente de verdad). La tabla
+// `planchas_catalogo` tiene `id` como PK; merge-duplicates = insertar o pisar.
+async function upsertCatalog(cfg, rows) {
+  assertCfg(cfg);
+  const list = Array.isArray(rows) ? rows : [];
+  if (list.length === 0) return true;
+  const url = `${cfg.supabaseUrl}/rest/v1/planchas_catalogo`;
+  const res = await net.fetch(url, {
+    method: 'POST',
+    headers: {
+      ...authHeaders(cfg),
+      'Content-Type': 'application/json',
+      Prefer: 'resolution=merge-duplicates,return=minimal',
+    },
+    body: JSON.stringify(list),
+  });
+  if (!res.ok) throw await readErr(res, 'Catálogo upsert');
+  return true;
+}
+
+// Borra filas del catálogo por id (al quitar el flag oficial).
+async function removeCatalogRows(cfg, ids) {
+  assertCfg(cfg);
+  const list = (ids || []).filter(Boolean);
+  if (list.length === 0) return true;
+  const inList = list.map((i) => encodeURIComponent(i)).join(',');
+  const url = `${cfg.supabaseUrl}/rest/v1/planchas_catalogo?id=in.(${inList})`;
+  const res = await net.fetch(url, {
+    method: 'DELETE',
+    headers: { ...authHeaders(cfg), Prefer: 'return=minimal' },
+  });
+  if (!res.ok) throw await readErr(res, 'Catálogo delete');
+  return true;
+}
+
 module.exports = {
   SERVER_UA,
   listPendingOrders,
   downloadObject,
   markProcessed,
   removeObjects,
+  upsertCatalog,
+  removeCatalogRows,
 };

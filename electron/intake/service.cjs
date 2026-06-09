@@ -273,6 +273,33 @@ async function orderBuilt(payload) {
   return { ok: true };
 }
 
+// Publica/quita el catálogo de planchas oficiales (solo modo La Recta).
+async function publishCatalog(rows) {
+  const cfg = getConfig();
+  if (!configStore.isLaRecta(cfg)) return { ok: false, error: 'Esta PC no está en modo La Recta.' };
+  try {
+    await supabase.upsertCatalog(cfg, rows);
+    log(`Catálogo publicado (${Array.isArray(rows) ? rows.length : 0} fila/s).`);
+    return { ok: true, count: Array.isArray(rows) ? rows.length : 0 };
+  } catch (err) {
+    log(`Error publicando catálogo: ${err.message}`, 'error');
+    return { ok: false, error: err.message };
+  }
+}
+
+async function removeCatalog(ids) {
+  const cfg = getConfig();
+  if (!configStore.isLaRecta(cfg)) return { ok: false, error: 'Esta PC no está en modo La Recta.' };
+  try {
+    await supabase.removeCatalogRows(cfg, ids);
+    log(`Quitada/s ${Array.isArray(ids) ? ids.length : 0} plancha/s del catálogo.`);
+    return { ok: true };
+  } catch (err) {
+    log(`Error quitando del catálogo: ${err.message}`, 'error');
+    return { ok: false, error: err.message };
+  }
+}
+
 module.exports = {
   start,
   getConfig,
@@ -283,4 +310,6 @@ module.exports = {
   testConnection,
   readFile,
   orderBuilt,
+  publishCatalog,
+  removeCatalog,
 };

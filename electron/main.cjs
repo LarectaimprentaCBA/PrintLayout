@@ -959,6 +959,8 @@ ipcMain.handle('intake:test-connection', () => intakeService.testConnection());
 ipcMain.handle('intake:poll-now', () => intakeService.pollNow());
 ipcMain.handle('intake:read-file', (_evt, localPath) => intakeService.readFile(localPath));
 ipcMain.handle('intake:order-built', (_evt, payload) => intakeService.orderBuilt(payload));
+ipcMain.handle('intake:publish-catalog', (_evt, rows) => intakeService.publishCatalog(rows));
+ipcMain.handle('intake:remove-catalog', (_evt, ids) => intakeService.removeCatalog(ids));
 
 app.whenReady().then(() => {
   createWindow();

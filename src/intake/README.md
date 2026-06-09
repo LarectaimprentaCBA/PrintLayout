@@ -54,6 +54,40 @@ Botón **Pedidos** en la barra superior. Campos: URL de Supabase, service key
 - Al terminar de armar: `procesado_printlayout=true` (idempotente) + borrado de
   las fotos del bucket.
 
+## Modo La Recta (gating)
+El panel "Pedidos" y las acciones de admin (bajar pedidos, marcar/publicar
+oficiales) sólo aparecen en la **PC de La Recta**: requiere la service key
+presente **y** el flag `laRecta` (checkbox "Esta PC es de La Recta"). En las
+demás PCs el botón "Pedidos" no se muestra y el servicio queda inerte.
+
+Primera configuración (el botón está oculto hasta activar el modo): atajo
+**Ctrl+Shift+L** abre el panel para cargar URL + clave + tildar "Esta PC es de
+La Recta" y Guardar.
+
+## Planchas oficiales (solo-lectura)
+Una plantilla con `oficial: true` alimenta la web/CRM. Fuera de modo La Recta no
+se puede borrar ni editar (badge "oficial" + 🔒). En modo La Recta hay un botón
+"Marcar/Quitar oficial" en el listado de plantillas (Nuevo trabajo).
+
+## Catálogo de planchas (PrintLayout = fuente de verdad)
+Al marcar oficial / con el botón "Publicar catálogo", se hace upsert a la tabla
+`planchas_catalogo`. Una fila por plancha oficial + una fila `personalizado` con
+el criterioHoja global. **Los precios NO van acá** (los maneja el CRM).
+
+DDL sugerida en Supabase:
+```sql
+create table if not exists planchas_catalogo (
+  id text primary key,            -- = id interno de la plantilla (estable)
+  label text,
+  wmm numeric,                    -- tamaño de la foto (null en 'personalizado')
+  hmm numeric,
+  fotos_por_plancha int,
+  criterio_hoja jsonb,            -- hoja base + márgenes + espaciado (custom)
+  updated_at timestamptz default now()
+);
+```
+El id `personalizado` es la fila con el criterioHoja para tamaños custom.
+
 ## Seguridad
 La service key vive **sólo** en `userData/intake-config.json`. No poner claves
 en el repo ni en el bundle.
