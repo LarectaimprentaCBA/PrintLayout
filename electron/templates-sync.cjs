@@ -93,6 +93,12 @@ function hashTemplateContent(tpl) {
     singlePage: !!tpl.singlePage,
     categoria: tpl.categoria || '',
     safetyMm: Number.isFinite(tpl.safetyMm) ? tpl.safetyMm : null,
+    // Estado de catálogo: incluirlo en el hash hace que marcar/quitar "oficial"
+    // (o cambiar el id de catálogo) cambie el hash aunque no cambien las medidas.
+    // Sin esto, el pull se saltea (sharedHash igual) y las otras PCs nunca reciben
+    // el candado 🔒 de la plancha oficial.
+    oficial: !!tpl.oficial,
+    catalogoId: tpl.catalogoId || '',
   };
   return crypto
     .createHash('sha256')
