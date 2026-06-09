@@ -53,6 +53,7 @@ import {
   backRotate180,
 } from './lib/templates.js';
 import { generateCuts } from './lib/grid.js';
+import { buildOrderJobs } from './intake/buildOrderJob.js';
 import { rasterizePdfPages } from './lib/pdfPreview.js';
 import { facesBoundingBox } from './lib/faceDetection.js';
 import { cropImageDataUrl } from './lib/imageCrop.js';
@@ -347,7 +348,10 @@ export default function App() {
   const [newTabModalOpen, setNewTabModalOpen] = useState(false);
   // Estado a aplicar al layout cuando un nuevo template termine de montar
   // (cambio de tab o abrir job). Mismo patron que pendingAutoAssign.
-  const [pendingTabLoad, setPendingTabLoad] = useState(null);
+  // Cola: varias tabs pueden estar esperando que se les vuelque el layout
+  // (p.ej. un pedido multi-tamaño abre varias a la vez). Cada entrada se aplica
+  // cuando su templateId pasa a ser el activo.
+  const [pendingTabLoads, setPendingTabLoads] = useState([]);
   // Confirm modal para cerrar tab dirty.
   const [closeTabConfirm, setCloseTabConfirm] = useState(null); // { id, name }
   // Ignora el primer fire del mutationTick effect (el initial render).
@@ -406,13 +410,17 @@ export default function App() {
     }
 
     if (initialLayout) {
-      setPendingTabLoad({
+      const entry = {
         templateId: tplId,
         images: initialLayout.images || [],
         assignmentsFront: initialLayout.assignmentsFront || [],
         assignmentsBack: initialLayout.assignmentsBack || [],
         minPages: initialLayout.minPages ?? 1,
-      });
+      };
+      setPendingTabLoads((prev) => [
+        ...prev.filter((p) => p.templateId !== tplId),
+        entry,
+      ]);
     }
     return tabId;
   }, [activeTab, updateActiveTab, createTab]);
@@ -1276,13 +1284,95 @@ export default function App() {
   // images + assignments al layout via loadFromJob. loadFromJob marca
   // skipNextSnapshot asi NO marca dirty.
   useEffect(() => {
-    if (!pendingTabLoad) return;
-    if (selected?.id !== pendingTabLoad.templateId) return;
-    layout.loadFromJob(pendingTabLoad);
+    if (pendingTabLoads.length === 0) return;
+    const entry = pendingTabLoads.find((p) => p.templateId === selected?.id);
+    if (!entry) return;
+    layout.loadFromJob(entry);
     lastMutationTickRef.current = layout.mutationTick;
     updateActiveTab({ isDirty: false });
-    setPendingTabLoad(null);
-  }, [pendingTabLoad, selected?.id, layout, updateActiveTab]);
+    setPendingTabLoads((prev) => prev.filter((p) => p.templateId !== entry.templateId));
+  }, [pendingTabLoads, selected?.id, layout, updateActiveTab]);
+
+  // Entrada automática: el main avisa que bajó un pedido de fotos. Armamos UNA
+  // hoja por tamaño (reusando readAnyFileToImage + grilla/preset) y la dejamos
+  // ABIERTA para que Mariano revise. Nunca imprime/corta solo. Al terminar le
+  // confirmamos al main para que marque procesado + limpie el bucket.
+  const handleIntakeOrder = useCallback(async (order) => {
+    const label = `P-${order?.numero_presupuesto || order?.id}`;
+    try {
+      setToast({ kind: 'info', text: `Procesando pedido de fotos ${label}…` });
+      const { specs, skipped } = await buildOrderJobs(order, {
+        templates,
+        readFileBytes: (p) => window.printlayout.intake.readFile(p),
+      });
+      let opened = 0;
+      for (const spec of specs) {
+        let jobId = null;
+        try {
+          const r = await saveJobToDisk({
+            name: spec.name,
+            template: spec.template,
+            images: spec.images,
+            assignmentsFront: spec.assignmentsFront,
+            assignmentsBack: spec.assignmentsBack,
+            minPages: spec.minPages,
+          });
+          if (r?.ok && r.job) jobId = r.job.id;
+        } catch (_) {
+          /* si falla guardar, igual abrimos la tab para revisar */
+        }
+        openInTab(spec.template, {
+          name: spec.name,
+          jobId,
+          forceNew: true,
+          initialLayout: {
+            images: spec.images,
+            assignmentsFront: spec.assignmentsFront,
+            assignmentsBack: spec.assignmentsBack,
+            minPages: spec.minPages,
+          },
+        });
+        opened += 1;
+      }
+
+      const ok = opened > 0;
+      await window.printlayout.intake.orderBuilt({
+        id: order.id,
+        ok,
+        error: ok ? undefined : (skipped.map((s) => `${s.label}: ${s.reason}`).join('; ') || 'nada para armar'),
+      });
+
+      if (ok) {
+        try {
+          // eslint-disable-next-line no-new
+          new Notification('Llegó un pedido de fotos', {
+            body: `${label}: ${opened} hoja(s) lista(s) para revisar.`,
+          });
+        } catch (_) { /* sin permiso de notificaciones: el toast alcanza */ }
+        setToast({
+          kind: 'success',
+          text: `${label}: ${opened} hoja(s) abiertas para revisar${skipped.length ? ` · ${skipped.length} tamaño(s) saltado(s)` : ''}.`,
+        });
+      } else {
+        setToast({
+          kind: 'error',
+          text: `${label}: no se pudo armar (${skipped.map((s) => s.reason).join('; ') || 'sin tamaños válidos'}).`,
+        });
+      }
+    } catch (err) {
+      console.error('[intake] armado falló:', err);
+      try {
+        await window.printlayout.intake.orderBuilt({ id: order.id, ok: false, error: err.message });
+      } catch (_) { /* ignore */ }
+      setToast({ kind: 'error', text: `Error armando el pedido ${label}: ${err.message}` });
+    }
+  }, [templates, openInTab, saveJobToDisk]);
+
+  useEffect(() => {
+    const api = window.printlayout?.intake;
+    if (!api?.onOrderReady) return undefined;
+    return api.onOrderReady((order) => { handleIntakeOrder(order); });
+  }, [handleIntakeOrder]);
 
   // Marca dirty en la tab activa cuando hay una accion real del usuario.
   // mutationTick incrementa SOLO con acciones (no en restore por switch de
