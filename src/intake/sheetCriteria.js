@@ -1,24 +1,29 @@
 // Criterio de hoja/márgenes para tamaños CUSTOM que llegan de la web.
 //
-// ⚠️ PLACEHOLDER — Mariano debe definir esto IGUAL que lo define la web, para
-// que la hoja armada coincida con lo que el cliente vio/pagó (hoja base,
-// márgenes, espaciado entre fotos, y si lleva marcas de corte). Los presets
-// (Polaroid, 10x15, etc.) NO usan esto: usan su plantilla estándar guardada.
+// Definido por Mariano (La Recta) IGUAL que la web, para que la hoja armada
+// coincida con lo que el cliente vio/pagó. Los presets (Polaroid, 10x15, etc.)
+// NO usan esto: usan su plantilla estándar guardada.
 //
-// Mientras no esté confirmado, dejamos valores razonables marcados con TODO.
+// Estos valores se publican a Supabase (config_fotos / criterio_hoja_custom)
+// con "Publicar catálogo". Si los cambiás, volvé a publicar.
 
 export const CUSTOM_SHEET = {
-  // TODO(Mariano): poner la hoja base real que usa la web (mm).
-  paperWidthMm: 320,
-  paperHeightMm: 450,
-  // TODO(Mariano): márgenes y espaciado reales.
+  // Hoja base: A4.
+  paperWidthMm: 210,
+  paperHeightMm: 297,
+  // Márgenes desde el borde de la hoja y separación entre fotos.
   marginXMm: 10,
   marginYMm: 10,
   spacingXMm: 3,
   spacingYMm: 3,
-  // Marcas de corte generadas: 0 = sin marcas (el operador corta a mano/guía).
-  // TODO(Mariano): definir si los tamaños custom llevan corte y su margen.
-  markMarginMm: 0,
-  cutMarginMm: 0,
+  // Corte con plotter: marcas L a 10 mm del borde de la hoja; el corte entra
+  // 1 mm hacia adentro de la foto. Rectangular.
+  markMarginMm: 10,
+  cutMarginMm: 1,
   cutShape: 'rect',
+  // Rango de tamaños aceptados (mm). El mínimo es fijo; el máximo lo calcula
+  // buildCriterioCustomValue como área útil (hoja − márgenes) para que no
+  // quede desactualizado si cambia la hoja.
+  minWmm: 40,
+  minHmm: 40,
 };

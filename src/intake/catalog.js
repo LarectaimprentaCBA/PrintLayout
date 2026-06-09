@@ -57,7 +57,12 @@ export function buildCatalogRows(templates) {
 }
 
 // Valor jsonb del criterio del "A medida" para config_fotos.
+// Las 6 claves base (paperW/H, marginX/Y, spacingX/Y) son el contrato fijo; el
+// resto (corte y rango min/max) son aditivas para que la web valide qué tamaños
+// acepta y sepa cómo se arma la hoja. El máximo = área útil (hoja − márgenes).
 export function buildCriterioCustomValue() {
+  const usableW = round1(CUSTOM_SHEET.paperWidthMm - 2 * CUSTOM_SHEET.marginXMm);
+  const usableH = round1(CUSTOM_SHEET.paperHeightMm - 2 * CUSTOM_SHEET.marginYMm);
   return {
     paperW: CUSTOM_SHEET.paperWidthMm,
     paperH: CUSTOM_SHEET.paperHeightMm,
@@ -65,5 +70,14 @@ export function buildCriterioCustomValue() {
     marginY: CUSTOM_SHEET.marginYMm,
     spacingX: CUSTOM_SHEET.spacingXMm,
     spacingY: CUSTOM_SHEET.spacingYMm,
+    // Cómo se arma/corta la hoja.
+    markMargin: CUSTOM_SHEET.markMarginMm,
+    cutMargin: CUSTOM_SHEET.cutMarginMm,
+    cutShape: CUSTOM_SHEET.cutShape,
+    // Rango de tamaños aceptados (mm).
+    minW: CUSTOM_SHEET.minWmm,
+    minH: CUSTOM_SHEET.minHmm,
+    maxW: usableW,
+    maxH: usableH,
   };
 }

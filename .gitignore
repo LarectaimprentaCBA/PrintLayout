@@ -24,3 +24,7 @@ fotosPolaroid95x95 (1).jpg
 
 # Token embebido para sync de plantillas (lo escribe scripts/write-templates-config.cjs)
 electron/templates-config.json
+
+# Logs temporales de arranque (verificacion de boot durante dev)
+.intake-boot.err
+.intake-boot.out

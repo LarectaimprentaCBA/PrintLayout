@@ -39,8 +39,12 @@ sync con el catálogo de la web).
 ### 2) Criterio de hoja para tamaños CUSTOM
 Los tamaños "custom" (medidas libres `wmm`/`hmm`) se arman con una grilla
 calculada. El criterio de **hoja base, márgenes, espaciado y corte** está en
-`sheetCriteria.js` como **PLACEHOLDER** (`CUSTOM_SHEET`). Mariano debe ponerlo
-**igual que la web** para que la hoja coincida con lo que el cliente vio/pagó.
+`sheetCriteria.js` (`CUSTOM_SHEET`). Debe coincidir con la web. Valores
+actuales: hoja A4 (210×297), márgenes 10 mm, separación 3 mm, corte con plotter
+(marcas a 10 mm, corte 1 mm hacia adentro), rango aceptado 40×40 mm hasta el
+área útil de la hoja (190×277). Se publica a `config_fotos`
+(`criterio_hoja_custom`) con "Publicar catálogo". Si lo cambiás, volvé a
+publicar.
 
 ## Configuración (panel "Pedidos")
 Botón **Pedidos** en la barra superior. Campos: URL de Supabase, service key
