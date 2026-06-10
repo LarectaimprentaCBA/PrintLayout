@@ -124,9 +124,11 @@ export default function TemplatesManagerModal({
   };
 
   return (
+    // No cerramos al hacer clic en el fondo: es un editor donde se trabaja, y
+    // cerrar sin querer (clic afuera o al soltar una selección de texto) molesta.
+    // Se cierra con la ✕, el botón "Cerrar" o la tecla Esc.
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose?.(); }}
     >
       <div className="flex max-h-[88vh] w-[820px] max-w-[96vw] flex-col rounded-lg border border-ink-700 bg-ink-900 shadow-2xl">
         {/* Header */}
