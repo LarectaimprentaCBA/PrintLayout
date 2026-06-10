@@ -78,6 +78,11 @@ contextBridge.exposeInMainWorld('printlayout', {
     installNow: () => ipcRenderer.invoke('updater:install-now'),
     checkNow: () => ipcRenderer.invoke('updater:check-now'),
   },
+  app: {
+    // Reporta cuántas tabs tienen cambios sin guardar (el main lo usa para el
+    // aviso de cierre, sin depender de que el renderer responda).
+    setDirtyCount: (n) => ipcRenderer.send('app:dirty-count', n),
+  },
   // Entrada automática de pedidos de fotos (Supabase).
   intake: {
     getConfig: () => ipcRenderer.invoke('intake:get-config'),

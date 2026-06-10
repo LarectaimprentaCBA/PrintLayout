@@ -2066,24 +2066,15 @@ export default function App() {
     return () => clearTimeout(id);
   }, [toast]);
 
-  // Warning antes de cerrar la app si hay tabs con cambios sin guardar
-  // (isDirty=true). Lo expone como window.__printlayoutCanClose: el main
-  // process lo llama via executeJavaScript en el `close` event del window.
-  // Devuelve Promise<bool>: true para cerrar, false para abortar el cierre.
-  // Usamos confirm() nativo — es bloqueante y feo pero funcional. El estado
-  // del editor (auto-save de Fase E) sigue persistido en disco igual, asi
-  // que el warning es para advertir, no para evitar perdida.
+  // Reporta al proceso principal cuántas tabs tienen cambios sin guardar. El
+  // main usa ese número para mostrar (o no) el aviso de cierre con un diálogo
+  // NATIVO — así la decisión no depende de que el renderer responda. Antes el
+  // main preguntaba al renderer (executeJavaScript) y, si el renderer estaba
+  // colgado, la app no se cerraba y el instalador "no la podía cerrar".
+  // El trabajo igual queda auto-guardado y se restaura al reabrir.
   useEffect(() => {
-    window.__printlayoutCanClose = () => {
-      const dirty = tabs.filter((t) => t.isDirty);
-      if (dirty.length === 0) return Promise.resolve(true);
-      const names = dirty.map((t) => `· ${t.name || 'Sin titulo'}`).join('\n');
-      const ok = window.confirm(
-        `Hay ${dirty.length} trabajo${dirty.length === 1 ? '' : 's'} con cambios sin guardar:\n\n${names}\n\nSe van a guardar automaticamente y se restauran al reabrir, pero si querés guardarlos como trabajo nombrado hacelo antes de cerrar.\n\n¿Cerrar igual?`,
-      );
-      return Promise.resolve(ok);
-    };
-    return () => { delete window.__printlayoutCanClose; };
+    const n = tabs.filter((t) => t.isDirty).length;
+    window.printlayout?.app?.setDirtyCount?.(n);
   }, [tabs]);
 
   // Auto-update: escuchar status del main y mostrar banner cuando este listo.

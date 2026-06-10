@@ -51,6 +51,15 @@ function resolvePythonBin() {
 const PYTHON_BIN = resolvePythonBin();
 
 let isQuittingConfirmed = false;
+let dirtyTabCount = 0;
+
+// El renderer reporta cuántas tabs tienen cambios sin guardar. Lo usamos en el
+// evento `close` para decidir si avisar — SIN depender de que el renderer
+// responda (si está colgado, antes la app no se cerraba y el instalador "no la
+// podía cerrar").
+ipcMain.on('app:dirty-count', (_evt, n) => {
+  dirtyTabCount = Math.max(0, Number(n) || 0);
+});
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -67,25 +76,31 @@ function createWindow() {
     },
   });
 
-  // Intercept close para pedirle al renderer si hay tabs sin guardar. Si las
-  // hay, muestra confirm; sino cierra directo. Se evita si ya hicimos quit
-  // antes (asi no se bucla).
-  win.on('close', async (e) => {
+  // Aviso de cambios sin guardar con un diálogo NATIVO del proceso principal.
+  // Antes se preguntaba al renderer (executeJavaScript): si el renderer estaba
+  // colgado, la respuesta nunca volvía, la ventana no se cerraba y el instalador
+  // "no podía cerrar" la app. Ahora la decisión NO depende del renderer.
+  win.on('close', (e) => {
     if (isQuittingConfirmed) return;
-    e.preventDefault();
-    let shouldClose = true;
-    try {
-      shouldClose = await win.webContents.executeJavaScript(
-        'window.__printlayoutCanClose ? window.__printlayoutCanClose() : Promise.resolve(true)',
-        true,
-      );
-    } catch (err) {
-      console.warn('[close] askCanClose fallo:', err);
+    if (dirtyTabCount > 0) {
+      e.preventDefault();
+      const choice = dialog.showMessageBoxSync(win, {
+        type: 'warning',
+        buttons: ['Cerrar igual', 'Cancelar'],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true,
+        title: 'Cambios sin guardar',
+        message: `Hay ${dirtyTabCount} trabajo${dirtyTabCount === 1 ? '' : 's'} con cambios sin guardar.`,
+        detail: 'Se guardan automáticamente y se restauran al reabrir. Si querés guardarlos como trabajo nombrado, hacelo antes de cerrar.',
+      });
+      if (choice === 0) {
+        isQuittingConfirmed = true;
+        win.close();
+      }
+      // choice === 1 (Cancelar) → no cerrar (preventDefault ya aplicado).
     }
-    if (shouldClose) {
-      isQuittingConfirmed = true;
-      win.close();
-    }
+    // dirtyTabCount === 0 → no preventDefault → la ventana se cierra directo.
   });
 
   if (isDev) {
@@ -910,6 +925,12 @@ function setupAutoUpdate(parentWin) {
 
 ipcMain.handle('updater:install-now', () => {
   if (!app.isPackaged) return { ok: false, error: 'Solo en builds instalados.' };
+  // El usuario YA aceptó actualizar: saltear el interceptor de cierre (el
+  // confirm bloqueante de "cambios sin guardar") para que la ventana se cierre
+  // sola y el instalador pueda reemplazar la app. Sin esto, el confirm dejaba
+  // la app colgada y el instalador "no la podía cerrar". El trabajo en curso
+  // igual queda auto-guardado y se restaura al reabrir.
+  isQuittingConfirmed = true;
   autoUpdater.quitAndInstall();
   return { ok: true };
 });
