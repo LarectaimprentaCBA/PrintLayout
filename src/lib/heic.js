@@ -30,7 +30,7 @@ async function convertOne(file) {
 // los HEIC/HEIF a JPEG. Devuelve File[] listos para el resto del pipeline.
 // `onHeicProgress` (opcional) se llama una vez si hay al menos un HEIC, util
 // para mostrar un aviso de "convirtiendo...".
-export async function prepareIncomingImageFiles(fileList, { onHeicStart } = {}) {
+export async function prepareIncomingImageFiles(fileList, { onHeicStart, onSkip } = {}) {
   const arr = Array.from(fileList || []);
   const hasHeic = arr.some(isHeicFile);
   if (hasHeic) onHeicStart?.(arr.filter(isHeicFile).length);
@@ -39,9 +39,12 @@ export async function prepareIncomingImageFiles(fileList, { onHeicStart } = {}) 
     try {
       out.push(await convertOne(f));
     } catch (err) {
-      console.error(`[heic] No se pudo convertir ${f.name}: ${err?.message || err}`);
-      // Dejamos pasar el original; el filtro posterior lo descartara si no se
-      // puede leer, pero al menos no rompemos toda la tanda.
+      const reason = err?.message || String(err);
+      console.error(`[heic] No se pudo convertir ${f.name}: ${reason}`);
+      // NO dejamos pasar el original: un .heic que no convirtió tampoco se
+      // puede leer, así que lo reportamos como salteado (una sola vez) en vez
+      // de que desaparezca en silencio.
+      onSkip?.({ name: f?.name || 'foto', reason: `no se pudo convertir el HEIC (${reason})` });
     }
   }
   return out;

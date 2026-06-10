@@ -38,6 +38,7 @@ import { BUILTIN_PAPER_PRESETS } from './lib/grid.js';
 import { useLayoutEditor } from './hooks/useLayoutEditor.js';
 import { readImageFiles, readImageFile } from './lib/images.js';
 import { prepareIncomingImageFiles } from './lib/heic.js';
+import { setImportSkipReporter, reportImportSkips } from './lib/importReport.js';
 import {
   exportLayoutToPdf,
   exportDoubleSidedLayoutToPdf,
@@ -1168,12 +1169,16 @@ export default function App() {
   // Convierte HEIC/HEIF a JPEG antes de abrir el modal de pack, asi las vistas
   // previas y el calculo de dimensiones (que usan <img>) funcionan.
   const convertHeicWithToast = async (files) => {
-    return prepareIncomingImageFiles(files, {
+    const skipped = [];
+    const out = await prepareIncomingImageFiles(files, {
       onHeicStart: (n) => setToast({
         kind: 'info',
         text: `Convirtiendo ${n} foto${n === 1 ? '' : 's'} de iPhone (HEIC)…`,
       }),
+      onSkip: (s) => skipped.push(s),
     });
+    reportImportSkips(skipped);
+    return out;
   };
 
   const handleStartAutoPack = async (files) => {
@@ -2076,6 +2081,28 @@ export default function App() {
     const n = tabs.filter((t) => t.isDirty).length;
     window.printlayout?.app?.setDirtyCount?.(n);
   }, [tabs]);
+
+  // Aviso de fotos que NO se pudieron importar (HEIC que no convirtió, formato
+  // no soportado, archivo ilegible). Se registra una vez y cubre todos los
+  // flujos de importación. Antes desaparecían en silencio sin decir cuáles.
+  useEffect(() => {
+    setImportSkipReporter((skipped) => {
+      const names = skipped.map((s) => s.name).filter(Boolean);
+      const shown = names.slice(0, 6).join(', ');
+      const more = names.length > 6 ? ` y ${names.length - 6} más` : '';
+      const heic = skipped.filter((s) => /heic/i.test(s.reason || '')).length;
+      const motivo = heic === skipped.length
+        ? 'son HEIC que no se pudieron convertir'
+        : heic > 0
+          ? 'la mayoría son HEIC que no se pudieron convertir'
+          : (skipped[0]?.reason || 'no se pudieron leer');
+      setToast({
+        kind: 'error',
+        text: `No se importaron ${skipped.length} foto${skipped.length === 1 ? '' : 's'}: ${shown}${more}. Motivo: ${motivo}.`,
+      });
+    });
+    return () => setImportSkipReporter(null);
+  }, []);
 
   // Auto-update: escuchar status del main y mostrar banner cuando este listo.
   const [updateInfo, setUpdateInfo] = useState(null);

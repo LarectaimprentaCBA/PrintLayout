@@ -1,6 +1,7 @@
 import { detectFaces } from './faceDetection.js';
 import { readImageDpi } from './imageMetadata.js';
 import { prepareIncomingImageFiles } from './heic.js';
+import { reportImportSkips } from './importReport.js';
 import { rasterizePdfPagesAt } from './pdfPreview.js';
 
 // Re-codifica la imagen pasandola por canvas. Esto:
@@ -176,6 +177,7 @@ export async function readAnyFileToImage(file) {
 export async function readFilesToImages(fileList) {
   const files = Array.from(fileList || []);
   const out = [];
+  const skipped = [];
   for (const file of files) {
     try {
       if (isPdfFile(file)) {
@@ -194,30 +196,41 @@ export async function readFilesToImages(fileList) {
           out.push(await readImageFile(pngFile));
         }
       } else {
-        const [converted] = await prepareIncomingImageFiles([file]);
+        const [converted] = await prepareIncomingImageFiles([file], {
+          onSkip: (s) => skipped.push(s),
+        });
         if (converted) out.push(await readImageFile(converted));
+        // converted undefined => el HEIC no convirtió; ya se reportó en onSkip.
       }
     } catch (err) {
+      skipped.push({ name: file?.name || 'archivo', reason: err?.message || 'no se pudo cargar' });
       console.error(`No se pudo cargar ${file?.name}:`, err);
     }
   }
+  reportImportSkips(skipped);
   return out;
 }
 
 export async function readImageFiles(fileList) {
   // Convierte HEIC/HEIF del iPhone a JPEG. Los que ya son jpg/png pasan igual.
-  const arr = await prepareIncomingImageFiles(fileList);
+  const skipped = [];
+  const arr = await prepareIncomingImageFiles(fileList, {
+    onSkip: (s) => skipped.push(s),
+  });
   const results = [];
   for (const f of arr) {
     if (!/^image\/(jpe?g|png)$/i.test(f.type) && !/\.(jpe?g|png)$/i.test(f.name)) {
       console.warn(`Se ignoró ${f.name}: formato no soportado`);
+      skipped.push({ name: f.name, reason: 'formato no soportado' });
       continue;
     }
     try {
       results.push(await readImageFile(f));
     } catch (err) {
       console.error(err);
+      skipped.push({ name: f.name, reason: err?.message || 'no se pudo leer' });
     }
   }
+  reportImportSkips(skipped);
   return results;
 }
