@@ -5,7 +5,8 @@
 // así que la clave queda en claro en su userData (igual criterio que el resto
 // de configs locales).
 //
-// Forma: { supabaseUrl, serviceKey, pollSeconds, outputDir, activo }.
+// Forma: { supabaseUrl, serviceKey, pollSeconds, outputDir, activo, laRecta,
+//          modoEntrega }.
 
 const { app } = require('electron');
 const fs = require('node:fs');
@@ -22,6 +23,10 @@ const DEFAULTS = {
   // "Esta PC es de La Recta": habilita bajar pedidos y administrar/publicar
   // plantillas oficiales. En las demás PCs queda en false (panel oculto).
   laRecta: false,
+  // Qué hacer al recibir un pedido: 'abrir' (abre cada hoja en una pestaña para
+  // revisar) o 'carpeta' (guarda un .pljob por hoja en <outputDir>/Pedidos sin
+  // abrir pestañas). Default 'carpeta'.
+  modoEntrega: 'carpeta',
 };
 
 function getFilePath() {
@@ -41,6 +46,7 @@ function sanitize(cfg) {
     outputDir: typeof c.outputDir === 'string' ? c.outputDir : '',
     activo: !!c.activo,
     laRecta: !!c.laRecta,
+    modoEntrega: c.modoEntrega === 'abrir' ? 'abrir' : 'carpeta',
   };
 }
 

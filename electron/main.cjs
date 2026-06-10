@@ -237,6 +237,9 @@ ipcMain.handle('jobs:load-from-path', async (_evt, { path: filePath }) => {
 ipcMain.handle('jobs:save-to-path', async (_evt, { path: filePath, payload }) => {
   try {
     if (!filePath) return { ok: false, error: 'path vacio' };
+    // Crear la carpeta destino si no existe (p. ej. la subcarpeta "Pedidos" del
+    // modo de entrega en carpeta del intake).
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
     const body = { ...payload, savedAt: new Date().toISOString() };
     fs.writeFileSync(filePath, JSON.stringify(body), 'utf-8');
     return { ok: true, path: filePath };

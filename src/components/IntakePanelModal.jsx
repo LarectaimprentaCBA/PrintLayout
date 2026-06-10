@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 // "Probar conexión" y "Buscar ahora". El servicio sólo ARMA y deja la hoja
 // abierta para revisar (nunca imprime/corta solo).
 
-const EMPTY = { supabaseUrl: '', serviceKey: '', pollSeconds: 60, outputDir: '', activo: false };
+const EMPTY = { supabaseUrl: '', serviceKey: '', pollSeconds: 60, outputDir: '', activo: false, modoEntrega: 'carpeta' };
 
 export default function IntakePanelModal({ open, onClose, onPublishCatalog }) {
   const [cfg, setCfg] = useState(EMPTY);
@@ -203,6 +203,34 @@ export default function IntakePanelModal({ open, onClose, onPublishCatalog }) {
                   </button>
                 </div>
               </label>
+
+              {/* Modo de entrega */}
+              <div className="mt-3 rounded border border-ink-700 bg-ink-950/40 px-3 py-2 text-xs text-ink-300">
+                <span className="mb-1 block font-medium text-ink-200">Cuando llega un pedido</span>
+                <label className="flex cursor-pointer items-center gap-2 py-0.5">
+                  <input
+                    type="radio"
+                    name="modoEntrega"
+                    checked={cfg.modoEntrega !== 'carpeta'}
+                    onChange={() => patch({ modoEntrega: 'abrir' })}
+                    className="h-3.5 w-3.5 accent-accent-500"
+                  />
+                  <span>Abrir para revisar</span>
+                </label>
+                <label className="flex cursor-pointer items-center gap-2 py-0.5">
+                  <input
+                    type="radio"
+                    name="modoEntrega"
+                    checked={cfg.modoEntrega === 'carpeta'}
+                    onChange={() => patch({ modoEntrega: 'carpeta' })}
+                    className="h-3.5 w-3.5 accent-accent-500"
+                  />
+                  <span>Guardar como .pljob en la carpeta</span>
+                </label>
+                <span className="mt-1 block text-[10px] text-ink-500">
+                  "Guardar" deja un archivo por hoja en la subcarpeta <b>Pedidos</b> de la carpeta de salida, sin abrir pestañas. Cada .pljob ya lleva las fotos adentro: lo abrís cuando quieras.
+                </span>
+              </div>
 
               <div className="mt-3 flex items-center gap-4">
                 <label className="flex items-center gap-2 text-xs text-ink-300">

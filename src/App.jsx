@@ -1334,43 +1334,73 @@ export default function App() {
   // confirmamos al main para que marque procesado + limpie el bucket.
   const handleIntakeOrder = useCallback(async (order) => {
     const label = `P-${order?.numero_presupuesto || order?.id}`;
+    // Nombre de archivo seguro para Windows: saca los invalidos < > : " / \ | ? *.
+    // Conserva guiones y espacios (P-123-fotos ...).
+    const safeFileName = (s) =>
+      (String(s || 'pedido')
+        .replace(/[<>:"/\\|?*]/g, '_')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 120) || 'pedido');
     try {
       setToast({ kind: 'info', text: `Procesando pedido de fotos ${label}…` });
+
+      // Modo de entrega (config del intake): 'carpeta' guarda un .pljob por hoja
+      // SIN abrir pestañas; 'abrir' deja cada hoja abierta para revisar.
+      const cfg = await window.printlayout.intake.getConfig().catch(() => null);
+      let modo = cfg?.modoEntrega === 'abrir' ? 'abrir' : 'carpeta';
+      const outputDir = (cfg?.outputDir || '').replace(/[\\/]+$/, '');
+      if (modo === 'carpeta' && !outputDir) {
+        // Sin carpeta no podemos guardar: avisamos y caemos a 'abrir' (no perder el pedido).
+        setToast({ kind: 'error', text: 'No hay carpeta de salida configurada: abro las hojas para revisar.' });
+        modo = 'abrir';
+      }
+
       const { specs, skipped } = await buildOrderJobs(order, {
         templates,
         readFileBytes: (p) => window.printlayout.intake.readFile(p),
       });
-      let opened = 0;
+
+      let delivered = 0;
       for (const spec of specs) {
-        let jobId = null;
-        try {
-          const r = await saveJobToDisk({
-            name: spec.name,
-            template: spec.template,
-            images: spec.images,
-            assignmentsFront: spec.assignmentsFront,
-            assignmentsBack: spec.assignmentsBack,
-            minPages: spec.minPages,
-          });
-          if (r?.ok && r.job) jobId = r.job.id;
-        } catch (_) {
-          /* si falla guardar, igual abrimos la tab para revisar */
-        }
-        openInTab(spec.template, {
+        const payload = {
           name: spec.name,
-          jobId,
-          forceNew: true,
-          initialLayout: {
-            images: spec.images,
-            assignmentsFront: spec.assignmentsFront,
-            assignmentsBack: spec.assignmentsBack,
-            minPages: spec.minPages,
-          },
-        });
-        opened += 1;
+          template: spec.template,
+          images: spec.images,
+          assignmentsFront: spec.assignmentsFront,
+          assignmentsBack: spec.assignmentsBack,
+          minPages: spec.minPages,
+        };
+        if (modo === 'carpeta') {
+          // <outputDir>/Pedidos/<nombre seguro>.pljob (autocontenido). El main
+          // crea la subcarpeta "Pedidos" si no existe.
+          const filePath = `${outputDir}/Pedidos/${safeFileName(spec.name)}.pljob`;
+          try {
+            const r = await window.printlayout.jobs.saveToPath(filePath, payload);
+            if (r?.ok) delivered += 1;
+          } catch (_) { /* si falla, queda sin entregar y el pedido se reintenta */ }
+        } else {
+          let jobId = null;
+          try {
+            const r = await saveJobToDisk(payload);
+            if (r?.ok && r.job) jobId = r.job.id;
+          } catch (_) { /* si falla guardar, igual abrimos la tab para revisar */ }
+          openInTab(spec.template, {
+            name: spec.name,
+            jobId,
+            forceNew: true,
+            initialLayout: {
+              images: spec.images,
+              assignmentsFront: spec.assignmentsFront,
+              assignmentsBack: spec.assignmentsBack,
+              minPages: spec.minPages,
+            },
+          });
+          delivered += 1;
+        }
       }
 
-      const ok = opened > 0;
+      const ok = delivered > 0;
       await window.printlayout.intake.orderBuilt({
         id: order.id,
         ok,
@@ -1378,15 +1408,16 @@ export default function App() {
       });
 
       if (ok) {
+        const enCarpeta = modo === 'carpeta';
         try {
           // eslint-disable-next-line no-new
           new Notification('Llegó un pedido de fotos', {
-            body: `${label}: ${opened} hoja(s) lista(s) para revisar.`,
+            body: `${label}: ${delivered} hoja(s) ${enCarpeta ? 'guardada(s) en la carpeta' : 'lista(s) para revisar'}.`,
           });
         } catch (_) { /* sin permiso de notificaciones: el toast alcanza */ }
         setToast({
           kind: 'success',
-          text: `${label}: ${opened} hoja(s) abiertas para revisar${skipped.length ? ` · ${skipped.length} tamaño(s) saltado(s)` : ''}.`,
+          text: `${label}: ${delivered} hoja(s) ${enCarpeta ? 'guardada(s) en la carpeta (\\Pedidos)' : 'abiertas para revisar'}${skipped.length ? ` · ${skipped.length} tamaño(s) saltado(s)` : ''}.`,
         });
       } else {
         setToast({
