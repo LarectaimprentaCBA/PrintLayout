@@ -11,6 +11,8 @@ export default function ImageQuantitiesModal({
   onCancel,
 }) {
   const [counts, setCounts] = useState({});
+  // Campo libre para "poner a todas" una cantidad escrita por el usuario.
+  const [allValue, setAllValue] = useState('');
 
   // Al abrir (o cambiar las imágenes), arrancar todas en 1.
   useEffect(() => {
@@ -18,6 +20,7 @@ export default function ImageQuantitiesModal({
     const init = {};
     for (const img of images) init[img.id] = 1;
     setCounts(init);
+    setAllValue('');
   }, [open, images]);
 
   useEffect(() => {
@@ -46,6 +49,12 @@ export default function ImageQuantitiesModal({
     const next = {};
     for (const img of images) next[img.id] = n;
     setCounts(next);
+  };
+
+  // Aplica la cantidad escrita en el campo libre a TODAS las imágenes.
+  const applyAllTyped = () => {
+    if (allValue === '') return;
+    setAll(allValue);
   };
 
   const totalCopies = useMemo(
@@ -78,7 +87,7 @@ export default function ImageQuantitiesModal({
           </p>
         </div>
 
-        <div className="flex items-center gap-2 border-b border-ink-700 px-4 py-2 text-xs text-ink-300">
+        <div className="flex flex-wrap items-center gap-2 border-b border-ink-700 px-4 py-2 text-xs text-ink-300">
           <span>Poner a todas:</span>
           {[1, 2, 5, 10].map((n) => (
             <button
@@ -90,6 +99,26 @@ export default function ImageQuantitiesModal({
               {n}
             </button>
           ))}
+          <span className="text-ink-500">o escribí:</span>
+          <input
+            type="number"
+            min="0"
+            value={allValue}
+            onChange={(e) => setAllValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); applyAllTyped(); }
+            }}
+            placeholder="cant."
+            className="w-16 rounded border border-ink-700 bg-ink-900 px-1.5 py-0.5 text-center text-ink-100 outline-none focus:border-accent-500"
+          />
+          <button
+            type="button"
+            onClick={applyAllTyped}
+            disabled={allValue === ''}
+            className="rounded border border-accent-500/50 bg-accent-600/20 px-2 py-0.5 text-accent-200 hover:bg-accent-600/30 disabled:opacity-40"
+          >
+            Aplicar a todas
+          </button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-3">
