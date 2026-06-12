@@ -195,7 +195,43 @@ export default function ImageCropModal({ open, image, onApply, onClose }) {
       const r = { ...d.startRect };
       const minSize = 4;
       const isCorner = d.handle.length === 2; // 'nw','ne','se','sw'
-      if (e.shiftKey && isCorner) {
+      if (e.altKey) {
+        // Alt: redimensionar DESDE EL CENTRO (simétrico hacia los 4 lados). El
+        // centro queda fijo en el de la selección inicial. Con Shift en una
+        // esquina, además mantiene el aspecto (círculo perfecto y centrado).
+        const cx = r.x + r.w / 2;
+        const cy = r.y + r.h / 2;
+        const ctrlH = d.handle.includes('w') || d.handle.includes('e');
+        const ctrlV = d.handle.includes('n') || d.handle.includes('s');
+        let halfW = ctrlH ? Math.abs(p.x - cx) : r.w / 2;
+        let halfH = ctrlV ? Math.abs(p.y - cy) : r.h / 2;
+        const proportional = e.shiftKey && isCorner;
+        if (proportional) {
+          const aspect = r.w / r.h || 1;
+          if (halfW / aspect >= halfH) halfH = halfW / aspect;
+          else halfW = halfH * aspect;
+        }
+        // Limitar a la imagen (el medio-ancho/alto no puede pasar del borde más
+        // cercano al centro), manteniendo el aspecto si corresponde.
+        const maxHalfW = Math.min(cx, W - cx);
+        const maxHalfH = Math.min(cy, H - cy);
+        if (proportional) {
+          const fit = Math.min(1, maxHalfW / halfW, maxHalfH / halfH);
+          if (Number.isFinite(fit) && fit > 0 && fit < 1) { halfW *= fit; halfH *= fit; }
+        } else {
+          halfW = Math.min(halfW, maxHalfW);
+          halfH = Math.min(halfH, maxHalfH);
+        }
+        const minHalf = minSize / 2;
+        if (proportional && (halfW < minHalf || halfH < minHalf)) {
+          const grow = Math.max(minHalf / halfW, minHalf / halfH);
+          halfW *= grow; halfH *= grow;
+        } else if (!proportional) {
+          halfW = Math.max(halfW, minHalf);
+          halfH = Math.max(halfH, minHalf);
+        }
+        setRect({ x: cx - halfW, y: cy - halfH, w: halfW * 2, h: halfH * 2 });
+      } else if (e.shiftKey && isCorner) {
         // Shift en una esquina: escala PROPORCIONAL (mantiene el aspecto) desde
         // la esquina opuesta como ancla.
         const aspect = r.w / r.h || 1;
@@ -505,11 +541,11 @@ export default function ImageCropModal({ open, image, onApply, onClose }) {
                     No se detectó un borde claro. Ajustalo a mano.
                   </span>
                 )}
-                <span className="text-ink-500">· <b>Shift</b> en una esquina = proporcional</span>
+                <span className="text-ink-500">· <b>Shift</b> = proporcional · <b>Alt</b> = desde el centro</span>
               </>
             ) : mode === 'circle' ? (
               <span className="text-ink-400">
-                Arrastrá y redimensioná. Cuadrado = círculo perfecto; rectángulo = óvalo. <b>Shift</b> en una esquina = proporcional. Lo de afuera queda transparente.
+                Arrastrá y redimensioná. Cuadrado = círculo perfecto; rectángulo = óvalo. <b>Shift</b> = proporcional · <b>Alt</b> = desde el centro. Lo de afuera queda transparente.
               </span>
             ) : (
               <>
