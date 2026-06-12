@@ -194,15 +194,47 @@ export default function ImageCropModal({ open, image, onApply, onClose }) {
     } else if (d.type === 'rectResize') {
       const r = { ...d.startRect };
       const minSize = 4;
-      let x1 = r.x;
-      let y1 = r.y;
-      let x2 = r.x + r.w;
-      let y2 = r.y + r.h;
-      if (d.handle.includes('w')) x1 = clamp(p.x, 0, x2 - minSize);
-      if (d.handle.includes('e')) x2 = clamp(p.x, x1 + minSize, W);
-      if (d.handle.includes('n')) y1 = clamp(p.y, 0, y2 - minSize);
-      if (d.handle.includes('s')) y2 = clamp(p.y, y1 + minSize, H);
-      setRect({ x: x1, y: y1, w: x2 - x1, h: y2 - y1 });
+      const isCorner = d.handle.length === 2; // 'nw','ne','se','sw'
+      if (e.shiftKey && isCorner) {
+        // Shift en una esquina: escala PROPORCIONAL (mantiene el aspecto) desde
+        // la esquina opuesta como ancla.
+        const aspect = r.w / r.h || 1;
+        const anchorX = d.handle.includes('w') ? r.x + r.w : r.x;
+        const anchorY = d.handle.includes('n') ? r.y + r.h : r.y;
+        const desiredW = Math.abs(p.x - anchorX);
+        const desiredH = Math.abs(p.y - anchorY);
+        // El eje dominante manda; el otro se deriva del aspecto.
+        let newW;
+        let newH;
+        if (desiredW / aspect >= desiredH) {
+          newW = desiredW; newH = newW / aspect;
+        } else {
+          newH = desiredH; newW = newH * aspect;
+        }
+        // Limitar a la imagen sin romper el aspecto.
+        const maxW = d.handle.includes('w') ? anchorX : W - anchorX;
+        const maxH = d.handle.includes('n') ? anchorY : H - anchorY;
+        const fit = Math.min(1, maxW / newW, maxH / newH);
+        if (Number.isFinite(fit) && fit > 0 && fit < 1) { newW *= fit; newH *= fit; }
+        // Tamaño mínimo manteniendo aspecto.
+        if (newW < minSize || newH < minSize) {
+          const grow = Math.max(minSize / newW, minSize / newH);
+          newW *= grow; newH *= grow;
+        }
+        const newX = d.handle.includes('w') ? anchorX - newW : anchorX;
+        const newY = d.handle.includes('n') ? anchorY - newH : anchorY;
+        setRect({ x: newX, y: newY, w: newW, h: newH });
+      } else {
+        let x1 = r.x;
+        let y1 = r.y;
+        let x2 = r.x + r.w;
+        let y2 = r.y + r.h;
+        if (d.handle.includes('w')) x1 = clamp(p.x, 0, x2 - minSize);
+        if (d.handle.includes('e')) x2 = clamp(p.x, x1 + minSize, W);
+        if (d.handle.includes('n')) y1 = clamp(p.y, 0, y2 - minSize);
+        if (d.handle.includes('s')) y2 = clamp(p.y, y1 + minSize, H);
+        setRect({ x: x1, y: y1, w: x2 - x1, h: y2 - y1 });
+      }
     } else if (d.type === 'polyVertex') {
       const nx = clamp(p.x, 0, W);
       const ny = clamp(p.y, 0, H);
@@ -473,10 +505,11 @@ export default function ImageCropModal({ open, image, onApply, onClose }) {
                     No se detectó un borde claro. Ajustalo a mano.
                   </span>
                 )}
+                <span className="text-ink-500">· <b>Shift</b> en una esquina = proporcional</span>
               </>
             ) : mode === 'circle' ? (
               <span className="text-ink-400">
-                Arrastrá y redimensioná la selección. Cuadrado = círculo perfecto; rectángulo = óvalo. Lo de afuera queda transparente.
+                Arrastrá y redimensioná. Cuadrado = círculo perfecto; rectángulo = óvalo. <b>Shift</b> en una esquina = proporcional. Lo de afuera queda transparente.
               </span>
             ) : (
               <>
