@@ -2,11 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   cropRectFromDataUrl,
   cropPolygonFromDataUrl,
+  cropEllipseFromDataUrl,
   detectUniformBorder,
 } from '../lib/imageCropTools.js';
 
-// Modal de recorte manual de una imagen del sidebar. Tres modos:
+// Modal de recorte manual de una imagen del sidebar. Modos:
 //   - Rectangular: bbox con handles + boton "Detectar borde".
+//   - Circulo: elipse inscrita en el bbox (cuadrado = circulo, rect = ovalo).
 //   - Libre (poligonal): poligono con vertices arrastrables.
 // Al aplicar se reemplaza dataUrl/width/height de la imagen (no reversible).
 
@@ -281,10 +283,28 @@ export default function ImageCropModal({ open, image, onApply, onClose }) {
     }
   }
 
+  // Cuadrado centrado más grande que entra (para el círculo por defecto).
+  function centeredSquare() {
+    const side = Math.min(W, H);
+    return { x: (W - side) / 2, y: (H - side) / 2, w: side, h: side };
+  }
+
+  // Entrar a modo círculo: si la selección es la imagen entera (o no hay),
+  // arrancamos con un cuadrado centrado para que se vea un círculo lindo.
+  function enterCircleMode() {
+    setMode('circle');
+    setRect((r) => {
+      const isFull = !r || (r.x === 0 && r.y === 0 && r.w === W && r.h === H);
+      return isFull ? centeredSquare() : r;
+    });
+  }
+
   function handleReset() {
     if (mode === 'rect') {
       setRect({ x: 0, y: 0, w: W, h: H });
       setDetectResult(null);
+    } else if (mode === 'circle') {
+      setRect(centeredSquare());
     } else {
       setPoly([
         { x: 0, y: 0 },
@@ -317,6 +337,11 @@ export default function ImageCropModal({ open, image, onApply, onClose }) {
           return;
         }
         result = await cropRectFromDataUrl(image.dataUrl, rect);
+      } else if (mode === 'circle') {
+        if (!rect || rect.w < 2 || rect.h < 2) {
+          throw new Error('El círculo es demasiado chico.');
+        }
+        result = await cropEllipseFromDataUrl(image.dataUrl, rect);
       } else {
         if (!polyClosed || poly.length < 3) {
           throw new Error('Cerrá el polígono antes de aplicar.');
@@ -394,6 +419,17 @@ export default function ImageCropModal({ open, image, onApply, onClose }) {
             </button>
             <button
               type="button"
+              onClick={enterCircleMode}
+              className={`rounded px-3 py-1 ${
+                mode === 'circle'
+                  ? 'bg-accent-600 text-white'
+                  : 'text-ink-300 hover:bg-ink-800'
+              }`}
+            >
+              Círculo
+            </button>
+            <button
+              type="button"
               onClick={() => setMode('poly')}
               className={`rounded px-3 py-1 ${
                 mode === 'poly'
@@ -438,6 +474,10 @@ export default function ImageCropModal({ open, image, onApply, onClose }) {
                   </span>
                 )}
               </>
+            ) : mode === 'circle' ? (
+              <span className="text-ink-400">
+                Arrastrá y redimensioná la selección. Cuadrado = círculo perfecto; rectángulo = óvalo. Lo de afuera queda transparente.
+              </span>
             ) : (
               <>
                 <button
@@ -550,6 +590,15 @@ export default function ImageCropModal({ open, image, onApply, onClose }) {
                         fill="black"
                       />
                     )}
+                    {mode === 'circle' && rect && (
+                      <ellipse
+                        cx={rect.x + rect.w / 2}
+                        cy={rect.y + rect.h / 2}
+                        rx={rect.w / 2}
+                        ry={rect.h / 2}
+                        fill="black"
+                      />
+                    )}
                     {mode === 'poly' && polyClosed && poly.length >= 3 && (
                       <polygon points={polyPointsAttr} fill="black" />
                     )}
@@ -565,8 +614,8 @@ export default function ImageCropModal({ open, image, onApply, onClose }) {
                   style={{ pointerEvents: 'none' }}
                 />
 
-                {/* Modo rectangulo */}
-                {mode === 'rect' && rect && (() => {
+                {/* Modo rectangulo / circulo (mismo bbox con handles) */}
+                {(mode === 'rect' || mode === 'circle') && rect && (() => {
                   // Las barras de resize 1D cubren cada lado completo. Para
                   // que las esquinas hagan resize 2D, dejamos un gap de
                   // corner = max(handleSize, ~min(w,h)*0.06) en los extremos
@@ -577,24 +626,39 @@ export default function ImageCropModal({ open, image, onApply, onClose }) {
                   const barH = Math.max(0, rect.h - 2 * corner);
                   return (
                   <g>
-                    {/* Stroke decorativo (no captura) */}
-                    <rect
-                      x={rect.x}
-                      y={rect.y}
-                      width={rect.w}
-                      height={rect.h}
-                      fill="none"
-                      stroke="#7dd3fc"
-                      strokeWidth={strokeWidth}
-                      style={{ pointerEvents: 'none' }}
-                    />
-                    {/* Lineas guia (tercios) */}
-                    <g stroke="rgba(125,211,252,0.4)" strokeWidth={strokeWidth * 0.5} style={{ pointerEvents: 'none' }}>
-                      <line x1={rect.x + rect.w / 3} y1={rect.y} x2={rect.x + rect.w / 3} y2={rect.y + rect.h} />
-                      <line x1={rect.x + (rect.w * 2) / 3} y1={rect.y} x2={rect.x + (rect.w * 2) / 3} y2={rect.y + rect.h} />
-                      <line x1={rect.x} y1={rect.y + rect.h / 3} x2={rect.x + rect.w} y2={rect.y + rect.h / 3} />
-                      <line x1={rect.x} y1={rect.y + (rect.h * 2) / 3} x2={rect.x + rect.w} y2={rect.y + (rect.h * 2) / 3} />
-                    </g>
+                    {/* Contorno decorativo (no captura): elipse en circulo;
+                        rect + guias de tercios en rectangulo. */}
+                    {mode === 'circle' ? (
+                      <ellipse
+                        cx={rect.x + rect.w / 2}
+                        cy={rect.y + rect.h / 2}
+                        rx={rect.w / 2}
+                        ry={rect.h / 2}
+                        fill="none"
+                        stroke="#7dd3fc"
+                        strokeWidth={strokeWidth}
+                        style={{ pointerEvents: 'none' }}
+                      />
+                    ) : (
+                      <>
+                        <rect
+                          x={rect.x}
+                          y={rect.y}
+                          width={rect.w}
+                          height={rect.h}
+                          fill="none"
+                          stroke="#7dd3fc"
+                          strokeWidth={strokeWidth}
+                          style={{ pointerEvents: 'none' }}
+                        />
+                        <g stroke="rgba(125,211,252,0.4)" strokeWidth={strokeWidth * 0.5} style={{ pointerEvents: 'none' }}>
+                          <line x1={rect.x + rect.w / 3} y1={rect.y} x2={rect.x + rect.w / 3} y2={rect.y + rect.h} />
+                          <line x1={rect.x + (rect.w * 2) / 3} y1={rect.y} x2={rect.x + (rect.w * 2) / 3} y2={rect.y + rect.h} />
+                          <line x1={rect.x} y1={rect.y + rect.h / 3} x2={rect.x + rect.w} y2={rect.y + rect.h / 3} />
+                          <line x1={rect.x} y1={rect.y + (rect.h * 2) / 3} x2={rect.x + rect.w} y2={rect.y + (rect.h * 2) / 3} />
+                        </g>
+                      </>
+                    )}
                     {/* Move zone (interior, no invade los bordes) */}
                     <rect
                       x={rect.x + corner}
@@ -729,6 +793,9 @@ export default function ImageCropModal({ open, image, onApply, onClose }) {
           <div className="text-xs text-ink-400">
             {mode === 'rect' && rect && (
               <>Recorte: {Math.round(rect.w)}×{Math.round(rect.h)}px (de {W}×{H})</>
+            )}
+            {mode === 'circle' && rect && (
+              <>Círculo: {Math.round(rect.w)}×{Math.round(rect.h)}px (de {W}×{H})</>
             )}
             {mode === 'poly' && (
               <>Polígono: {poly.length} {poly.length === 1 ? 'punto' : 'puntos'}{polyClosed ? ' (cerrado)' : ' (abierto)'}</>

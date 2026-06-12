@@ -83,6 +83,26 @@ export async function cropPolygonFromDataUrl(dataUrl, pointsPx) {
   return { dataUrl: canvas.toDataURL('image/png'), width: bw, height: bh };
 }
 
+// Crop elíptico: recorta al rect y enmascara con la elipse INSCRITA en ese rect
+// (círculo si el rect es cuadrado). Devuelve PNG con alpha=0 afuera de la elipse.
+export async function cropEllipseFromDataUrl(dataUrl, rectPx) {
+  const img = await loadImage(dataUrl);
+  const { x, y, w, h } = clampRect(rectPx, img.naturalWidth, img.naturalHeight);
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.save();
+  ctx.beginPath();
+  ctx.ellipse(w / 2, h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.drawImage(img, x, y, w, h, 0, 0, w, h);
+  ctx.restore();
+  return { dataUrl: canvas.toDataURL('image/png'), width: w, height: h };
+}
+
 // Distancia "perceptual" simple entre dos RGB en [0,255]. Suficiente para
 // decidir si un pixel es "borde" o "contenido" cuando el marco es uniforme.
 function colorDist(r1, g1, b1, r2, g2, b2) {
