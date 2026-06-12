@@ -89,13 +89,24 @@ DDL sugerida en Supabase:
 create table if not exists planchas_catalogo (
   id text primary key,             -- id de catálogo/negocio (ej. "polaroid")
   label text,
-  wmm numeric,
-  hmm numeric,
+  wmm numeric,                     -- ancho de la FOTO
+  hmm numeric,                     -- alto de la FOTO
   fotos_por_plancha int,
   plantilla_printlayout text,      -- id interno de la plantilla en PrintLayout
   activo boolean default true,     -- baja lógica; la web filtra activo=true
+  marco_wmm numeric,               -- ancho del MARCO (corte exterior); null si va a sangre
+  marco_hmm numeric,               -- alto del MARCO; null si va a sangre
+  foto_left_mm numeric,            -- offset de la foto dentro del marco (izq); null si va a sangre
+  foto_top_mm numeric,             -- offset de la foto dentro del marco (arriba); null si va a sangre
   updated_at timestamptz default now()
 );
+
+-- Si la tabla ya existía, sumar las 4 columnas del marco:
+alter table planchas_catalogo
+  add column if not exists marco_wmm numeric,
+  add column if not exists marco_hmm numeric,
+  add column if not exists foto_left_mm numeric,
+  add column if not exists foto_top_mm numeric;
 
 -- Key-value de config de fotos. El criterio del "A medida" va acá:
 create table if not exists config_fotos (

@@ -108,6 +108,10 @@ async function removeObjects(cfg, paths) {
 
 // Upsert del catálogo de planchas (PrintLayout es la fuente de verdad). La tabla
 // `planchas_catalogo` tiene `id` como PK; merge-duplicates = insertar o pisar.
+// Cada row la arma `catalogRowForTemplate` (renderer) y va tal cual: además del
+// tamaño de la foto (wmm/hmm) incluye la geometría del marco —`marco_wmm`,
+// `marco_hmm`, `foto_left_mm`, `foto_top_mm` (null si la foto va a sangre)— para
+// que la web dibuje la plancha real. Esas columnas deben existir en la tabla.
 async function upsertCatalog(cfg, rows) {
   assertCfg(cfg);
   const list = Array.isArray(rows) ? rows : [];
