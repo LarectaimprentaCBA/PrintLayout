@@ -196,9 +196,17 @@ export default function LayoutCanvas({
               const imgId = assignments?.[globalIdx] ?? null;
               const img = imgId ? imageMap?.get(imgId) : null;
               const fitMode = img?.fitOverride ?? layoutFitMode;
+              // Borde blanco: la foto entra en un rect interior; el encuadre por
+              // caras se calcula con esas medidas interiores.
+              const borderMm = Math.max(0, Number(template.cellWhiteBorderMm) || 0);
+              const bMm = borderMm > 0
+                ? Math.min(borderMm, Math.max(0, Math.min(cell.w, cell.h) / 2 - 0.2))
+                : 0;
+              const innerWmm = cell.w - 2 * bMm;
+              const innerHmm = cell.h - 2 * bMm;
               const objectPosition =
                 img && fitMode === 'cover'
-                  ? coverObjectPosition(img, cell.w, cell.h)
+                  ? coverObjectPosition(img, innerWmm, innerHmm)
                   : null;
 
               return (
@@ -209,6 +217,7 @@ export default function LayoutCanvas({
                   isSelected={selectedCell === globalIdx}
                   fitMode={fitMode}
                   objectPosition={objectPosition}
+                  whiteBorderPx={bMm * pxPerMm}
                   onClick={onCellClick}
                   onContextMenu={onCellContextMenu}
                   style={{ left: x, top: y, width: w, height: h }}

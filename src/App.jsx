@@ -824,6 +824,16 @@ export default function App() {
     });
   };
 
+  // Parchea la plantilla de la tab activa SIN regenerar cortes. Para ajustes que
+  // no afectan el corte (ej. el borde blanco de las fotos). Sirve para cualquier
+  // plantilla de la tab (grilla temporal, trabajo abierto, etc.).
+  const handlePatchActiveTemplate = (updates) => {
+    if (!activeTab?.template) return;
+    updateActiveTab((tab) =>
+      tab.template ? { template: { ...tab.template, ...updates } } : {},
+    );
+  };
+
   // Renombrar el template = renombrar localmente la copia de la tab. No toca
   // la plantilla original guardada (que vive en templatesStore con su id
   // real). Para renombrar la guardada, hay que editarla desde el sidebar.
@@ -2345,6 +2355,7 @@ export default function App() {
             onSetCategoria={handleSetCategoria}
             categoriasList={categoriasList}
             onEditMargin={handleEditMargin}
+            onChangeWhiteBorder={(v) => handlePatchActiveTemplate({ cellWhiteBorderMm: v })}
             onUpdateTemporal={handleUpdateTemporalTemplate}
             onSaveTemporal={(tpl) => setSaveTemplatePrompt(tpl)}
             onAddImages={handleAddImages}

@@ -232,6 +232,11 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
       });
     }
 
+    // Borde blanco uniforme alrededor de cada foto. El corte/celda NO cambia de
+    // tamaño: la foto se dibuja dentro de un rectángulo interior y el gap queda
+    // blanco. 0 (o ausente) = comportamiento de siempre.
+    const borderMm = Math.max(0, Number(template.cellWhiteBorderMm) || 0);
+
     for (let i = 0; i < cells.length; i++) {
       const cell = cells[i];
       const imgId = assignments?.[offset + i];
@@ -241,26 +246,50 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
 
       const cellWpt = cell.w * MM_TO_PT;
       const cellHpt = cell.h * MM_TO_PT;
-      const baseX = cell.x * MM_TO_PT + offsetXpt;
-      const baseYBottom = pageH - offsetYpt - cell.y * MM_TO_PT - cellHpt;
+      // Clamp del borde para que el interior nunca quede en cero o negativo.
+      const bMm = borderMm > 0
+        ? Math.min(borderMm, Math.max(0, Math.min(cell.w, cell.h) / 2 - 0.2))
+        : 0;
+      const innerWmm = cell.w - 2 * bMm;
+      const innerHmm = cell.h - 2 * bMm;
+      const innerWpt = innerWmm * MM_TO_PT;
+      const innerHpt = innerHmm * MM_TO_PT;
+      const bPt = bMm * MM_TO_PT;
+      const cellXpt = cell.x * MM_TO_PT + offsetXpt;
+      const cellBottomYpt = pageH - offsetYpt - cell.y * MM_TO_PT - cellHpt;
+      // Esquina inferior-izquierda del rect INTERIOR (coords pdf, Y hacia arriba).
+      const baseX = cellXpt + bPt;
+      const baseYBottom = cellBottomYpt + bPt;
       const cellFitMode = image.fitOverride ?? layoutFitMode;
 
+      // Fondo blanco del marco: cubre la celda entera (incluido un eventual
+      // fondo de PDF) para que el borde quede blanco de verdad.
+      if (bMm > 0) {
+        page.drawRectangle({
+          x: cellXpt,
+          y: cellBottomYpt,
+          width: cellWpt,
+          height: cellHpt,
+          color: rgb(1, 1, 1),
+        });
+      }
+
       if (cellFitMode === 'cover') {
-        const embedded = await embedCoverCrop(image, cell.w, cell.h);
+        const embedded = await embedCoverCrop(image, innerWmm, innerHmm);
         // Al rotar 180° el ancla (x,y) de pdf-lib queda en la esquina opuesta,
         // por eso desplazamos al vertice superior-derecho del rectangulo.
         page.drawImage(embedded, {
-          x: rotate180 ? baseX + cellWpt : baseX,
-          y: rotate180 ? baseYBottom + cellHpt : baseYBottom,
-          width: cellWpt,
-          height: cellHpt,
+          x: rotate180 ? baseX + innerWpt : baseX,
+          y: rotate180 ? baseYBottom + innerHpt : baseYBottom,
+          width: innerWpt,
+          height: innerHpt,
           rotate: rotate180 ? degrees(180) : undefined,
         });
       } else {
         const embedded = await embedFull(image);
         const { drawW, drawH, dx, dy } = fitContain(
-          cellWpt,
-          cellHpt,
+          innerWpt,
+          innerHpt,
           embedded.width,
           embedded.height,
         );

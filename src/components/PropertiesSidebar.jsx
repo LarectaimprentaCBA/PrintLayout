@@ -87,6 +87,7 @@ export default function PropertiesSidebar({
   onChangeMinPages,
   onShare,
   onEditMargin,
+  onChangeWhiteBorder,
   onUpdateTemporal,
   onSaveTemporal,
   onRenameTemplate,
@@ -433,6 +434,18 @@ export default function PropertiesSidebar({
               <dt className="text-ink-400">Celdas</dt>
               <dd>{totalCells(template)}</dd>
             </div>
+            {onChangeWhiteBorder && (
+              <div className="flex items-center justify-between">
+                <dt className="text-ink-400">Borde blanco</dt>
+                <dd>
+                  <NumberMmInput
+                    value={template.cellWhiteBorderMm ?? 0}
+                    onChange={onChangeWhiteBorder}
+                    title="Marco blanco parejo alrededor de cada foto. El tamaño del corte NO cambia: la foto se achica hacia adentro. 0 = sin borde."
+                  />
+                </dd>
+              </div>
+            )}
             {showHojasControl && (
               <div className="flex items-center justify-between">
                 <dt className="text-ink-400">Hojas</dt>

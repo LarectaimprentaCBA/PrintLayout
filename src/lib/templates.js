@@ -6,6 +6,9 @@
 //   pageCount,                         // 2 o 3
 //   celdas: [{ id, x, y, w, h }],      // mm, origen top-left
 //   cortes: [[[x_mm, y_mm], ...]],     // polilineas, mm top-left (vacio si no hay pag 3)
+//   cellWhiteBorderMm,                 // borde blanco parejo de la foto dentro de
+//                                      // cada celda (mm). El corte NO cambia: la foto
+//                                      // se achica hacia adentro. 0/ausente = sin borde.
 //
 //   // Multi-page templates (auto-pack con overflow):
 //   pages: [{ celdas: [...], celdasDorso?: [...] }, ...],

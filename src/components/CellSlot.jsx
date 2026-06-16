@@ -14,6 +14,7 @@ export default function CellSlot({
   cellHmm = 0,
   cutMarginMm = 0,
   cellNumber = null,
+  whiteBorderPx = 0,
 }) {
   const draggable = useDraggable({
     id: `cell:${cellIdx}`,
@@ -50,6 +51,14 @@ export default function CellSlot({
   const imgClass = isCover
     ? 'h-full w-full object-cover'
     : 'h-full w-full object-contain';
+
+  // Borde blanco: con box-sizing border-box el padding achica el área de la
+  // imagen sin cambiar el tamaño exterior de la celda; el fondo blanco queda
+  // visible alrededor. Solo cuando hay imagen (las celdas vacías no llevan marco).
+  const borderStyle =
+    whiteBorderPx > 0 && image
+      ? { padding: whiteBorderPx, backgroundColor: '#ffffff' }
+      : null;
   const imgStyle =
     isCover && objectPosition
       ? { objectPosition: `${objectPosition.x}% ${objectPosition.y}%` }
@@ -91,7 +100,7 @@ export default function CellSlot({
       className={`absolute flex cursor-pointer items-center justify-center overflow-hidden text-accent-500/70 transition ${outline} ${
         isDragging ? 'opacity-30' : ''
       }`}
-      style={style}
+      style={borderStyle ? { ...style, ...borderStyle } : style}
       {...draggable.listeners}
       {...draggable.attributes}
     >
