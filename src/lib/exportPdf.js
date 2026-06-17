@@ -26,6 +26,15 @@ function detectMime(dataUrl, fallback = 'image/jpeg') {
   return m ? m[1].toLowerCase() : fallback;
 }
 
+// '#rrggbb' (el formato del <input type="color">) → rgb() de pdf-lib. Negro si
+// no parsea.
+function hexToRgb(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim());
+  if (!m) return rgb(0, 0, 0);
+  const n = parseInt(m[1], 16);
+  return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
+}
+
 function fitContain(cellW, cellH, imgW, imgH) {
   const cellAr = cellW / cellH;
   const imgAr = imgW / imgH;
@@ -236,6 +245,10 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
     // tamaño: la foto se dibuja dentro de un rectángulo interior y el gap queda
     // blanco. 0 (o ausente) = comportamiento de siempre.
     const borderMm = Math.max(0, Number(template.cellWhiteBorderMm) || 0);
+    // Línea de marco: filete de color dibujado sobre el borde EXTERIOR de la
+    // celda (el borde de la tarjeta). 0 = sin línea.
+    const lineMm = Math.max(0, Number(template.cellBorderLineMm) || 0);
+    const lineRgb = hexToRgb(template.cellBorderColor);
 
     for (let i = 0; i < cells.length; i++) {
       const cell = cells[i];
@@ -301,6 +314,23 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
           width: drawW,
           height: drawH,
           rotate: rotate180 ? degrees(180) : undefined,
+        });
+      }
+
+      // Línea de marco sobre el borde exterior de la celda. Se dibuja DESPUÉS de
+      // la foto (queda encima) y se mete media línea hacia adentro para que el
+      // trazo entre completo dentro de la tarjeta. Es simétrica, no necesita
+      // rotación para el dorso.
+      if (lineMm > 0) {
+        const lwPt = lineMm * MM_TO_PT;
+        const half = lwPt / 2;
+        page.drawRectangle({
+          x: cellXpt + half,
+          y: cellBottomYpt + half,
+          width: cellWpt - lwPt,
+          height: cellHpt - lwPt,
+          borderColor: lineRgb,
+          borderWidth: lwPt,
         });
       }
     }

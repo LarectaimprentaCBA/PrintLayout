@@ -88,6 +88,8 @@ export default function PropertiesSidebar({
   onShare,
   onEditMargin,
   onChangeWhiteBorder,
+  onChangeBorderLine,
+  onChangeBorderColor,
   onUpdateTemporal,
   onSaveTemporal,
   onRenameTemplate,
@@ -442,6 +444,25 @@ export default function PropertiesSidebar({
                     value={template.cellWhiteBorderMm ?? 0}
                     onChange={onChangeWhiteBorder}
                     title="Marco blanco parejo alrededor de cada foto. El tamaño del corte NO cambia: la foto se achica hacia adentro. 0 = sin borde."
+                  />
+                </dd>
+              </div>
+            )}
+            {onChangeBorderLine && (
+              <div className="flex items-center justify-between">
+                <dt className="text-ink-400">Línea de marco</dt>
+                <dd className="flex items-center gap-1.5">
+                  <input
+                    type="color"
+                    value={template.cellBorderColor || '#000000'}
+                    onChange={(e) => onChangeBorderColor?.(e.target.value)}
+                    title="Color de la línea del marco"
+                    className="h-5 w-6 cursor-pointer rounded border border-ink-700 bg-ink-800 p-0"
+                  />
+                  <NumberMmInput
+                    value={template.cellBorderLineMm ?? 0}
+                    onChange={onChangeBorderLine}
+                    title="Grosor de la línea dibujada en el borde de cada foto/tarjeta (mm). 0 = sin línea."
                   />
                 </dd>
               </div>

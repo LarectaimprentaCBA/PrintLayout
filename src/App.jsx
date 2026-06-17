@@ -2356,6 +2356,8 @@ export default function App() {
             categoriasList={categoriasList}
             onEditMargin={handleEditMargin}
             onChangeWhiteBorder={(v) => handlePatchActiveTemplate({ cellWhiteBorderMm: v })}
+            onChangeBorderLine={(v) => handlePatchActiveTemplate({ cellBorderLineMm: v })}
+            onChangeBorderColor={(v) => handlePatchActiveTemplate({ cellBorderColor: v })}
             onUpdateTemporal={handleUpdateTemporalTemplate}
             onSaveTemporal={(tpl) => setSaveTemplatePrompt(tpl)}
             onAddImages={handleAddImages}

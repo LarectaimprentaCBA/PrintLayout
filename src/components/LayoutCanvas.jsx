@@ -218,6 +218,8 @@ export default function LayoutCanvas({
                   fitMode={fitMode}
                   objectPosition={objectPosition}
                   whiteBorderPx={bMm * pxPerMm}
+                  borderLinePx={Math.max(0, Number(template.cellBorderLineMm) || 0) * pxPerMm}
+                  borderLineColor={template.cellBorderColor || '#000000'}
                   onClick={onCellClick}
                   onContextMenu={onCellContextMenu}
                   style={{ left: x, top: y, width: w, height: h }}

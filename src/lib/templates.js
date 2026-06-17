@@ -9,6 +9,9 @@
 //   cellWhiteBorderMm,                 // borde blanco parejo de la foto dentro de
 //                                      // cada celda (mm). El corte NO cambia: la foto
 //                                      // se achica hacia adentro. 0/ausente = sin borde.
+//   cellBorderLineMm,                  // grosor (mm) de la línea de marco dibujada
+//                                      // sobre el borde exterior de la celda. 0 = sin línea.
+//   cellBorderColor,                   // color de esa línea, '#rrggbb' (def negro).
 //
 //   // Multi-page templates (auto-pack con overflow):
 //   pages: [{ celdas: [...], celdasDorso?: [...] }, ...],

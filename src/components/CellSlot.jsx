@@ -15,6 +15,8 @@ export default function CellSlot({
   cutMarginMm = 0,
   cellNumber = null,
   whiteBorderPx = 0,
+  borderLinePx = 0,
+  borderLineColor = '#000000',
 }) {
   const draggable = useDraggable({
     id: `cell:${cellIdx}`,
@@ -116,6 +118,13 @@ export default function CellSlot({
         <span className="pointer-events-none text-2xl font-light">+</span>
       )}
       {circleOverlay}
+      {borderLinePx > 0 && image && (
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{ border: `${Math.max(borderLinePx, 1)}px solid ${borderLineColor}` }}
+          aria-hidden
+        />
+      )}
       {cellNumber != null && (
         <span
           className="pointer-events-none absolute left-0 top-0 rounded-br bg-accent-600/85 px-1 text-[10px] font-semibold leading-tight text-white"
