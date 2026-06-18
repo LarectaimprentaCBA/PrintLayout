@@ -8,7 +8,7 @@
 // Devuelve specs listos para guardar (jobs.save) y abrir (openInTab). NO toca
 // red ni estado de React: es una función pura de orquestación.
 
-import { computeGrid, generateCuts } from '../lib/grid.js';
+import { computeGrid, generateCuts, centerCellsInSheet } from '../lib/grid.js';
 import { readAnyFileToImage } from '../lib/images.js';
 import { resolvePresetTemplate } from './presets.js';
 import { CUSTOM_SHEET } from './sheetCriteria.js';
@@ -79,6 +79,7 @@ export async function buildOrderJobs(order, { templates, readFileBytes }) {
 
     // 1) Plantilla: preset guardado o grilla custom.
     let template;
+    let isCustomGrid = false;
     if (tamano.tipo === 'preset') {
       const found = resolvePresetTemplate(templates, tamano.id);
       if (!found) {
@@ -87,6 +88,7 @@ export async function buildOrderJobs(order, { templates, readFileBytes }) {
       }
       template = cloneTemplate(found);
     } else if (tamano.tipo === 'custom') {
+      isCustomGrid = true;
       const wmm = Number(tamano.wmm);
       const hmm = Number(tamano.hmm);
       if (!(wmm > 0 && hmm > 0)) {
@@ -139,12 +141,37 @@ export async function buildOrderJobs(order, { templates, readFileBytes }) {
 
     // 3) Asignación: cada foto repetida por sus copias, paginando por celdas.
     const images = loaded.map((l) => l.image);
-    const assignmentsFront = [];
+    const realAssignments = [];
     for (const { image, copias } of loaded) {
-      for (let c = 0; c < copias; c++) assignmentsFront.push(image.id);
+      for (let c = 0; c < copias; c++) realAssignments.push(image.id);
     }
-    while (assignmentsFront.length % cellsPerPage !== 0) assignmentsFront.push(null);
-    const minPages = Math.max(1, Math.ceil(assignmentsFront.length / cellsPerPage));
+    const totalDesigns = realAssignments.length;
+
+    // Si los diseños entran en UNA sola hoja, los centramos: recortamos la grilla
+    // a exactamente esa cantidad y la centramos (la fila final incompleta queda
+    // centrada, no pegada arriba-izquierda). Solo para grilla custom — los
+    // presets son layouts fijos de Mariano. Regeneramos los cortes para que el
+    // plotter corte donde realmente quedaron las celdas.
+    if (isCustomGrid && totalDesigns > 0 && totalDesigns <= cellsPerPage) {
+      const s = CUSTOM_SHEET;
+      const used = template.celdas.slice(0, totalDesigns).map((c) => ({ ...c }));
+      centerCellsInSheet(used, {
+        direction: 'rows',
+        innerW: s.paperWidthMm - 2 * s.marginXMm,
+        innerH: s.paperHeightMm - 2 * s.marginYMm,
+        marginX: s.marginXMm,
+        marginY: s.marginYMm,
+      });
+      template.celdas = used;
+      template.cortes = s.markMarginMm > 0
+        ? generateCuts(used, { cutShape: s.cutShape, cutMarginMm: s.cutMarginMm })
+        : [];
+    }
+
+    const cpp = Array.isArray(template.celdas) ? template.celdas.length : cellsPerPage;
+    const assignmentsFront = realAssignments.slice();
+    while (assignmentsFront.length % cpp !== 0) assignmentsFront.push(null);
+    const minPages = Math.max(1, Math.ceil(assignmentsFront.length / cpp));
 
     const name = multi ? `P-${num}-fotos ${sizeLabel}` : `P-${num}-fotos`;
     specs.push({

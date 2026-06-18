@@ -167,6 +167,61 @@ export function generateCuts(cells, { cutShape = 'rect', cutMarginMm = 0 } = {})
   return cellsToCuts(cells, { cutMarginMm });
 }
 
+// Centra un conjunto de celdas dentro del area util de la hoja. Pensado para los
+// "acomodar": cuando la ultima fila/columna queda incompleta, los disenos no
+// quedan pegados arriba-izquierda sino centrados.
+// - direction 'rows' (default): centra cada FILA (misma y) en horizontal y el
+//   bloque entero en vertical. Asi una fila final con menos items queda centrada.
+// - direction 'cols': centra cada COLUMNA (misma x) en vertical y el bloque en
+//   horizontal.
+// Muta las celdas (x/y) in place y las devuelve.
+export function centerCellsInSheet(cells, {
+  direction = 'rows',
+  innerW,
+  innerH,
+  marginX = 0,
+  marginY = 0,
+  tol = 0.01,
+} = {}) {
+  if (!Array.isArray(cells) || cells.length === 0) return cells;
+
+  const groupBy = (getKey) => {
+    const groups = [];
+    for (const c of cells) {
+      const k = getKey(c);
+      let g = groups.find((gr) => Math.abs(gr.key - k) < tol);
+      if (!g) { g = { key: k, items: [] }; groups.push(g); }
+      g.items.push(c);
+    }
+    return groups;
+  };
+
+  if (direction === 'cols') {
+    for (const g of groupBy((c) => c.x)) {
+      const minY = Math.min(...g.items.map((c) => c.y));
+      const maxY = Math.max(...g.items.map((c) => c.y + c.h));
+      const dy = marginY + (innerH - (maxY - minY)) / 2 - minY;
+      for (const c of g.items) c.y += dy;
+    }
+    const minX = Math.min(...cells.map((c) => c.x));
+    const maxX = Math.max(...cells.map((c) => c.x + c.w));
+    const dx = marginX + (innerW - (maxX - minX)) / 2 - minX;
+    for (const c of cells) c.x += dx;
+  } else {
+    for (const g of groupBy((c) => c.y)) {
+      const minX = Math.min(...g.items.map((c) => c.x));
+      const maxX = Math.max(...g.items.map((c) => c.x + c.w));
+      const dx = marginX + (innerW - (maxX - minX)) / 2 - minX;
+      for (const c of g.items) c.x += dx;
+    }
+    const minY = Math.min(...cells.map((c) => c.y));
+    const maxY = Math.max(...cells.map((c) => c.y + c.h));
+    const dy = marginY + (innerH - (maxY - minY)) / 2 - minY;
+    for (const c of cells) c.y += dy;
+  }
+  return cells;
+}
+
 // Presets de hoja built-in (vienen con la app, no se pueden borrar ni editar).
 // Los presets custom del usuario se cargan desde el store y se mergean en la UI.
 export const BUILTIN_PAPER_PRESETS = [

@@ -1,3 +1,5 @@
+import { centerCellsInSheet } from './grid.js';
+
 // Packing por filas/columnas para "auto-acomodar imagenes".
 // Se fija una dimension (alto o ancho) en mm y la otra se calcula proporcional
 // al aspect ratio de cada imagen.
@@ -188,6 +190,16 @@ export function packImagesByFixedDimension({
     }
   }
 
+  // Centrar los disenos en cada hoja (la ultima fila/columna incompleta queda
+  // centrada en vez de pegada al margen arriba-izquierda).
+  {
+    const pageIdxs = new Set(cells.map((c) => c.page));
+    for (const p of pageIdxs) {
+      const pageCells = cells.filter((c) => c.page === p);
+      centerCellsInSheet(pageCells, { direction, innerW, innerH, marginX, marginY });
+    }
+  }
+
   // Agrupar celdas por hoja preservando orden de placement.
   const numPages = cells.length > 0
     ? Math.max(...cells.map((c) => c.page)) + 1
@@ -330,6 +342,10 @@ export function packImagesByCount({
 
   // Solo usamos las primeras N celdas (orden left-to-right, top-to-bottom).
   const usableCells = allGridCells.slice(0, N);
+
+  // Centrar las N celdas usadas: si N no llena la grilla, la fila final queda
+  // centrada y el bloque usado se centra vertical (en vez de quedar arriba).
+  centerCellsInSheet(usableCells, { direction: 'rows', innerW, innerH, marginX, marginY });
 
   const M = (images || []).filter(
     (img) => img?.naturalWidth > 0 && img?.naturalHeight > 0,
