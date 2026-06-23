@@ -2680,7 +2680,7 @@ export default function App() {
           onToggleOficial={handleToggleOficial}
           onClose={() => setNewTabModalOpen(false)}
           onPickTemplate={(id) => handleSelectTemplate(id)}
-          onCreateGrid={() => setGridModalOpen(true)}
+          onCreateGrid={() => { setNewTabModalOpen(false); setGridModalOpen(true); }}
           onAutoPack={() => newTabAutoPickerRef.current?.click()}
           onCountPack={() => newTabCountPickerRef.current?.click()}
           onUploadPdf={() => blankPdfInputRef.current?.click()}

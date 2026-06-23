@@ -51,18 +51,35 @@ export default function GridUploadModal({
   const cellWRef = useRef(null);
 
   useEffect(() => {
-    if (open) {
-      // window.focus() recupera foco del SO si la ventana lo perdio
-      // (caso reportado: modal abria con seleccion gris y campos no
-      // tomaban teclado hasta clickear afuera). focus() antes de select()
-      // garantiza que el input quede activo aunque .select() falle silente.
-      setTimeout(() => {
-        if (typeof window !== 'undefined') window.focus();
-        cellWRef.current?.focus();
-        cellWRef.current?.select();
-      }, 0);
-    }
-  }, [open]);
+    if (!open) return undefined;
+    // window.focus() recupera foco del SO si la ventana lo perdio (caso
+    // reportado: modal abria con seleccion gris y campos no tomaban teclado
+    // hasta clickear afuera). focus() antes de select() garantiza que el input
+    // quede activo aunque .select() falle silente.
+    const focusField = () => {
+      cellWRef.current?.focus();
+      cellWRef.current?.select();
+    };
+    const t = setTimeout(() => {
+      if (typeof window !== 'undefined') window.focus();
+      focusField();
+    }, 0);
+    // Si la ventana recupera el foco del SO y ningun campo del modal habia
+    // quedado activo (seleccion gris), reenfocamos el campo asi se puede
+    // escribir sin tener que clickear de nuevo. Solo si el foco estaba perdido,
+    // para no robarle el foco a otro campo que el usuario este editando.
+    const onWinFocus = () => {
+      const ae = document.activeElement;
+      if (!ae || ae === document.body) focusField();
+    };
+    window.addEventListener('focus', onWinFocus);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener('focus', onWinFocus);
+    };
+    // cutShape en deps: al cambiar Rectangular<->Circulo se re-enfoca el campo
+    // visible (cellWRef apunta al input que esta montado en cada modo).
+  }, [open, cutShape]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -172,9 +189,6 @@ export default function GridUploadModal({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onCancel?.();
-      }}
     >
       <form
         onSubmit={submit}
@@ -308,6 +322,7 @@ export default function GridUploadModal({
                 <span className="block mb-1">Ancho celda (mm)</span>
                 <input
                   ref={cellWRef}
+                  autoFocus
                   value={cellW}
                   onChange={(e) => setCellW(e.target.value)}
                   className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
@@ -327,6 +342,7 @@ export default function GridUploadModal({
               <span className="block mb-1">Di&aacute;metro (mm)</span>
               <input
                 ref={cellWRef}
+                autoFocus
                 value={diameter}
                 onChange={(e) => setDiameter(e.target.value)}
                 className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
