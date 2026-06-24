@@ -55,8 +55,10 @@ import {
   backMirrorAxis,
   backRotate180,
 } from './lib/templates.js';
-import { generateCuts } from './lib/grid.js';
+import { generateCuts, computeGrid } from './lib/grid.js';
 import { buildOrderJobs } from './intake/buildOrderJob.js';
+import StickerSizeModal from './components/StickerSizeModal.jsx';
+import { computeStickerContour, contoursToCellCortes } from './lib/stickerContour.js';
 import {
   buildCatalogRows,
   catalogRowForTemplate,
@@ -222,6 +224,7 @@ export default function App() {
   // que ya usa la sidebar, pero con inputs al margen del DOM de la sidebar
   // — asi el modal funciona aunque la sidebar deje de estar en Fase D).
   const newTabAutoPickerRef = useRef(null);
+  const newTabStickerPickerRef = useRef(null);
   const newTabCountPickerRef = useRef(null);
 
   const [activeDrag, setActiveDrag] = useState(null);
@@ -355,6 +358,8 @@ export default function App() {
   const [pdfExtract, setPdfExtract] = useState(null); // { fileName, tmpDir, images }
   // Auto-acomodar imagenes.
   const [autoPackFiles, setAutoPackFiles] = useState(null);
+  const [stickerFiles, setStickerFiles] = useState(null);
+  const [stickerBusy, setStickerBusy] = useState(false);
   // Acomodar por cantidad (N por hoja, maximo tamano).
   const [countPackFiles, setCountPackFiles] = useState(null);
   // Imagenes precargadas que se asignan a una plantilla recien creada.
@@ -814,6 +819,9 @@ export default function App() {
     if (!activeTab?.template) return;
     updateActiveTab((tab) => {
       const next = { ...tab.template, ...updates };
+      // Modo Stickers: los cortes son los contornos por imagen (ya calculados),
+      // NO rectángulos de celda. No los regeneramos acá para no pisarlos.
+      if (next.stickerMode) return { template: next };
       const cutM = next.cutMarginMm ?? 0;
       const markM = next.markMarginMm ?? 0;
       const shape = next.cutShape ?? 'rect';
@@ -1309,6 +1317,107 @@ export default function App() {
     } catch (err) {
       console.error(err);
       setToast({ kind: 'error', text: `Error en auto-acomodar: ${err.message}` });
+    }
+  };
+
+  const handleStartStickers = async (files) => {
+    if (!files?.length) return;
+    const prepared = await convertHeicWithToast(files);
+    if (prepared.length) setStickerFiles(prepared);
+  };
+
+  // Arma una hoja de stickers: por cada imagen saca el fondo + traza su contorno
+  // y lo ubica en su celda como corte irregular (template.cortes). Reusa la misma
+  // tubería de PDF/plotter que las fotos. v1 = una sola hoja (los que entren).
+  const submitStickers = async ({
+    paperWidthMm, paperHeightMm, cellW, cellH, spacingMm, marginMm, tolerance, bleedMm,
+  }) => {
+    const files = stickerFiles;
+    setStickerFiles(null);
+    if (!files?.length) return;
+    setStickerBusy(true);
+    setToast({ kind: 'info', text: `Sacando contornos de ${files.length} imagen${files.length === 1 ? '' : 'es'}…` });
+    try {
+      const grid = computeGrid({
+        paperW: paperWidthMm, paperH: paperHeightMm,
+        cellW, cellH,
+        marginX: marginMm, marginY: marginMm,
+        spacingX: spacingMm, spacingY: spacingMm,
+      });
+      const cells = grid.cells;
+      if (cells.length === 0) {
+        setToast({ kind: 'error', text: 'No entra ningún sticker en la hoja con ese tamaño.' });
+        return;
+      }
+
+      const use = files.slice(0, cells.length);
+      const images = [];
+      const cortes = [];
+      const usedCells = [];
+      for (const file of use) {
+        let sc;
+        try {
+          sc = await computeStickerContour(file, { tolerance });
+        } catch (e) {
+          console.error('Contorno falló para', file?.name, e);
+          continue;
+        }
+        if (!sc.contours.length) continue;
+        const cell = cells[images.length];
+        const id = `img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+        images.push({
+          id,
+          name: file.name,
+          dataUrl: sc.maskedDataUrl,
+          width: sc.maskedW,
+          height: sc.maskedH,
+          mime: 'image/png',
+          // El corte se calculó con encuadre 'contain'; forzamos ese encuadre
+          // (aunque el modo global sea 'cover') para que la imagen impresa calce
+          // con el contorno.
+          fitOverride: 'contain',
+        });
+        usedCells.push(cell);
+        const polys = contoursToCellCortes(sc.contours, cell, sc.maskedW, sc.maskedH, { bleedMm });
+        for (const p of polys) cortes.push(p);
+      }
+
+      if (images.length === 0) {
+        setToast({ kind: 'error', text: 'No se pudo sacar el contorno de ninguna imagen.' });
+        return;
+      }
+
+      const assignmentsFront = images.map((im) => im.id);
+      const tpl = {
+        name: `Stickers (${images.length})`,
+        stickerMode: true,
+        pdfBase64: null,
+        pageWidthMm: paperWidthMm,
+        pageHeightMm: paperHeightMm,
+        pageCount: 1,
+        celdas: usedCells,
+        celdasDorso: [],
+        cortes,
+        cutMarginMm: 0,
+        markMarginMm: marginMm, // marcas L para que el plotter alinee
+        doubleSided: false,
+        singlePage: true,
+      };
+      openInTab(tpl, {
+        name: tpl.name,
+        forceNew: true,
+        initialLayout: { images, assignmentsFront, assignmentsBack: [], minPages: 1 },
+      });
+      const left = files.length - images.length;
+      setToast({
+        kind: 'success',
+        text: `Hoja de stickers: ${images.length} contorno${images.length === 1 ? '' : 's'} listo${images.length === 1 ? '' : 's'}.${left > 0 ? ` (${left} no entraron en una hoja)` : ''}`,
+      });
+    } catch (err) {
+      console.error(err);
+      setToast({ kind: 'error', text: `Error armando stickers: ${err.message}` });
+    } finally {
+      setStickerBusy(false);
     }
   };
 
@@ -2682,6 +2791,7 @@ export default function App() {
           onPickTemplate={(id) => handleSelectTemplate(id)}
           onCreateGrid={() => { setNewTabModalOpen(false); setGridModalOpen(true); }}
           onAutoPack={() => newTabAutoPickerRef.current?.click()}
+          onStickers={() => newTabStickerPickerRef.current?.click()}
           onCountPack={() => newTabCountPickerRef.current?.click()}
           onUploadPdf={() => blankPdfInputRef.current?.click()}
           onOpenJobsList={() => setJobsListOpen(true)}
@@ -2698,6 +2808,24 @@ export default function App() {
             e.target.value = '';
             if (files.length > 0) handleStartAutoPack(files);
           }}
+        />
+        <input
+          ref={newTabStickerPickerRef}
+          type="file"
+          accept="image/jpeg,image/png,image/jpg,image/heic,image/heif,.heic,.heif"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            const files = Array.from(e.target.files || []);
+            e.target.value = '';
+            if (files.length > 0) handleStartStickers(files);
+          }}
+        />
+        <StickerSizeModal
+          open={!!stickerFiles}
+          fileCount={stickerFiles?.length ?? 0}
+          onConfirm={submitStickers}
+          onCancel={() => setStickerFiles(null)}
         />
         <input
           ref={newTabCountPickerRef}
