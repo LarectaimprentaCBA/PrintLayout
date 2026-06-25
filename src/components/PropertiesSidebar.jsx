@@ -806,9 +806,16 @@ function CCheck({ label, checked, onChange }) {
 // cuando la forma de corte es Contorno). Default = el de la hoja; tildando
 // "ajuste propio" se guarda en template.contourByImage[imgId].
 function ContourImageOverride({ template, imgId, onUpdate }) {
+  const [adv, setAdv] = useState(false);
+
+  const dEngine = template.contourEngine ?? 'potrace';
   const dTol = template.contourTolerance ?? 32;
   const dBleed = template.contourBleedMm ?? 0;
   const dHoles = template.contourIncludeHoles !== false;
+  const dThr = template.contourThreshold ?? 128;
+  const dTurd = template.contourTurdsize ?? 2;
+  const dAlpha = template.contourAlphamax ?? 1.0;
+  const dOpt = template.contourOpttolerance ?? 0.2;
 
   const byImg = template.contourByImage || {};
   const ov = byImg[imgId] || null;
@@ -822,9 +829,15 @@ function ContourImageOverride({ template, imgId, onUpdate }) {
     onUpdate({ contourByImage: n });
   };
 
+  // Efectivos: lo del override si está seteado, sino el default de la hoja.
+  const eng = hasOv && ov.engine !== undefined ? ov.engine : dEngine;
   const tol = hasOv && ov.tolerance !== undefined ? ov.tolerance : dTol;
   const bleed = hasOv && ov.bleedMm !== undefined ? ov.bleedMm : dBleed;
   const holes = hasOv && ov.includeHoles !== undefined ? ov.includeHoles : dHoles;
+  const thr = hasOv && ov.threshold !== undefined ? ov.threshold : dThr;
+  const turd = hasOv && ov.turdsize !== undefined ? ov.turdsize : dTurd;
+  const alpha = hasOv && ov.alphamax !== undefined ? ov.alphamax : dAlpha;
+  const opt = hasOv && ov.opttolerance !== undefined ? ov.opttolerance : dOpt;
 
   return (
     <div className="mt-2 space-y-2 rounded border border-accent-500/30 bg-accent-500/5 p-2">
@@ -839,9 +852,41 @@ function ContourImageOverride({ template, imgId, onUpdate }) {
       </label>
       {hasOv ? (
         <>
+          <CRow label="Motor">
+            <div className="flex gap-0.5 rounded border border-ink-700 bg-ink-800 p-0.5">
+              {['potrace', 'imagetracer'].map((e) => (
+                <button
+                  key={e}
+                  type="button"
+                  onClick={() => setOv({ engine: e })}
+                  className={`rounded px-1.5 py-0.5 text-[10px] ${eng === e ? 'bg-accent-600 text-white' : 'text-ink-300 hover:bg-ink-700'}`}
+                >
+                  {e === 'potrace' ? 'Potrace' : 'ImageTracer'}
+                </button>
+              ))}
+            </div>
+          </CRow>
           <CRange label="Tolerancia" value={tol} min={0} max={128} step={1} onChange={(v) => setOv({ tolerance: v })} />
           <CNum label="Sangrado" value={bleed} step={0.1} min={-10} max={10} onChange={(v) => setOv({ bleedMm: v })} />
           <CCheck label="Incluir huecos" checked={holes} onChange={(v) => setOv({ includeHoles: v })} />
+
+          <button
+            type="button"
+            onClick={() => setAdv((a) => !a)}
+            className="flex w-full items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-ink-400 hover:text-ink-200"
+          >
+            <span className="text-ink-500">{adv ? '▾' : '▸'}</span> Avanzado
+          </button>
+          {adv && (
+            <div className="space-y-2 border-l border-ink-700 pl-2">
+              <CRange label="Umbral" value={thr} min={1} max={254} step={1} onChange={(v) => setOv({ threshold: v })} />
+              <CRange label="Tamaño mínimo" value={turd} min={0} max={50} step={1} onChange={(v) => setOv({ turdsize: v })} />
+              {eng === 'potrace' && (
+                <CRange label="Suavizado" value={alpha} min={0} max={1.3334} step={0.05} onChange={(v) => setOv({ alphamax: v })} />
+              )}
+              <CRange label="Simplificación" value={opt} min={0} max={1} step={0.05} onChange={(v) => setOv({ opttolerance: v })} />
+            </div>
+          )}
         </>
       ) : (
         <p className="text-[10px] leading-snug text-ink-500">Usa el ajuste general de la hoja. Tildá para darle uno propio.</p>

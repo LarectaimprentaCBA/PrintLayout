@@ -164,7 +164,10 @@ export default function LayoutCanvas({
     <main className="relative flex flex-1 flex-col overflow-hidden bg-ink-950">
       <div
         ref={scrollRef}
-        className="flex-1 overflow-auto"
+        // scrollbar-gutter: stable reserva siempre el lugar de la barra de scroll.
+        // Sin esto, al hacer zoom la barra aparece/desaparece, cambia el clientWidth,
+        // el ResizeObserver recalcula el "fit" y el zoom "tiembla" (loop).
+        className="flex-1 overflow-auto [scrollbar-gutter:stable]"
         onClick={(e) => {
           if (e.target === e.currentTarget) onCellClick?.(null);
         }}
