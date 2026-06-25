@@ -91,6 +91,9 @@ export default function PropertiesSidebar({
   onChangeBorderLine,
   onChangeBorderColor,
   onUpdateTemporal,
+  onApplyContour,
+  contourDirty = false,
+  contourComputing = false,
   onSaveTemporal,
   onRenameTemplate,
   onSetCategoria,
@@ -362,6 +365,9 @@ export default function PropertiesSidebar({
                     template={template}
                     imgId={selectedImg.id}
                     onUpdate={onUpdateTemporal}
+                    onApply={onApplyContour}
+                    dirty={contourDirty}
+                    computing={contourComputing}
                   />
                 )}
               </>
@@ -596,10 +602,10 @@ export default function PropertiesSidebar({
                 {template.cutShape === 'contour' && (
                   <ContourControls
                     template={template}
-                    selImgId={selectedCell != null ? (assignments?.[selectedCell] ?? null) : null}
-                    selImgName={selectedCell != null && assignments?.[selectedCell]
-                      ? (imageMap.get(assignments[selectedCell])?.name || 'imagen') : null}
                     onUpdate={onUpdateTemporal}
+                    onApply={onApplyContour}
+                    dirty={contourDirty}
+                    computing={contourComputing}
                   />
                 )}
               </>
@@ -696,7 +702,7 @@ export default function PropertiesSidebar({
 
 // Controles de la forma de corte "Contorno": motor + ajustes de hoja + avanzado,
 // y override por imagen (default de hoja + ajuste propio de la imagen seleccionada).
-function ContourControls({ template, selImgId, selImgName, onUpdate }) {
+function ContourControls({ template, onUpdate, onApply, dirty, computing }) {
   const [adv, setAdv] = useState(false);
 
   const dEngine = template.contourEngine ?? 'potrace';
@@ -748,10 +754,32 @@ function ContourControls({ template, selImgId, selImgName, onUpdate }) {
         </div>
       )}
 
+      <ApplyContourButton onApply={onApply} dirty={dirty} computing={computing} />
+
       <p className="text-[10px] leading-snug text-ink-500">
-        Para ajustar UNA imagen aparte, hacé click en su celda: los controles propios aparecen en "Celda seleccionada".
+        Movés los ajustes mirando el preview rojo y tocás "Aplicar contorno" para calcular el corte. Para ajustar UNA imagen aparte, click en su celda.
       </p>
     </div>
+  );
+}
+
+// Botón para calcular el corte (trazar). Resaltado cuando hay cambios sin aplicar.
+function ApplyContourButton({ onApply, dirty, computing }) {
+  return (
+    <button
+      type="button"
+      onClick={onApply}
+      disabled={computing || !onApply}
+      className={`mt-1 w-full rounded px-2 py-1.5 text-[11px] font-medium disabled:opacity-60 ${
+        computing
+          ? 'bg-ink-700 text-ink-300'
+          : dirty
+            ? 'bg-accent-600 text-white hover:bg-accent-500'
+            : 'border border-ink-700 text-ink-300 hover:bg-ink-800'
+      }`}
+    >
+      {computing ? 'Calculando…' : dirty ? '✓ Aplicar contorno (hay cambios)' : '↻ Recalcular contorno'}
+    </button>
   );
 }
 
@@ -805,7 +833,7 @@ function CCheck({ label, checked, onChange }) {
 // Ajuste de contorno PROPIO de una imagen (se muestra en "Celda seleccionada"
 // cuando la forma de corte es Contorno). Default = el de la hoja; tildando
 // "ajuste propio" se guarda en template.contourByImage[imgId].
-function ContourImageOverride({ template, imgId, onUpdate }) {
+function ContourImageOverride({ template, imgId, onUpdate, onApply, dirty, computing }) {
   const [adv, setAdv] = useState(false);
 
   const dEngine = template.contourEngine ?? 'potrace';
@@ -891,6 +919,7 @@ function ContourImageOverride({ template, imgId, onUpdate }) {
       ) : (
         <p className="text-[10px] leading-snug text-ink-500">Usa el ajuste general de la hoja. Tildá para darle uno propio.</p>
       )}
+      <ApplyContourButton onApply={onApply} dirty={dirty} computing={computing} />
     </div>
   );
 }
