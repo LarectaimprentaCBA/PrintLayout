@@ -25,7 +25,6 @@ export default function NewTabModal({
   onToggleOficial,
   onCreateGrid,
   onAutoPack,
-  onStickers,
   onCountPack,
   onUploadPdf,
   onOpenJobsList,
@@ -185,17 +184,6 @@ export default function NewTabModal({
                 </svg>
               )}
               onClick={handleOption(onAutoPack)}
-            />
-            <OptionCard
-              title="Stickers (contorno)"
-              subtitle="Recorta el fondo y corta por el contorno de cada diseno"
-              icon={(
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
-                  <path d="M7 4 C3 8 3 16 7 20 C11 21 15 21 18 18 C21 14 20 7 16 4 C13 2 10 2 7 4 Z" strokeLinejoin="round" />
-                  <circle cx="9" cy="9" r="1.2" fill="currentColor" stroke="none" />
-                </svg>
-              )}
-              onClick={handleOption(onStickers)}
             />
             <OptionCard
               title="Acomodar por cantidad"

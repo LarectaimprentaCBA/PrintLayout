@@ -100,3 +100,59 @@ function closePoly(poly) {
   if (a[0] !== b[0] || a[1] !== b[1]) return [...poly, [a[0], a[1]]]
   return poly
 }
+
+async function dataUrlToBlob(dataUrl) {
+  const res = await fetch(dataUrl)
+  return res.blob()
+}
+
+/**
+ * Genera template.cortes a partir de las imágenes asignadas a las celdas: por
+ * cada celda con imagen, detecta su contorno (quita-fondo + trazado) y lo ubica
+ * en la celda como polilíneas en mm. Celda sin imagen → sin corte. Si una imagen
+ * falla, se saltea sin romper la hoja.
+ *
+ * @param {Array<string|null>} assignments - imageId por índice de celda
+ * @param {Array<{x,y,w,h}>} cells - celdas en mm (mismo orden que assignments)
+ * @param {Map<string, {dataUrl,width,height}>} imageMap
+ * @param {object} opts
+ * @param {number} opts.tolerance - tolerancia del quita-fondo (0..128)
+ * @param {number} opts.bleedMm - sangrado del corte (mm); >0 afuera, <0 adentro
+ * @param {boolean} opts.includeHoles - incluir huecos internos (orificio, etc.)
+ * @param {Map} [opts.cache] - cache opcional por `${imageId}:${tolerance}` para
+ *        que ajustar sangrado/huecos no re-trace (solo re-mapea, es instantáneo)
+ * @returns {Promise<Array<Array<[number,number]>>>} polilíneas mm para template.cortes
+ */
+export async function contourCutsByAssignments(assignments, cells, imageMap, {
+  tolerance = 32, bleedMm = 0, includeHoles = true, cache = null,
+} = {}) {
+  const cortes = []
+  if (!Array.isArray(cells) || !imageMap) return cortes
+  for (let i = 0; i < cells.length; i++) {
+    const imgId = assignments?.[i]
+    if (!imgId) continue
+    const image = imageMap.get(imgId)
+    if (!image?.dataUrl) continue
+    const cell = cells[i]
+
+    let sc
+    const key = `${imgId}:${tolerance}`
+    if (cache && cache.has(key)) {
+      sc = cache.get(key)
+    } else {
+      try {
+        const blob = await dataUrlToBlob(image.dataUrl)
+        sc = await computeStickerContour(blob, { tolerance })
+        if (cache) cache.set(key, sc)
+      } catch (e) {
+        console.error('Contorno falló en celda', i, e)
+        continue
+      }
+    }
+
+    const contours = includeHoles ? sc.contours : sc.contours.filter(c => c.isOuter)
+    const polys = contoursToCellCortes(contours, cell, sc.maskedW, sc.maskedH, { bleedMm })
+    for (const p of polys) cortes.push(p)
+  }
+  return cortes
+}

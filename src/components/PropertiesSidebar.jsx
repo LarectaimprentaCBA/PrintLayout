@@ -571,9 +571,72 @@ export default function PropertiesSidebar({
                       >
                         Círculo
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => onUpdateTemporal({ cutShape: 'contour' })}
+                        title="Corta por el contorno de cada imagen (saca el fondo y sigue la silueta)"
+                        className={`rounded px-2 py-0.5 text-[10px] ${
+                          template.cutShape === 'contour'
+                            ? 'bg-accent-600 text-white'
+                            : 'text-ink-300 hover:bg-ink-700'
+                        }`}
+                      >
+                        Contorno
+                      </button>
                     </div>
                   </dd>
                 </div>
+                {template.cutShape === 'contour' && (
+                  <div className="space-y-2 rounded border border-ink-700 bg-ink-800/40 p-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <dt className="text-ink-400">Tolerancia fondo</dt>
+                      <dd className="flex items-center gap-2">
+                        <input
+                          type="range"
+                          min={0}
+                          max={128}
+                          step={1}
+                          value={template.contourTolerance ?? 32}
+                          onChange={(e) => onUpdateTemporal({ contourTolerance: Number(e.target.value) })}
+                          className="w-24 accent-accent-500"
+                        />
+                        <span className="w-6 text-right font-mono text-[11px] text-ink-300">
+                          {template.contourTolerance ?? 32}
+                        </span>
+                      </dd>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <dt className="text-ink-400">Sangrado</dt>
+                      <dd className="inline-flex items-center gap-1">
+                        <input
+                          type="number"
+                          step={0.1}
+                          min={-10}
+                          max={10}
+                          value={template.contourBleedMm ?? 0}
+                          onChange={(e) => onUpdateTemporal({ contourBleedMm: Number(e.target.value) })}
+                          title="Cuanto se corre el corte respecto del borde del diseño. >0 = por fuera, <0 = por dentro."
+                          className="w-12 rounded border border-ink-700 bg-ink-800 px-1.5 py-0.5 text-right text-xs text-ink-100 outline-none focus:border-accent-500"
+                        />
+                        <span className="text-[10px] text-ink-500">mm</span>
+                      </dd>
+                    </div>
+                    <label className="flex items-center justify-between gap-2">
+                      <dt className="text-ink-400">Incluir huecos</dt>
+                      <dd>
+                        <input
+                          type="checkbox"
+                          checked={template.contourIncludeHoles !== false}
+                          onChange={(e) => onUpdateTemporal({ contourIncludeHoles: e.target.checked })}
+                          className="h-3.5 w-3.5 accent-accent-500"
+                        />
+                      </dd>
+                    </label>
+                    <p className="text-[10px] leading-snug text-ink-500">
+                      El contorno se calcula sobre cada imagen cargada. Ajustá mirando la línea roja.
+                    </p>
+                  </div>
+                )}
               </>
             )}
             <div className="flex items-center justify-between">
