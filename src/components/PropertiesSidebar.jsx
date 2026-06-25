@@ -708,7 +708,7 @@ function ContourControls({ template, onUpdate, onApply, dirty, computing }) {
   const dEngine = template.contourEngine ?? 'potrace';
   const dTol = template.contourTolerance ?? 32;
   const dBleed = template.contourBleedMm ?? 0;
-  const dHoles = template.contourIncludeHoles !== false;
+  const dHoles = template.contourIncludeHoles === true;
   const dThr = template.contourThreshold ?? 128;
   const dTurd = template.contourTurdsize ?? 2;
   const dAlpha = template.contourAlphamax ?? 1.0;
@@ -734,7 +734,7 @@ function ContourControls({ template, onUpdate, onApply, dirty, computing }) {
       <div className="pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-500">Toda la hoja</div>
       <CRange label="Tolerancia fondo" value={dTol} min={0} max={128} step={1} onChange={(v) => onUpdate({ contourTolerance: v })} />
       <CNum label="Sangrado (vivo)" value={dBleed} step={0.1} min={-10} max={10} onChange={(v) => onUpdate({ contourBleedMm: v })} />
-      <CCheck label="Incluir huecos (vivo)" checked={dHoles} onChange={(v) => onUpdate({ contourIncludeHoles: v })} />
+      <CCheck label="Cortar huecos internos" checked={dHoles} onChange={(v) => onUpdate({ contourIncludeHoles: v })} />
 
       <button
         type="button"
@@ -839,7 +839,7 @@ function ContourImageOverride({ template, imgId, onUpdate, onApply, dirty, compu
   const dEngine = template.contourEngine ?? 'potrace';
   const dTol = template.contourTolerance ?? 32;
   const dBleed = template.contourBleedMm ?? 0;
-  const dHoles = template.contourIncludeHoles !== false;
+  const dHoles = template.contourIncludeHoles === true;
   const dThr = template.contourThreshold ?? 128;
   const dTurd = template.contourTurdsize ?? 2;
   const dAlpha = template.contourAlphamax ?? 1.0;
@@ -896,7 +896,7 @@ function ContourImageOverride({ template, imgId, onUpdate, onApply, dirty, compu
           </CRow>
           <CRange label="Tolerancia" value={tol} min={0} max={128} step={1} onChange={(v) => setOv({ tolerance: v })} />
           <CNum label="Sangrado (vivo)" value={bleed} step={0.1} min={-10} max={10} onChange={(v) => setOv({ bleedMm: v })} />
-          <CCheck label="Incluir huecos (vivo)" checked={holes} onChange={(v) => setOv({ includeHoles: v })} />
+          <CCheck label="Cortar huecos internos" checked={holes} onChange={(v) => setOv({ includeHoles: v })} />
 
           <button
             type="button"

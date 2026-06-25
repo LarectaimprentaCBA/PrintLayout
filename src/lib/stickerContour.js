@@ -36,9 +36,13 @@ export async function computeStickerContour(fileOrBlob, {
   turdsize = 2,
   alphamax = 1.0,
   opttolerance = 0.2,
+  includeHoles = false,
 } = {}) {
+  // includeHoles controla detectHoles: OFF rellena el centro (silueta exterior →
+  // un solo corte por el borde); ON vuelve transparentes las regiones internas
+  // del color del fondo (huecos reales: ojal, contador de una "O", etc.).
   const maskedBlob = await solidBgRemoval(fileOrBlob, {
-    tolerance, detectHoles: true, defringe: true,
+    tolerance, detectHoles: includeHoles, defringe: true,
   })
   const result = await traceContour(maskedBlob, {
     engine, threshold, turdsize, alphamax, opttolerance,
@@ -157,11 +161,11 @@ export async function contourCutsByAssignments(assignments, cells, imageMap, {
     const bleedMm = p.bleedMm ?? 0
     const includeHoles = p.includeHoles !== false
 
-    // Cache por IMAGEN con su "traceKey" (solo params que afectan el TRAZADO).
-    // bleed/huecos NO entran al traceKey: cambiarlos re-mapea sobre el sc ya
-    // trazado (instantáneo). En modo cacheOnly NO se traza: si no hay sc cacheado
-    // para esa imagen, se saltea (lo usa el re-mapeo en vivo de sangría/huecos).
-    const traceKey = `${engine}:${tolerance}:${threshold}:${turdsize}:${alphamax}:${opttolerance}`
+    // Cache por IMAGEN con su "traceKey" = params que afectan el TRAZADO/MÁSCARA
+    // (incluye includeHoles, porque rellenar o no el centro cambia la máscara).
+    // El sangrado NO entra: cambiarlo re-mapea sobre el sc ya trazado (instantáneo).
+    // En cacheOnly NO se traza: si no hay sc para esa imagen, se saltea.
+    const traceKey = `${engine}:${tolerance}:${threshold}:${turdsize}:${alphamax}:${opttolerance}:${includeHoles}`
     const cached = cache ? cache.get(imgId) : null
     let sc
     if (cached && cached.traceKey === traceKey) {
@@ -172,7 +176,7 @@ export async function contourCutsByAssignments(assignments, cells, imageMap, {
       try {
         const blob = await dataUrlToBlob(image.dataUrl)
         sc = await computeStickerContour(blob, {
-          engine, tolerance, threshold, turdsize, alphamax, opttolerance,
+          engine, tolerance, threshold, turdsize, alphamax, opttolerance, includeHoles,
         })
         if (cache) cache.set(imgId, { sc, traceKey })
       } catch (e) {

@@ -159,7 +159,10 @@ export function offsetPathD(d, deltaPx, { joinType = 'round', curveSteps = 24 } 
 export function offsetPolygons(polys, deltaPx, { joinType = 'round' } = {}) {
   if (!polys || polys.length === 0) return { d: '', polys: [] }
 
-  const co = new ClipperLib.ClipperOffset(2, 0.05)
+  // ArcTolerance está en las MISMAS unidades que los polígonos (escaladas x1000).
+  // 0.1mm = 100 → joins redondeados suaves con POCOS puntos. (Antes 0.05 = 0.05µm,
+  // ultra-fino, generaba cientos de puntos por esquina = lento y pesado.)
+  const co = new ClipperLib.ClipperOffset(2, 0.1 * SCALE)
   const jtMap = {
     round: ClipperLib.JoinType.jtRound,
     miter: ClipperLib.JoinType.jtMiter,

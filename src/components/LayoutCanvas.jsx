@@ -231,7 +231,7 @@ export default function LayoutCanvas({
               if (showContourPreview) {
                 const ov = template.contourByImage?.[imgId];
                 previewTol = ov?.tolerance ?? template.contourTolerance ?? 32;
-                previewHoles = ov?.includeHoles ?? (template.contourIncludeHoles !== false);
+                previewHoles = ov?.includeHoles ?? (template.contourIncludeHoles === true);
               }
               const bPx = bMm * pxPerMm;
 

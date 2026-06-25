@@ -1337,7 +1337,8 @@ export default function App() {
     }
     return Object.keys(out).length ? out : null;
   };
-  const TRACE_KEYS = ['engine', 'tolerance', 'threshold', 'turdsize', 'alphamax', 'opttolerance'];
+  // includeHoles afecta la MÁSCARA (rellenar el centro o no) → es TRAZADO.
+  const TRACE_KEYS = ['engine', 'tolerance', 'threshold', 'turdsize', 'alphamax', 'opttolerance', 'includeHoles'];
   const contourTraceSig = selected?.cutShape === 'contour'
     ? JSON.stringify({
       e: selected.contourEngine ?? 'potrace',
@@ -1346,14 +1347,15 @@ export default function App() {
       tu: selected.contourTurdsize ?? 2,
       a: selected.contourAlphamax ?? 1.0,
       o: selected.contourOpttolerance ?? 0.2,
+      h: selected.contourIncludeHoles === true,
       by: pickByImage(selected.contourByImage, TRACE_KEYS),
     })
     : '';
+  // Solo el sangrado es mapeo barato → instantáneo.
   const contourMapSig = selected?.cutShape === 'contour'
     ? JSON.stringify({
       b: selected.contourBleedMm ?? 0,
-      h: selected.contourIncludeHoles !== false,
-      by: pickByImage(selected.contourByImage, ['bleedMm', 'includeHoles']),
+      by: pickByImage(selected.contourByImage, ['bleedMm']),
     })
     : '';
   const appliedTraceSigRef = useRef('');
@@ -1375,7 +1377,7 @@ export default function App() {
       alphamax: selected.contourAlphamax ?? 1.0,
       opttolerance: selected.contourOpttolerance ?? 0.2,
       bleedMm: selected.contourBleedMm ?? 0,
-      includeHoles: selected.contourIncludeHoles !== false,
+      includeHoles: selected.contourIncludeHoles === true,
     };
     if (!cacheOnly) setContourComputing(true);
     try {
