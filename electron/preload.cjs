@@ -47,6 +47,10 @@ contextBridge.exposeInMainWorld('printlayout', {
   plotter: {
     sendCut: (payload) => ipcRenderer.invoke('plotter:send-cut', payload),
   },
+  contour: {
+    tracePotrace: (arrayBuffer, opts) =>
+      ipcRenderer.invoke('contour:trace-potrace', arrayBuffer, opts),
+  },
   pdf: {
     save: (defaultName, bytes) =>
       ipcRenderer.invoke('export:save-pdf', { defaultName, bytes }),

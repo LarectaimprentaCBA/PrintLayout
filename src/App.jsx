@@ -1326,18 +1326,28 @@ export default function App() {
   // imágenes recalcula mirando. Cache por imagen+tolerancia para que sangrado/
   // huecos sean instantáneos.
   const contourAssignSig = (layout.assignmentsFront || []).join(',');
+  const contourByImageSig = JSON.stringify(selected?.contourByImage || null);
   useEffect(() => {
     if (!selected || selected.cutShape !== 'contour') return;
     const cells = selected.celdas ?? [];
     const assignments = layout.assignmentsFront || [];
     if (!cells.length || !assignments.some(Boolean)) return;
     let cancelled = false;
+    const params = {
+      engine: selected.contourEngine ?? 'potrace',
+      tolerance: selected.contourTolerance ?? 32,
+      threshold: selected.contourThreshold ?? 128,
+      turdsize: selected.contourTurdsize ?? 2,
+      alphamax: selected.contourAlphamax ?? 1.0,
+      opttolerance: selected.contourOpttolerance ?? 0.2,
+      bleedMm: selected.contourBleedMm ?? 0,
+      includeHoles: selected.contourIncludeHoles !== false,
+    };
     const t = setTimeout(async () => {
       try {
         const cortes = await contourCutsByAssignments(assignments, cells, layout.imageMap, {
-          tolerance: selected.contourTolerance ?? 32,
-          bleedMm: selected.contourBleedMm ?? 0,
-          includeHoles: selected.contourIncludeHoles !== false,
+          params,
+          paramsByImage: selected.contourByImage || null,
           cache: contourCacheRef.current,
         });
         if (!cancelled) handlePatchActiveTemplate({ cortes });
@@ -1350,9 +1360,15 @@ export default function App() {
   }, [
     selected?.id,
     selected?.cutShape,
+    selected?.contourEngine,
     selected?.contourTolerance,
+    selected?.contourThreshold,
+    selected?.contourTurdsize,
+    selected?.contourAlphamax,
+    selected?.contourOpttolerance,
     selected?.contourBleedMm,
     selected?.contourIncludeHoles,
+    contourByImageSig,
     contourAssignSig,
   ]);
 

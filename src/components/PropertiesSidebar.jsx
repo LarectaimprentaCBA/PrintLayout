@@ -587,55 +587,13 @@ export default function PropertiesSidebar({
                   </dd>
                 </div>
                 {template.cutShape === 'contour' && (
-                  <div className="space-y-2 rounded border border-ink-700 bg-ink-800/40 p-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <dt className="text-ink-400">Tolerancia fondo</dt>
-                      <dd className="flex items-center gap-2">
-                        <input
-                          type="range"
-                          min={0}
-                          max={128}
-                          step={1}
-                          value={template.contourTolerance ?? 32}
-                          onChange={(e) => onUpdateTemporal({ contourTolerance: Number(e.target.value) })}
-                          className="w-24 accent-accent-500"
-                        />
-                        <span className="w-6 text-right font-mono text-[11px] text-ink-300">
-                          {template.contourTolerance ?? 32}
-                        </span>
-                      </dd>
-                    </div>
-                    <div className="flex items-center justify-between gap-2">
-                      <dt className="text-ink-400">Sangrado</dt>
-                      <dd className="inline-flex items-center gap-1">
-                        <input
-                          type="number"
-                          step={0.1}
-                          min={-10}
-                          max={10}
-                          value={template.contourBleedMm ?? 0}
-                          onChange={(e) => onUpdateTemporal({ contourBleedMm: Number(e.target.value) })}
-                          title="Cuanto se corre el corte respecto del borde del diseño. >0 = por fuera, <0 = por dentro."
-                          className="w-12 rounded border border-ink-700 bg-ink-800 px-1.5 py-0.5 text-right text-xs text-ink-100 outline-none focus:border-accent-500"
-                        />
-                        <span className="text-[10px] text-ink-500">mm</span>
-                      </dd>
-                    </div>
-                    <label className="flex items-center justify-between gap-2">
-                      <dt className="text-ink-400">Incluir huecos</dt>
-                      <dd>
-                        <input
-                          type="checkbox"
-                          checked={template.contourIncludeHoles !== false}
-                          onChange={(e) => onUpdateTemporal({ contourIncludeHoles: e.target.checked })}
-                          className="h-3.5 w-3.5 accent-accent-500"
-                        />
-                      </dd>
-                    </label>
-                    <p className="text-[10px] leading-snug text-ink-500">
-                      El contorno se calcula sobre cada imagen cargada. Ajustá mirando la línea roja.
-                    </p>
-                  </div>
+                  <ContourControls
+                    template={template}
+                    selImgId={selectedCell != null ? (assignments?.[selectedCell] ?? null) : null}
+                    selImgName={selectedCell != null && assignments?.[selectedCell]
+                      ? (imageMap.get(assignments[selectedCell])?.name || 'imagen') : null}
+                    onUpdate={onUpdateTemporal}
+                  />
                 )}
               </>
             )}
@@ -726,5 +684,157 @@ export default function PropertiesSidebar({
         )}
       </div>
     </aside>
+  );
+}
+
+// Controles de la forma de corte "Contorno": motor + ajustes de hoja + avanzado,
+// y override por imagen (default de hoja + ajuste propio de la imagen seleccionada).
+function ContourControls({ template, selImgId, selImgName, onUpdate }) {
+  const [adv, setAdv] = useState(false);
+
+  const dEngine = template.contourEngine ?? 'potrace';
+  const dTol = template.contourTolerance ?? 32;
+  const dBleed = template.contourBleedMm ?? 0;
+  const dHoles = template.contourIncludeHoles !== false;
+  const dThr = template.contourThreshold ?? 128;
+  const dTurd = template.contourTurdsize ?? 2;
+  const dAlpha = template.contourAlphamax ?? 1.0;
+  const dOpt = template.contourOpttolerance ?? 0.2;
+
+  const byImg = template.contourByImage || {};
+  const ov = selImgId ? byImg[selImgId] : null;
+  const hasOv = !!ov;
+
+  const setOv = (patch) => {
+    if (!selImgId) return;
+    onUpdate({ contourByImage: { ...byImg, [selImgId]: { ...(ov || {}), ...patch } } });
+  };
+  const enableOv = () => {
+    if (!selImgId) return;
+    onUpdate({ contourByImage: { ...byImg, [selImgId]: { tolerance: dTol, bleedMm: dBleed, includeHoles: dHoles } } });
+  };
+  const disableOv = () => {
+    if (!selImgId) return;
+    const n = { ...byImg };
+    delete n[selImgId];
+    onUpdate({ contourByImage: n });
+  };
+
+  const ovTol = hasOv && ov.tolerance !== undefined ? ov.tolerance : dTol;
+  const ovBleed = hasOv && ov.bleedMm !== undefined ? ov.bleedMm : dBleed;
+  const ovHoles = hasOv && ov.includeHoles !== undefined ? ov.includeHoles : dHoles;
+
+  return (
+    <div className="space-y-2 rounded border border-ink-700 bg-ink-800/40 p-2">
+      <CRow label="Motor">
+        <div className="flex gap-0.5 rounded border border-ink-700 bg-ink-800 p-0.5">
+          {['potrace', 'imagetracer'].map((e) => (
+            <button
+              key={e}
+              type="button"
+              onClick={() => onUpdate({ contourEngine: e })}
+              className={`rounded px-1.5 py-0.5 text-[10px] ${dEngine === e ? 'bg-accent-600 text-white' : 'text-ink-300 hover:bg-ink-700'}`}
+            >
+              {e === 'potrace' ? 'Potrace' : 'ImageTracer'}
+            </button>
+          ))}
+        </div>
+      </CRow>
+
+      <div className="pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-500">Toda la hoja</div>
+      <CRange label="Tolerancia fondo" value={dTol} min={0} max={128} step={1} onChange={(v) => onUpdate({ contourTolerance: v })} />
+      <CNum label="Sangrado" value={dBleed} step={0.1} min={-10} max={10} onChange={(v) => onUpdate({ contourBleedMm: v })} />
+      <CCheck label="Incluir huecos" checked={dHoles} onChange={(v) => onUpdate({ contourIncludeHoles: v })} />
+
+      <button
+        type="button"
+        onClick={() => setAdv((a) => !a)}
+        className="flex w-full items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-ink-400 hover:text-ink-200"
+      >
+        <span className="text-ink-500">{adv ? '▾' : '▸'}</span> Avanzado
+      </button>
+      {adv && (
+        <div className="space-y-2 border-l border-ink-700 pl-2">
+          <CRange label="Umbral" value={dThr} min={1} max={254} step={1} onChange={(v) => onUpdate({ contourThreshold: v })} />
+          <CRange label="Tamaño mínimo" value={dTurd} min={0} max={50} step={1} onChange={(v) => onUpdate({ contourTurdsize: v })} />
+          {dEngine === 'potrace' && (
+            <CRange label="Suavizado" value={dAlpha} min={0} max={1.3334} step={0.05} onChange={(v) => onUpdate({ contourAlphamax: v })} />
+          )}
+          <CRange label="Simplificación" value={dOpt} min={0} max={1} step={0.05} onChange={(v) => onUpdate({ contourOpttolerance: v })} />
+        </div>
+      )}
+
+      {selImgId ? (
+        <div className="mt-1 space-y-2 rounded border border-accent-500/30 bg-accent-500/5 p-2">
+          <label className="flex items-center justify-between gap-2">
+            <span className="truncate text-[11px] text-ink-300" title={selImgName}>Ajuste propio: {selImgName}</span>
+            <input
+              type="checkbox"
+              checked={hasOv}
+              onChange={(e) => (e.target.checked ? enableOv() : disableOv())}
+              className="h-3.5 w-3.5 accent-accent-500"
+            />
+          </label>
+          {hasOv && (
+            <>
+              <CRange label="Tolerancia" value={ovTol} min={0} max={128} step={1} onChange={(v) => setOv({ tolerance: v })} />
+              <CNum label="Sangrado" value={ovBleed} step={0.1} min={-10} max={10} onChange={(v) => setOv({ bleedMm: v })} />
+              <CCheck label="Incluir huecos" checked={ovHoles} onChange={(v) => setOv({ includeHoles: v })} />
+            </>
+          )}
+        </div>
+      ) : (
+        <p className="text-[10px] leading-snug text-ink-500">Tip: seleccioná una imagen (click en su celda) para darle un ajuste propio.</p>
+      )}
+
+      <p className="text-[10px] leading-snug text-ink-500">El contorno se calcula sobre cada imagen. Ajustá mirando la línea roja.</p>
+    </div>
+  );
+}
+
+function CRow({ label, children }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-ink-400">{label}</span>
+      <span>{children}</span>
+    </div>
+  );
+}
+function CRange({ label, value, min, max, step, onChange }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-ink-400">{label}</span>
+      <span className="flex items-center gap-2">
+        <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} className="w-20 accent-accent-500" />
+        <span className="w-8 text-right font-mono text-[11px] text-ink-300">{Number.isInteger(step) ? value : Number(value).toFixed(2)}</span>
+      </span>
+    </div>
+  );
+}
+function CNum({ label, value, step, min, max, onChange }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-ink-400">{label}</span>
+      <span className="inline-flex items-center gap-1">
+        <input
+          type="number"
+          step={step}
+          min={min}
+          max={max}
+          value={value}
+          onChange={(e) => onChange(Number(e.target.value))}
+          className="w-12 rounded border border-ink-700 bg-ink-800 px-1.5 py-0.5 text-right text-xs text-ink-100 outline-none focus:border-accent-500"
+        />
+        <span className="text-[10px] text-ink-500">mm</span>
+      </span>
+    </div>
+  );
+}
+function CCheck({ label, checked, onChange }) {
+  return (
+    <label className="flex items-center justify-between gap-2">
+      <span className="text-ink-400">{label}</span>
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="h-3.5 w-3.5 accent-accent-500" />
+    </label>
   );
 }

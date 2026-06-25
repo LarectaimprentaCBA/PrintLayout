@@ -8,7 +8,7 @@
 // idéntico al de exportPdf), y así el corte calce con lo impreso.
 
 import { solidBgRemoval } from './contour/solidBgRemoval.js'
-import { traceWithImageTracer } from './contour/trace.js'
+import { traceContour } from './contour/trace.js'
 import { offsetPolygons, CLIPPER_SCALE } from './contour/offset.js'
 
 function blobToDataUrl(blob) {
@@ -29,11 +29,21 @@ function blobToDataUrl(blob) {
  * @returns {Promise<{ maskedDataUrl:string, maskedW:number, maskedH:number,
  *   contours: Array<{ isOuter:boolean, area:number, points:Array<[number,number]> }> }>}
  */
-export async function computeStickerContour(fileOrBlob, { tolerance = 32 } = {}) {
+export async function computeStickerContour(fileOrBlob, {
+  tolerance = 32,
+  engine = 'potrace',
+  threshold = 128,
+  turdsize = 2,
+  alphamax = 1.0,
+  opttolerance = 0.2,
+} = {}) {
   const maskedBlob = await solidBgRemoval(fileOrBlob, {
     tolerance, detectHoles: true, defringe: true,
   })
-  const result = await traceWithImageTracer(maskedBlob, { threshold: 128, pathomit: 8 })
+  const result = await traceContour(maskedBlob, {
+    engine, threshold, turdsize, alphamax, opttolerance,
+    pathomit: Math.max(2, turdsize), // ImageTracer: descarta paths chicos
+  })
   const W = result.width
   const H = result.height
   const maskedDataUrl = await blobToDataUrl(maskedBlob)
@@ -124,7 +134,7 @@ async function dataUrlToBlob(dataUrl) {
  * @returns {Promise<Array<Array<[number,number]>>>} polilíneas mm para template.cortes
  */
 export async function contourCutsByAssignments(assignments, cells, imageMap, {
-  tolerance = 32, bleedMm = 0, includeHoles = true, cache = null,
+  params = {}, paramsByImage = null, cache = null,
 } = {}) {
   const cortes = []
   if (!Array.isArray(cells) || !imageMap) return cortes
@@ -135,14 +145,30 @@ export async function contourCutsByAssignments(assignments, cells, imageMap, {
     if (!image?.dataUrl) continue
     const cell = cells[i]
 
+    // Parámetros efectivos: default de hoja + override de esta imagen (si hay).
+    const ov = paramsByImage && paramsByImage[imgId]
+    const p = ov ? { ...params, ...ov } : params
+    const engine = p.engine ?? 'potrace'
+    const tolerance = p.tolerance ?? 32
+    const threshold = p.threshold ?? 128
+    const turdsize = p.turdsize ?? 2
+    const alphamax = p.alphamax ?? 1.0
+    const opttolerance = p.opttolerance ?? 0.2
+    const bleedMm = p.bleedMm ?? 0
+    const includeHoles = p.includeHoles !== false
+
+    // El cache solo necesita los params que afectan el TRAZADO (no bleed/huecos,
+    // que son re-mapeo barato). Así mover sangrado/huecos es instantáneo.
+    const key = `${imgId}:${engine}:${tolerance}:${threshold}:${turdsize}:${alphamax}:${opttolerance}`
     let sc
-    const key = `${imgId}:${tolerance}`
     if (cache && cache.has(key)) {
       sc = cache.get(key)
     } else {
       try {
         const blob = await dataUrlToBlob(image.dataUrl)
-        sc = await computeStickerContour(blob, { tolerance })
+        sc = await computeStickerContour(blob, {
+          engine, tolerance, threshold, turdsize, alphamax, opttolerance,
+        })
         if (cache) cache.set(key, sc)
       } catch (e) {
         console.error('Contorno falló en celda', i, e)
@@ -152,7 +178,7 @@ export async function contourCutsByAssignments(assignments, cells, imageMap, {
 
     const contours = includeHoles ? sc.contours : sc.contours.filter(c => c.isOuter)
     const polys = contoursToCellCortes(contours, cell, sc.maskedW, sc.maskedH, { bleedMm })
-    for (const p of polys) cortes.push(p)
+    for (const p2 of polys) cortes.push(p2)
   }
   return cortes
 }

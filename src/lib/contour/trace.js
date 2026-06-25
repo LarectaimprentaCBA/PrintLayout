@@ -8,6 +8,16 @@ import ImageTracer from 'imagetracerjs'
 import { pathDToSubpaths } from './offset.js'
 import { classifyContours } from './geometry.js'
 
+// Potrace corre en el proceso main de Electron via IPC (mejores curvas que
+// ImageTracer). `window.printlayout.contour.tracePotrace(arrayBuffer, opts) -> svg`
+async function tracePotraceViaIPC(blob, opts) {
+  if (!window.printlayout?.contour?.tracePotrace) {
+    throw new Error('Potrace IPC no disponible (¿estás dentro de Electron?).')
+  }
+  const ab = await blob.arrayBuffer()
+  return window.printlayout.contour.tracePotrace(ab, opts)
+}
+
 const MAX_TRACE_DIM = 1200
 
 async function buildAlphaMaskCanvas(blob, threshold = 128) {
@@ -73,6 +83,35 @@ function postProcessTrace(svgString, width, height) {
   const outerD = subpaths.filter((_, i) => isOuterByIndex[i]).map(s => s.d).join(' ')
 
   return { svg: svgString, polygons, classified, allD, outerD, width, height }
+}
+
+export async function traceWithPotrace(blob, opts = {}) {
+  const {
+    threshold = 128,
+    turdsize = 2,
+    alphamax = 1.0,
+    opttolerance = 0.2,
+  } = opts
+
+  // Máscara B/N en el renderer; se manda como PNG al main para potrace.
+  const { canvas } = await buildAlphaMaskCanvas(blob, threshold)
+  const maskBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'))
+  if (!maskBlob) throw new Error('No se pudo serializar la máscara a PNG.')
+
+  const svgString = await tracePotraceViaIPC(maskBlob, {
+    threshold: 128, // ya viene en B/N
+    turdsize,
+    alphamax,
+    opttolerance,
+  })
+
+  return postProcessTrace(svgString, canvas.width, canvas.height)
+}
+
+// Dispatcher por motor. 'potrace' (curvas, via IPC) | 'imagetracer' (JS puro).
+export async function traceContour(blob, { engine = 'potrace', ...opts } = {}) {
+  if (engine === 'imagetracer') return traceWithImageTracer(blob, opts)
+  return traceWithPotrace(blob, opts)
 }
 
 export async function traceWithImageTracer(blob, opts = {}) {
