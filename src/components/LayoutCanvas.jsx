@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, Fragment } from 'react';
 import {
   cellPositions,
   cellsForPage,
@@ -8,6 +8,7 @@ import {
 import { coverObjectPosition } from '../lib/faceDetection.js';
 import { renderPdfPage1Preview } from '../lib/pdfPreview.js';
 import CellSlot from './CellSlot.jsx';
+import ContourTolerancePreview from './ContourTolerancePreview.jsx';
 
 const PX_PER_MM_AT_100 = 3.78;
 
@@ -212,26 +213,56 @@ export default function LayoutCanvas({
                   ? coverObjectPosition(img, innerWmm, innerHmm)
                   : null;
 
+              // Preview en vivo de la tolerancia: rojo sobre el sticker de la celda
+              // seleccionada, solo en modo Contorno. Usa la tolerancia/huecos
+              // efectivos (override de la imagen o default de la hoja).
+              const showContourPreview =
+                template.cutShape === 'contour'
+                && img
+                && selectedCell === globalIdx;
+              let previewTol = 32;
+              let previewHoles = true;
+              if (showContourPreview) {
+                const ov = template.contourByImage?.[imgId];
+                previewTol = ov?.tolerance ?? template.contourTolerance ?? 32;
+                previewHoles = ov?.includeHoles ?? (template.contourIncludeHoles !== false);
+              }
+              const bPx = bMm * pxPerMm;
+
               return (
-                <CellSlot
-                  key={globalIdx}
-                  cellIdx={globalIdx}
-                  image={img}
-                  isSelected={selectedCell === globalIdx}
-                  fitMode={fitMode}
-                  objectPosition={objectPosition}
-                  whiteBorderPx={bMm * pxPerMm}
-                  borderLinePx={Math.max(0, Number(template.cellBorderLineMm) || 0) * pxPerMm}
-                  borderLineColor={template.cellBorderColor || '#000000'}
-                  onClick={onCellClick}
-                  onContextMenu={onCellContextMenu}
-                  style={{ left: x, top: y, width: w, height: h }}
-                  cutShape={template.cutShape ?? 'rect'}
-                  cellWmm={cell.w}
-                  cellHmm={cell.h}
-                  cutMarginMm={template.cutMarginMm ?? 0}
-                  cellNumber={template.doubleSided ? globalIdx + 1 : null}
-                />
+                <Fragment key={globalIdx}>
+                  <CellSlot
+                    cellIdx={globalIdx}
+                    image={img}
+                    isSelected={selectedCell === globalIdx}
+                    fitMode={fitMode}
+                    objectPosition={objectPosition}
+                    whiteBorderPx={bMm * pxPerMm}
+                    borderLinePx={Math.max(0, Number(template.cellBorderLineMm) || 0) * pxPerMm}
+                    borderLineColor={template.cellBorderColor || '#000000'}
+                    onClick={onCellClick}
+                    onContextMenu={onCellContextMenu}
+                    style={{ left: x, top: y, width: w, height: h }}
+                    cutShape={template.cutShape ?? 'rect'}
+                    cellWmm={cell.w}
+                    cellHmm={cell.h}
+                    cutMarginMm={template.cutMarginMm ?? 0}
+                    cellNumber={template.doubleSided ? globalIdx + 1 : null}
+                  />
+                  {showContourPreview && (
+                    <ContourTolerancePreview
+                      imageUrl={img.dataUrl}
+                      tolerance={previewTol}
+                      includeHoles={previewHoles}
+                      style={{
+                        left: x + bPx,
+                        top: y + bPx,
+                        width: innerWmm * pxPerMm,
+                        height: innerHmm * pxPerMm,
+                      }}
+                    />
+                  )}
+                </Fragment>
               );
             })}
             {showCuts && template.cortes && template.cortes.length > 0 && (
