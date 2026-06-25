@@ -62,16 +62,21 @@ export async function computeStickerContour(fileOrBlob, {
       .filter(c => c.area >= maxArea * 0.002)
       .map(c => ({ isOuter: c.isOuter, area: c.area, points: toFrac(c.poly) }))
   } else {
-    // Silueta: UNE los contornos exteriores → la marca más externa se traga lo de
-    // adentro (letras, anillo interno, etc.) → un solo corte por el borde, sin
-    // cortes internos. Robusto aunque el anillo tenga una mínima abertura.
+    // Silueta: UNE los contornos exteriores y se queda SOLO con la marca más
+    // externa (la de mayor área) = el borde del sticker. Todo lo de adentro
+    // (letras, anillo interno, adornos que quedan como islas en el hueco del aro)
+    // es parte del sticker impreso, NO se corta. Un solo corte limpio por el borde.
     const outerPolys = result.classified.filter(c => c.isOuter).map(c => c.poly)
     const merged = unionOuter(outerPolys)
-    const areas = merged.map(polyArea)
-    const maxA = areas.reduce((m, a) => Math.max(m, a), 0) || 1
-    contours = merged
-      .map((poly, i) => ({ isOuter: true, area: areas[i], points: toFrac(poly) }))
-      .filter(c => c.area >= maxA * 0.02) // descarta restos chicos sueltos
+    let bestPoly = null
+    let bestArea = -1
+    for (const poly of merged) {
+      const a = polyArea(poly)
+      if (a > bestArea) { bestArea = a; bestPoly = poly }
+    }
+    contours = bestPoly
+      ? [{ isOuter: true, area: bestArea, points: toFrac(bestPoly) }]
+      : []
   }
 
   return { maskedDataUrl, maskedW: W, maskedH: H, contours }
