@@ -363,6 +363,7 @@ export default function App() {
   const [countPackFiles, setCountPackFiles] = useState(null);
   // Imagenes precargadas que se asignan a una plantilla recien creada.
   const [pendingAutoAssign, setPendingAutoAssign] = useState(null); // { templateId, images }
+  const processedAutoAssignRef = useRef(null); // guard idempotencia (StrictMode doble-run)
 
   // ---- Jobs / Tabs ----
   // currentJobId/Name/isDirty viven en la tab activa.
@@ -1379,6 +1380,11 @@ export default function App() {
     if (!pendingAutoAssign) return;
     if (selected?.id !== pendingAutoAssign.templateId) return;
     if (layout.totalCellsCount === 0) return;
+    // Idempotencia: loadImagesWithMapping AGREGA imágenes. En dev, StrictMode
+    // corre el efecto dos veces con el mismo pendingAutoAssign → sin este guard
+    // la imagen se cargaba duplicada en la lista. Procesamos cada objeto una vez.
+    if (processedAutoAssignRef.current === pendingAutoAssign) return;
+    processedAutoAssignRef.current = pendingAutoAssign;
     layout.loadImagesWithMapping(pendingAutoAssign.images, pendingAutoAssign.cellMapping);
     setPendingAutoAssign(null);
   }, [pendingAutoAssign, selected?.id, layout.totalCellsCount, layout.loadImagesWithMapping]);
