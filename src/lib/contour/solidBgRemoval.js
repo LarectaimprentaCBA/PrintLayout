@@ -114,8 +114,10 @@ export function applySolidBgRemoval(data, w, h, {
   return bg
 }
 
-// Resolución de trabajo del quita-fondo.
-export const SOLID_WORKING_DIM = 1000
+// Resolución de trabajo del quita-fondo. 600px alcanza de sobra para el corte de
+// un sticker (mucho más fino que la cuchilla del plotter) y hace el flood-fill ~3x
+// más rápido que a 1000px (clave para que trazar no sea lento).
+export const SOLID_WORKING_DIM = 600
 
 /**
  * @param {File|Blob} fileOrBlob

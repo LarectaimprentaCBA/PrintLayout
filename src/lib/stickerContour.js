@@ -134,7 +134,7 @@ async function dataUrlToBlob(dataUrl) {
  * @returns {Promise<Array<Array<[number,number]>>>} polilíneas mm para template.cortes
  */
 export async function contourCutsByAssignments(assignments, cells, imageMap, {
-  params = {}, paramsByImage = null, cache = null,
+  params = {}, paramsByImage = null, cache = null, cacheOnly = false,
 } = {}) {
   const cortes = []
   if (!Array.isArray(cells) || !imageMap) return cortes
@@ -157,24 +157,30 @@ export async function contourCutsByAssignments(assignments, cells, imageMap, {
     const bleedMm = p.bleedMm ?? 0
     const includeHoles = p.includeHoles !== false
 
-    // El cache solo necesita los params que afectan el TRAZADO (no bleed/huecos,
-    // que son re-mapeo barato). Así mover sangrado/huecos es instantáneo.
-    const key = `${imgId}:${engine}:${tolerance}:${threshold}:${turdsize}:${alphamax}:${opttolerance}`
+    // Cache por IMAGEN con su "traceKey" (solo params que afectan el TRAZADO).
+    // bleed/huecos NO entran al traceKey: cambiarlos re-mapea sobre el sc ya
+    // trazado (instantáneo). En modo cacheOnly NO se traza: si no hay sc cacheado
+    // para esa imagen, se saltea (lo usa el re-mapeo en vivo de sangría/huecos).
+    const traceKey = `${engine}:${tolerance}:${threshold}:${turdsize}:${alphamax}:${opttolerance}`
+    const cached = cache ? cache.get(imgId) : null
     let sc
-    if (cache && cache.has(key)) {
-      sc = cache.get(key)
+    if (cached && cached.traceKey === traceKey) {
+      sc = cached.sc
+    } else if (cacheOnly) {
+      sc = cached?.sc // usa lo último trazado, sin re-trazar
     } else {
       try {
         const blob = await dataUrlToBlob(image.dataUrl)
         sc = await computeStickerContour(blob, {
           engine, tolerance, threshold, turdsize, alphamax, opttolerance,
         })
-        if (cache) cache.set(key, sc)
+        if (cache) cache.set(imgId, { sc, traceKey })
       } catch (e) {
         console.error('Contorno falló en celda', i, e)
         continue
       }
     }
+    if (!sc) continue
 
     const contours = includeHoles ? sc.contours : sc.contours.filter(c => c.isOuter)
     const polys = contoursToCellCortes(contours, cell, sc.maskedW, sc.maskedH, { bleedMm })

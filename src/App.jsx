@@ -1321,13 +1321,24 @@ export default function App() {
     }
   };
 
-  // Calcula template.cortes con los contornos de cada imagen (forma de corte
-  // "Contorno"). NO se dispara en cada ajuste: el usuario mueve tolerancia /
-  // sangrado / etc mirando el preview rojo en vivo, y recién al "Aplicar
-  // contorno" se calcula (trazar es caro). Sí se recalcula solo al ENTRAR a
-  // Contorno o al CAMBIAR las imágenes asignadas. Cache por imagen+params.
+  // Cortes por contorno. Separamos dos clases de cambio:
+  //  - TRAZADO (caro: quita-fondo + Potrace): motor/tolerancia/umbral/tamaño/
+  //    suavizado/simplificación → requiere tocar "Aplicar contorno".
+  //  - MAPEO (barato: solo offset + filtrar huecos): sangría y huecos →
+  //    se aplican AL INSTANTE (re-mapean sobre lo ya trazado, cacheOnly).
   const contourAssignSig = (layout.assignmentsFront || []).join(',');
-  const contourParamsSig = selected?.cutShape === 'contour'
+  const pickByImage = (byImg, keys) => {
+    if (!byImg) return null;
+    const out = {};
+    for (const [id, o] of Object.entries(byImg)) {
+      const picked = {};
+      for (const k of keys) if (o[k] !== undefined) picked[k] = o[k];
+      if (Object.keys(picked).length) out[id] = picked;
+    }
+    return Object.keys(out).length ? out : null;
+  };
+  const TRACE_KEYS = ['engine', 'tolerance', 'threshold', 'turdsize', 'alphamax', 'opttolerance'];
+  const contourTraceSig = selected?.cutShape === 'contour'
     ? JSON.stringify({
       e: selected.contourEngine ?? 'potrace',
       t: selected.contourTolerance ?? 32,
@@ -1335,21 +1346,25 @@ export default function App() {
       tu: selected.contourTurdsize ?? 2,
       a: selected.contourAlphamax ?? 1.0,
       o: selected.contourOpttolerance ?? 0.2,
-      b: selected.contourBleedMm ?? 0,
-      h: selected.contourIncludeHoles !== false,
-      by: selected.contourByImage || null,
+      by: pickByImage(selected.contourByImage, TRACE_KEYS),
     })
     : '';
-  const appliedContourSigRef = useRef('');
+  const contourMapSig = selected?.cutShape === 'contour'
+    ? JSON.stringify({
+      b: selected.contourBleedMm ?? 0,
+      h: selected.contourIncludeHoles !== false,
+      by: pickByImage(selected.contourByImage, ['bleedMm', 'includeHoles']),
+    })
+    : '';
+  const appliedTraceSigRef = useRef('');
   const [contourComputing, setContourComputing] = useState(false);
 
-  const computeContourNow = useCallback(async () => {
+  const computeContourNow = useCallback(async (cacheOnly = false) => {
     if (!selected || selected.cutShape !== 'contour') return;
     const cells = selected.celdas ?? [];
     const assignments = layout.assignmentsFront || [];
-    const sig = `${contourParamsSig}|${contourAssignSig}`;
     if (!cells.length || !assignments.some(Boolean)) {
-      appliedContourSigRef.current = sig;
+      if (!cacheOnly) appliedTraceSigRef.current = contourTraceSig;
       return;
     }
     const params = {
@@ -1362,33 +1377,43 @@ export default function App() {
       bleedMm: selected.contourBleedMm ?? 0,
       includeHoles: selected.contourIncludeHoles !== false,
     };
-    setContourComputing(true);
+    if (!cacheOnly) setContourComputing(true);
     try {
       const cortes = await contourCutsByAssignments(assignments, cells, layout.imageMap, {
         params,
         paramsByImage: selected.contourByImage || null,
         cache: contourCacheRef.current,
+        cacheOnly,
       });
       handlePatchActiveTemplate({ cortes });
-      appliedContourSigRef.current = sig;
+      if (!cacheOnly) appliedTraceSigRef.current = contourTraceSig;
     } catch (err) {
       console.error('Calcular contornos falló', err);
     } finally {
-      setContourComputing(false);
+      if (!cacheOnly) setContourComputing(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, layout.assignmentsFront, layout.imageMap, contourParamsSig, contourAssignSig]);
+  }, [selected, layout.assignmentsFront, layout.imageMap, contourTraceSig]);
 
-  // Auto: recalcula SOLO al entrar a Contorno o al cambiar las imágenes asignadas.
+  // Auto FULL (traza): al entrar a Contorno o al cambiar las imágenes asignadas.
   useEffect(() => {
     if (!selected || selected.cutShape !== 'contour') return;
-    computeContourNow();
+    computeContourNow(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected?.id, selected?.cutShape, contourAssignSig]);
 
-  // Hay cambios de ajuste sin aplicar (para resaltar el botón "Aplicar contorno").
+  // Instantáneo (cacheOnly): sangría/huecos → re-mapea sobre lo ya trazado.
+  // Se salta hasta que haya al menos un trazado hecho (evita el flash inicial).
+  useEffect(() => {
+    if (!selected || selected.cutShape !== 'contour') return;
+    if (!appliedTraceSigRef.current) return;
+    computeContourNow(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contourMapSig]);
+
+  // Cambios de TRAZADO sin aplicar → resalta el botón "Aplicar contorno".
   const contourDirty = selected?.cutShape === 'contour'
-    && `${contourParamsSig}|${contourAssignSig}` !== appliedContourSigRef.current;
+    && contourTraceSig !== appliedTraceSigRef.current;
 
   // Cuando la plantilla recien creada por auto-pack queda activa y el layout
   // hook ya tiene las celdas listas, asignamos las imagenes preloaded segun

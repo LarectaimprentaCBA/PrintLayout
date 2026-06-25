@@ -18,7 +18,7 @@ async function tracePotraceViaIPC(blob, opts) {
   return window.printlayout.contour.tracePotrace(ab, opts)
 }
 
-const MAX_TRACE_DIM = 1200
+const MAX_TRACE_DIM = 700
 
 async function buildAlphaMaskCanvas(blob, threshold = 128) {
   const bitmap = await createImageBitmap(blob)
@@ -68,7 +68,10 @@ function extractForegroundD(svgString) {
   return fgPaths.map(p => p.getAttribute('d')).filter(Boolean).join(' ')
 }
 
-const POLY_SAMPLE_STEPS = 48
+// Puntos por cada curva al muestrear el contorno para el corte. 16 alcanza para
+// que la línea salga suave a tamaño sticker, con MUCHOS menos puntos que 48 → la
+// polilínea es más liviana (zoom más fluido, menos data al plotter, más rápido).
+const POLY_SAMPLE_STEPS = 16
 
 function postProcessTrace(svgString, width, height) {
   const fgD = extractForegroundD(svgString)

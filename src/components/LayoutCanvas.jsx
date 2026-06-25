@@ -39,11 +39,15 @@ export default function LayoutCanvas({
   useEffect(() => {
     if (!template || !scrollRef.current) return;
     const el = scrollRef.current;
+    // Medimos el contenedor PADRE (el <main>, overflow-hidden, sin barra de
+    // scroll) en vez del que scrollea: así aparecer/desaparecer la barra NO
+    // cambia la medida y el "encaje" no entra en loop (zoom que tiembla).
+    const measureEl = el.parentElement || el;
 
     const fit = () => {
       const padding = 64;
-      const availW = el.clientWidth - padding;
-      const availH = el.clientHeight - padding;
+      const availW = measureEl.clientWidth - padding;
+      const availH = measureEl.clientHeight - padding;
       const sheetWpx = template.pageWidthMm * PX_PER_MM_AT_100;
       const sheetHpx = template.pageHeightMm * PX_PER_MM_AT_100;
       const s = Math.min(availW / sheetWpx, availH / sheetHpx, 1);
@@ -52,9 +56,11 @@ export default function LayoutCanvas({
 
     fit();
     const ro = new ResizeObserver(fit);
-    ro.observe(el);
+    ro.observe(measureEl);
     return () => ro.disconnect();
-  }, [template]);
+    // Solo depende del TAMAÑO de hoja (no de cada cambio de cortes/template), así
+    // aplicar el contorno no re-suscribe el observer ni recalcula el encaje.
+  }, [template?.id, template?.pageWidthMm, template?.pageHeightMm]);
 
   // Reset zoom cuando cambia la plantilla.
   useEffect(() => {
