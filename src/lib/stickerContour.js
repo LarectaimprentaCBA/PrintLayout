@@ -9,7 +9,8 @@
 
 import { solidBgRemoval } from './contour/solidBgRemoval.js'
 import { traceContour } from './contour/trace.js'
-import { offsetPolygons, CLIPPER_SCALE } from './contour/offset.js'
+import { offsetPolygons, unionOuter, CLIPPER_SCALE } from './contour/offset.js'
+import { polyArea } from './contour/geometry.js'
 
 function blobToDataUrl(blob) {
   return new Promise((resolve, reject) => {
@@ -51,17 +52,27 @@ export async function computeStickerContour(fileOrBlob, {
   const W = result.width
   const H = result.height
   const maskedDataUrl = await blobToDataUrl(maskedBlob)
+  const toFrac = (poly) => poly.map(p => [p.X / (W * CLIPPER_SCALE), p.Y / (H * CLIPPER_SCALE)])
 
-  // Filtra motas de ruido: descarta contornos con área < 0.2% del mayor.
-  const maxArea = result.classified.reduce((m, c) => Math.max(m, c.area), 0) || 1
-  const contours = result.classified
-    .filter(c => c.area >= maxArea * 0.002)
-    .map(c => ({
-      isOuter: c.isOuter,
-      area: c.area,
-      // poly viene en unidades Clipper (px * 1000) sobre la caja W×H del trazado.
-      points: c.poly.map(p => [p.X / (W * CLIPPER_SCALE), p.Y / (H * CLIPPER_SCALE)]),
-    }))
+  let contours
+  if (includeHoles) {
+    // Con huecos: cada forma + sus huecos reales. Filtra motas (< 0.2% del mayor).
+    const maxArea = result.classified.reduce((m, c) => Math.max(m, c.area), 0) || 1
+    contours = result.classified
+      .filter(c => c.area >= maxArea * 0.002)
+      .map(c => ({ isOuter: c.isOuter, area: c.area, points: toFrac(c.poly) }))
+  } else {
+    // Silueta: UNE los contornos exteriores → la marca más externa se traga lo de
+    // adentro (letras, anillo interno, etc.) → un solo corte por el borde, sin
+    // cortes internos. Robusto aunque el anillo tenga una mínima abertura.
+    const outerPolys = result.classified.filter(c => c.isOuter).map(c => c.poly)
+    const merged = unionOuter(outerPolys)
+    const areas = merged.map(polyArea)
+    const maxA = areas.reduce((m, a) => Math.max(m, a), 0) || 1
+    contours = merged
+      .map((poly, i) => ({ isOuter: true, area: areas[i], points: toFrac(poly) }))
+      .filter(c => c.area >= maxA * 0.02) // descarta restos chicos sueltos
+  }
 
   return { maskedDataUrl, maskedW: W, maskedH: H, contours }
 }

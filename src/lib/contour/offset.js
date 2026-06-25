@@ -179,4 +179,32 @@ export function offsetPolygons(polys, deltaPx, { joinType = 'round' } = {}) {
   return { d: polygonsToPathD(solution), polys: solution }
 }
 
+/**
+ * Une (Clipper Union) un conjunto de polígonos y devuelve SOLO los contornos
+ * EXTERIORES (descarta huecos). Para el modo "silueta": al unir los contornos
+ * exteriores del diseño, el más externo (anillo, heptágono, recuadro) se traga
+ * lo de adentro y queda una sola marca exterior, sin cortes internos.
+ * Devuelve polígonos en las mismas unidades Clipper (x1000).
+ */
+export function unionOuter(polys) {
+  if (!polys || polys.length === 0) return []
+  const cl = new ClipperLib.Clipper()
+  cl.AddPaths(polys, ClipperLib.PolyType.ptSubject, true)
+  const tree = new ClipperLib.PolyTree()
+  cl.Execute(
+    ClipperLib.ClipType.ctUnion,
+    tree,
+    ClipperLib.PolyFillType.pftNonZero,
+    ClipperLib.PolyFillType.pftNonZero,
+  )
+  const out = []
+  const childs = tree.Childs() || []
+  for (const child of childs) {
+    // Los hijos de primer nivel son contornos exteriores; sus huecos (nietos) se
+    // descartan → la silueta no tiene cortes internos.
+    if (!child.IsHole()) out.push(child.Contour())
+  }
+  return out
+}
+
 export { SCALE as CLIPPER_SCALE }
