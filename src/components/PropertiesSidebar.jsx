@@ -357,6 +357,13 @@ export default function PropertiesSidebar({
                     Quitar
                   </button>
                 </div>
+                {template.cutShape === 'contour' && onUpdateTemporal && (
+                  <ContourImageOverride
+                    template={template}
+                    imgId={selectedImg.id}
+                    onUpdate={onUpdateTemporal}
+                  />
+                )}
               </>
             ) : (
               <button
@@ -701,29 +708,6 @@ function ContourControls({ template, selImgId, selImgName, onUpdate }) {
   const dAlpha = template.contourAlphamax ?? 1.0;
   const dOpt = template.contourOpttolerance ?? 0.2;
 
-  const byImg = template.contourByImage || {};
-  const ov = selImgId ? byImg[selImgId] : null;
-  const hasOv = !!ov;
-
-  const setOv = (patch) => {
-    if (!selImgId) return;
-    onUpdate({ contourByImage: { ...byImg, [selImgId]: { ...(ov || {}), ...patch } } });
-  };
-  const enableOv = () => {
-    if (!selImgId) return;
-    onUpdate({ contourByImage: { ...byImg, [selImgId]: { tolerance: dTol, bleedMm: dBleed, includeHoles: dHoles } } });
-  };
-  const disableOv = () => {
-    if (!selImgId) return;
-    const n = { ...byImg };
-    delete n[selImgId];
-    onUpdate({ contourByImage: n });
-  };
-
-  const ovTol = hasOv && ov.tolerance !== undefined ? ov.tolerance : dTol;
-  const ovBleed = hasOv && ov.bleedMm !== undefined ? ov.bleedMm : dBleed;
-  const ovHoles = hasOv && ov.includeHoles !== undefined ? ov.includeHoles : dHoles;
-
   return (
     <div className="space-y-2 rounded border border-ink-700 bg-ink-800/40 p-2">
       <CRow label="Motor">
@@ -764,30 +748,9 @@ function ContourControls({ template, selImgId, selImgName, onUpdate }) {
         </div>
       )}
 
-      {selImgId ? (
-        <div className="mt-1 space-y-2 rounded border border-accent-500/30 bg-accent-500/5 p-2">
-          <label className="flex items-center justify-between gap-2">
-            <span className="truncate text-[11px] text-ink-300" title={selImgName}>Ajuste propio: {selImgName}</span>
-            <input
-              type="checkbox"
-              checked={hasOv}
-              onChange={(e) => (e.target.checked ? enableOv() : disableOv())}
-              className="h-3.5 w-3.5 accent-accent-500"
-            />
-          </label>
-          {hasOv && (
-            <>
-              <CRange label="Tolerancia" value={ovTol} min={0} max={128} step={1} onChange={(v) => setOv({ tolerance: v })} />
-              <CNum label="Sangrado" value={ovBleed} step={0.1} min={-10} max={10} onChange={(v) => setOv({ bleedMm: v })} />
-              <CCheck label="Incluir huecos" checked={ovHoles} onChange={(v) => setOv({ includeHoles: v })} />
-            </>
-          )}
-        </div>
-      ) : (
-        <p className="text-[10px] leading-snug text-ink-500">Tip: seleccioná una imagen (click en su celda) para darle un ajuste propio.</p>
-      )}
-
-      <p className="text-[10px] leading-snug text-ink-500">El contorno se calcula sobre cada imagen. Ajustá mirando la línea roja.</p>
+      <p className="text-[10px] leading-snug text-ink-500">
+        Para ajustar UNA imagen aparte, hacé click en su celda: los controles propios aparecen en "Celda seleccionada".
+      </p>
     </div>
   );
 }
@@ -836,5 +799,53 @@ function CCheck({ label, checked, onChange }) {
       <span className="text-ink-400">{label}</span>
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="h-3.5 w-3.5 accent-accent-500" />
     </label>
+  );
+}
+
+// Ajuste de contorno PROPIO de una imagen (se muestra en "Celda seleccionada"
+// cuando la forma de corte es Contorno). Default = el de la hoja; tildando
+// "ajuste propio" se guarda en template.contourByImage[imgId].
+function ContourImageOverride({ template, imgId, onUpdate }) {
+  const dTol = template.contourTolerance ?? 32;
+  const dBleed = template.contourBleedMm ?? 0;
+  const dHoles = template.contourIncludeHoles !== false;
+
+  const byImg = template.contourByImage || {};
+  const ov = byImg[imgId] || null;
+  const hasOv = !!ov;
+
+  const setOv = (patch) => onUpdate({ contourByImage: { ...byImg, [imgId]: { ...(ov || {}), ...patch } } });
+  const enableOv = () => onUpdate({ contourByImage: { ...byImg, [imgId]: { tolerance: dTol, bleedMm: dBleed, includeHoles: dHoles } } });
+  const disableOv = () => {
+    const n = { ...byImg };
+    delete n[imgId];
+    onUpdate({ contourByImage: n });
+  };
+
+  const tol = hasOv && ov.tolerance !== undefined ? ov.tolerance : dTol;
+  const bleed = hasOv && ov.bleedMm !== undefined ? ov.bleedMm : dBleed;
+  const holes = hasOv && ov.includeHoles !== undefined ? ov.includeHoles : dHoles;
+
+  return (
+    <div className="mt-2 space-y-2 rounded border border-accent-500/30 bg-accent-500/5 p-2">
+      <label className="flex items-center justify-between gap-2">
+        <span className="text-[11px] font-medium text-ink-200">Contorno propio de esta imagen</span>
+        <input
+          type="checkbox"
+          checked={hasOv}
+          onChange={(e) => (e.target.checked ? enableOv() : disableOv())}
+          className="h-3.5 w-3.5 accent-accent-500"
+        />
+      </label>
+      {hasOv ? (
+        <>
+          <CRange label="Tolerancia" value={tol} min={0} max={128} step={1} onChange={(v) => setOv({ tolerance: v })} />
+          <CNum label="Sangrado" value={bleed} step={0.1} min={-10} max={10} onChange={(v) => setOv({ bleedMm: v })} />
+          <CCheck label="Incluir huecos" checked={holes} onChange={(v) => setOv({ includeHoles: v })} />
+        </>
+      ) : (
+        <p className="text-[10px] leading-snug text-ink-500">Usa el ajuste general de la hoja. Tildá para darle uno propio.</p>
+      )}
+    </div>
   );
 }
