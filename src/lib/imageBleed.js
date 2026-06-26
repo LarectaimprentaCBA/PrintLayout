@@ -405,6 +405,104 @@ export async function extendCrop(
 }
 
 // ----------------------------------------------------------------------------
+// 7) Radial — para stickers REDONDOS. Rellena lo transparente estirando hacia
+// afuera, por angulo, el color del anillo exterior del diseno. El centro opaco
+// queda intacto; solo se llena el vacio de afuera (las esquinas que dejo el
+// recorte circular, y/o el gap si el target es mas grande que la imagen). Asi el
+// diseno "sangra" mas alla del corte circular: si el plotter se desfasa, el
+// corte cae sobre el color del borde y no sobre blanco. NO mete el corte para
+// adentro ni achica el diseno (ideal cuando el contenido llega justo al borde).
+// ----------------------------------------------------------------------------
+// radialStyle define COMO se llena la zona transparente de afuera del circulo:
+//   'stretch'   — estira el color del anillo del borde hacia afuera (constante).
+//                 stripPx = que tan adentro se muestrea el anillo (mas suave).
+//   'replicate' — repite hacia afuera una franja de stripPx del borde (textura).
+//   'mirror'    — refleja el diseno del borde hacia afuera (espejo radial).
+//   'color'     — rellena con un color solido elegido.
+function hexToRgbTriplet(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim());
+  if (!m) return [255, 255, 255];
+  const n = parseInt(m[1], 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+export async function extendRadial(
+  dataUrl, srcSizeMm, targetSizeMm,
+  { offsetMm, radialStyle = 'stretch', stripPx = 8, color = '#ffffff' } = {},
+) {
+  const img = await loadImage(dataUrl);
+  const { canvasW, canvasH, drawW, drawH, drawX, drawY } =
+    computeLayout(img, srcSizeMm, targetSizeMm, offsetMm);
+  const { canvas, ctx } = makeCanvas(canvasW, canvasH);
+  ctx.drawImage(img, drawX, drawY, drawW, drawH);
+
+  const id = ctx.getImageData(0, 0, canvasW, canvasH);
+  const d = id.data;
+  // Centro del diseno (la imagen ya quedo centrada con su offset).
+  const cx = drawX + drawW / 2;
+  const cy = drawY + drawH / 2;
+  const TWO_PI = Math.PI * 2;
+  const BUCKETS = 1440; // ~0.25° por bucket
+  const strip = Math.max(1, Math.round(stripPx));
+  const [cr, cg, cb] = hexToRgbTriplet(color);
+
+  // 1) Radio opaco maximo por angulo (el borde exterior del diseno).
+  const edgeR = new Float32Array(BUCKETS);
+  for (let y = 0; y < canvasH; y++) {
+    for (let x = 0; x < canvasW; x++) {
+      if (d[(y * canvasW + x) * 4 + 3] <= 128) continue; // transparente
+      const dx = x - cx;
+      const dy = y - cy;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      let b = Math.floor(((Math.atan2(dy, dx) + Math.PI) / TWO_PI) * BUCKETS);
+      if (b < 0) b = 0; else if (b >= BUCKETS) b = BUCKETS - 1;
+      if (dist > edgeR[b]) edgeR[b] = dist;
+    }
+  }
+  // 2) Rellenar cada pixel transparente segun el estilo elegido.
+  for (let y = 0; y < canvasH; y++) {
+    for (let x = 0; x < canvasW; x++) {
+      const idx = (y * canvasW + x) * 4;
+      if (d[idx + 3] >= 200) continue; // ya opaco: no tocar el diseno
+      if (radialStyle === 'color') {
+        d[idx] = cr; d[idx + 1] = cg; d[idx + 2] = cb; d[idx + 3] = 255;
+        continue;
+      }
+      const dx = x - cx;
+      const dy = y - cy;
+      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      const ang = Math.atan2(dy, dx);
+      let b = Math.floor(((ang + Math.PI) / TWO_PI) * BUCKETS);
+      if (b < 0) b = 0; else if (b >= BUCKETS) b = BUCKETS - 1;
+      const R = edgeR[b];
+      if (R < 2) continue; // no hay opaco en esa direccion
+      const out = dist > R ? dist - R : 0; // cuanto cae afuera del borde
+      let srcR;
+      if (radialStyle === 'replicate') {
+        srcR = R - 1 - (out % strip); // repite la franja del borde hacia afuera
+      } else if (radialStyle === 'mirror') {
+        srcR = R - out; // refleja el diseno a traves del borde
+        if (srcR < 1) srcR = 1;
+      } else {
+        // 'stretch' (default): estira el color del anillo (a stripPx de adentro).
+        srcR = R - Math.min(strip, R - 1);
+      }
+      let sx = Math.round(cx + Math.cos(ang) * srcR);
+      let sy = Math.round(cy + Math.sin(ang) * srcR);
+      if (sx < 0) sx = 0; else if (sx >= canvasW) sx = canvasW - 1;
+      if (sy < 0) sy = 0; else if (sy >= canvasH) sy = canvasH - 1;
+      const sIdx = (sy * canvasW + sx) * 4;
+      d[idx] = d[sIdx];
+      d[idx + 1] = d[sIdx + 1];
+      d[idx + 2] = d[sIdx + 2];
+      d[idx + 3] = 255;
+    }
+  }
+  ctx.putImageData(id, 0, 0);
+  return output(canvas, targetSizeMm);
+}
+
+// ----------------------------------------------------------------------------
 // Dispatcher convenientecome — recibe { method, ...options } y aplica.
 // ----------------------------------------------------------------------------
 export async function extendWithMethod(
@@ -418,6 +516,7 @@ export async function extendWithMethod(
     case 'nineSlice': return extendNineSlice(dataUrl, srcSizeMm, targetSizeMm, opts);
     case 'shrinkBleed': return extendShrinkAndBleed(dataUrl, srcSizeMm, targetSizeMm, opts);
     case 'crop': return extendCrop(dataUrl, srcSizeMm, targetSizeMm, opts);
+    case 'radial': return extendRadial(dataUrl, srcSizeMm, targetSizeMm, opts);
     default:
       // Default = mirror (es el mas seguro para fotos reales).
       return extendMirror(dataUrl, srcSizeMm, targetSizeMm, opts);

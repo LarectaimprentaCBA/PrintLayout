@@ -33,6 +33,8 @@ export default function ImageEditorModal({
   const [shrinkFillMode, setShrinkFillMode] = useState('mirror');
   const [centerRectMm, setCenterRectMm] = useState(null);
   const [cropPercent, setCropPercent] = useState(0);
+  // Estilo de relleno del modo 'radial' (sticker redondo).
+  const [radialStyle, setRadialStyle] = useState('stretch'); // 'stretch'|'replicate'|'mirror'|'color'
 
   // Estado de UI.
   const [previewUrl, setPreviewUrl] = useState(null);
@@ -212,7 +214,7 @@ export default function ImageEditorModal({
       const usedOffset = { x: imageOffsetMm.x, y: imageOffsetMm.y };
       try {
         const cfg = methodConfig({
-          method, stripPx, color, shrinkPercent, shrinkFillMode, centerRectMm, cropPercent,
+          method, stripPx, color, shrinkPercent, shrinkFillMode, centerRectMm, cropPercent, radialStyle,
           offsetMm: usedOffset,
         });
         const out = await extendWithMethod(
@@ -233,7 +235,7 @@ export default function ImageEditorModal({
       }
     }, 450);
     return () => debounceRef.current && clearTimeout(debounceRef.current);
-  }, [open, image, aw, ah, tw, th, method, stripPx, color, shrinkPercent, shrinkFillMode, centerRectMm, cropPercent, imageOffsetMm]);
+  }, [open, image, aw, ah, tw, th, method, stripPx, color, shrinkPercent, shrinkFillMode, centerRectMm, cropPercent, radialStyle, imageOffsetMm]);
 
   if (!open || !image) return null;
 
@@ -906,7 +908,69 @@ export default function ImageEditorModal({
                 <option value="nineSlice">9-slice (centro fijo)</option>
                 <option value="shrinkBleed">Encoger + bleed</option>
                 <option value="crop">Recortar bordes (zoom)</option>
+                <option value="radial">Radial (sticker redondo)</option>
               </select>
+
+              {method === 'radial' && (
+                <div className="mt-2 space-y-2">
+                  <label className="block text-[10px] text-ink-400">
+                    Estilo de borde
+                    <select
+                      value={radialStyle}
+                      onChange={(e) => setRadialStyle(e.target.value)}
+                      className="mt-0.5 w-full rounded border border-ink-700 bg-ink-800 px-2 py-1 text-xs text-ink-100 outline-none focus:border-accent-500"
+                    >
+                      <option value="stretch">Estirar borde</option>
+                      <option value="replicate">Edge replicate (franja)</option>
+                      <option value="mirror">Espejo</option>
+                      <option value="color">Color sólido</option>
+                    </select>
+                  </label>
+                  {(radialStyle === 'stretch' || radialStyle === 'replicate') && (
+                    <label className="block text-[10px] text-ink-400">
+                      Ancho de franja: {stripPx} px
+                      <input
+                        type="range" min="2" max="32" step="1"
+                        value={stripPx}
+                        onChange={(e) => setStripPx(parseInt(e.target.value, 10))}
+                        className="mt-0.5 w-full"
+                      />
+                    </label>
+                  )}
+                  {radialStyle === 'color' && (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={color}
+                        onChange={(e) => setColor(e.target.value)}
+                        className="h-7 w-12 cursor-pointer rounded border border-ink-700 bg-ink-800"
+                      />
+                      <input
+                        type="text"
+                        value={color}
+                        onChange={(e) => setColor(e.target.value)}
+                        className="flex-1 rounded border border-ink-700 bg-ink-800 px-2 py-1 text-xs text-ink-100"
+                      />
+                      <button
+                        onClick={() => setPickingColor(!pickingColor)}
+                        className={`rounded border px-2 py-1 text-[10px] ${
+                          pickingColor
+                            ? 'border-accent-500 bg-accent-500/20 text-accent-300'
+                            : 'border-ink-700 text-ink-200 hover:bg-ink-800'
+                        }`}
+                        title="Pipeta: click sobre el preview para samplear color"
+                      >
+                        Pipeta
+                      </button>
+                    </div>
+                  )}
+                  <p className="text-[10px] text-ink-500">
+                    Rellena lo transparente de afuera del círculo sin mover ni
+                    achicar el diseño. Así el corte puede ir justo en el borde y
+                    el desfase no deja blanco.
+                  </p>
+                </div>
+              )}
 
               {method === 'crop' && (
                 <div className="mt-2">
@@ -1115,7 +1179,7 @@ export default function ImageEditorModal({
   );
 }
 
-function methodConfig({ method, stripPx, color, shrinkPercent, shrinkFillMode, centerRectMm, cropPercent, offsetMm }) {
+function methodConfig({ method, stripPx, color, shrinkPercent, shrinkFillMode, centerRectMm, cropPercent, radialStyle, offsetMm }) {
   switch (method) {
     case 'replicate':
       return { method, stripPx, offsetMm };
@@ -1133,6 +1197,8 @@ function methodConfig({ method, stripPx, color, shrinkPercent, shrinkFillMode, c
       };
     case 'crop':
       return { method, cropPercent, offsetMm };
+    case 'radial':
+      return { method, radialStyle, stripPx, color, offsetMm };
     case 'mirror':
     default:
       return { method: 'mirror', offsetMm };
