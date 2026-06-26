@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const { spawn } = require('node:child_process');
 const { autoUpdater } = require('electron-updater');
+const potrace = require('potrace');
 const templatesStore = require('./templates-store.cjs');
 const templatesSync = require('./templates-sync.cjs');
 const paperPresetsStore = require('./paper-presets-store.cjs');
@@ -533,6 +534,29 @@ ipcMain.handle('plotter:send-cut', async (_evt, payload) => {
   } catch (err) {
     return { ok: false, error: err.message };
   }
+});
+
+// Contorno (modo Stickers): trazar con potrace (Node) — recibe ArrayBuffer del
+// PNG B/N y opts, devuelve SVG. Mejores curvas que ImageTracer (que corre en el
+// renderer). Mirror del lab printlayout-contour-lab.
+ipcMain.handle('contour:trace-potrace', async (_evt, arrayBuffer, opts = {}) => {
+  const buffer = Buffer.from(arrayBuffer);
+  return new Promise((resolve, reject) => {
+    potrace.trace(buffer, {
+      threshold: opts.threshold ?? 128,
+      turdSize: opts.turdsize ?? 2,
+      alphaMax: opts.alphamax ?? 1.0,
+      optCurve: true,
+      optTolerance: opts.opttolerance ?? 0.2,
+      turnPolicy: 'minority',
+      blackOnWhite: true,
+      background: 'transparent',
+      color: '#000000',
+    }, (err, svg) => {
+      if (err) reject(err);
+      else resolve(svg);
+    });
+  });
 });
 
 ipcMain.handle('export:save-pdf', async (evt, { defaultName, bytes }) => {

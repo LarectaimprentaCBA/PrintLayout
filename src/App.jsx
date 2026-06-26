@@ -57,6 +57,7 @@ import {
 } from './lib/templates.js';
 import { generateCuts } from './lib/grid.js';
 import { buildOrderJobs } from './intake/buildOrderJob.js';
+import { contourCutsByAssignments } from './lib/stickerContour.js';
 import {
   buildCatalogRows,
   catalogRowForTemplate,
@@ -355,10 +356,14 @@ export default function App() {
   const [pdfExtract, setPdfExtract] = useState(null); // { fileName, tmpDir, images }
   // Auto-acomodar imagenes.
   const [autoPackFiles, setAutoPackFiles] = useState(null);
+  // Cache de contornos por imagen+tolerancia (modo corte "Contorno"): ajustar
+  // sangrado/huecos no re-traza, solo re-mapea.
+  const contourCacheRef = useRef(new Map());
   // Acomodar por cantidad (N por hoja, maximo tamano).
   const [countPackFiles, setCountPackFiles] = useState(null);
   // Imagenes precargadas que se asignan a una plantilla recien creada.
   const [pendingAutoAssign, setPendingAutoAssign] = useState(null); // { templateId, images }
+  const processedAutoAssignRef = useRef(null); // guard idempotencia (StrictMode doble-run)
 
   // ---- Jobs / Tabs ----
   // currentJobId/Name/isDirty viven en la tab activa.
@@ -814,6 +819,10 @@ export default function App() {
     if (!activeTab?.template) return;
     updateActiveTab((tab) => {
       const next = { ...tab.template, ...updates };
+      // Forma de corte "Contorno": los cortes son los contornos por imagen, los
+      // recalcula un efecto async (contourCutsByAssignments). NO los regeneramos
+      // como rectángulos acá para no pisarlos.
+      if (next.cutShape === 'contour') return { template: next };
       const cutM = next.cutMarginMm ?? 0;
       const markM = next.markMarginMm ?? 0;
       const shape = next.cutShape ?? 'rect';
@@ -1312,6 +1321,106 @@ export default function App() {
     }
   };
 
+  // Cortes por contorno. Separamos dos clases de cambio:
+  //  - TRAZADO (caro: quita-fondo + Potrace): motor/tolerancia/umbral/tamaño/
+  //    suavizado/simplificación → requiere tocar "Aplicar contorno".
+  //  - MAPEO (barato: solo offset + filtrar huecos): sangría y huecos →
+  //    se aplican AL INSTANTE (re-mapean sobre lo ya trazado, cacheOnly).
+  const contourAssignSig = (layout.assignmentsFront || []).join(',');
+  const pickByImage = (byImg, keys) => {
+    if (!byImg) return null;
+    const out = {};
+    for (const [id, o] of Object.entries(byImg)) {
+      const picked = {};
+      for (const k of keys) if (o[k] !== undefined) picked[k] = o[k];
+      if (Object.keys(picked).length) out[id] = picked;
+    }
+    return Object.keys(out).length ? out : null;
+  };
+  // includeHoles y suavizado ya NO afectan la máscara/trazado (detectHoles siempre
+  // on; la unión/suavizado se hacen al mapear) → son MAPEO barato e instantáneo.
+  const TRACE_KEYS = ['engine', 'tolerance', 'threshold', 'turdsize', 'alphamax', 'opttolerance'];
+  const MAP_KEYS = ['bleedMm', 'includeHoles', 'smoothMm'];
+  const contourTraceSig = selected?.cutShape === 'contour'
+    ? JSON.stringify({
+      e: selected.contourEngine ?? 'potrace',
+      t: selected.contourTolerance ?? 32,
+      th: selected.contourThreshold ?? 128,
+      tu: selected.contourTurdsize ?? 2,
+      a: selected.contourAlphamax ?? 1.0,
+      o: selected.contourOpttolerance ?? 0.2,
+      by: pickByImage(selected.contourByImage, TRACE_KEYS),
+    })
+    : '';
+  // Sangría + huecos + suavizado son mapeo barato (offset/unión) → instantáneo.
+  const contourMapSig = selected?.cutShape === 'contour'
+    ? JSON.stringify({
+      b: selected.contourBleedMm ?? 0,
+      h: selected.contourIncludeHoles === true,
+      s: selected.contourSmoothMm ?? 0.12,
+      by: pickByImage(selected.contourByImage, MAP_KEYS),
+    })
+    : '';
+  const appliedTraceSigRef = useRef('');
+  const [contourComputing, setContourComputing] = useState(false);
+
+  const computeContourNow = useCallback(async (cacheOnly = false) => {
+    if (!selected || selected.cutShape !== 'contour') return;
+    const cells = selected.celdas ?? [];
+    const assignments = layout.assignmentsFront || [];
+    if (!cells.length || !assignments.some(Boolean)) {
+      if (!cacheOnly) appliedTraceSigRef.current = contourTraceSig;
+      return;
+    }
+    const params = {
+      engine: selected.contourEngine ?? 'potrace',
+      tolerance: selected.contourTolerance ?? 32,
+      threshold: selected.contourThreshold ?? 128,
+      turdsize: selected.contourTurdsize ?? 2,
+      alphamax: selected.contourAlphamax ?? 1.0,
+      opttolerance: selected.contourOpttolerance ?? 0.2,
+      bleedMm: selected.contourBleedMm ?? 0,
+      includeHoles: selected.contourIncludeHoles === true,
+      smoothMm: selected.contourSmoothMm ?? 0.12,
+    };
+    if (!cacheOnly) setContourComputing(true);
+    try {
+      const cortes = await contourCutsByAssignments(assignments, cells, layout.imageMap, {
+        params,
+        paramsByImage: selected.contourByImage || null,
+        cache: contourCacheRef.current,
+        cacheOnly,
+      });
+      handlePatchActiveTemplate({ cortes });
+      if (!cacheOnly) appliedTraceSigRef.current = contourTraceSig;
+    } catch (err) {
+      console.error('Calcular contornos falló', err);
+    } finally {
+      if (!cacheOnly) setContourComputing(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, layout.assignmentsFront, layout.imageMap, contourTraceSig]);
+
+  // Auto FULL (traza): al entrar a Contorno o al cambiar las imágenes asignadas.
+  useEffect(() => {
+    if (!selected || selected.cutShape !== 'contour') return;
+    computeContourNow(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.id, selected?.cutShape, contourAssignSig]);
+
+  // Instantáneo (cacheOnly): sangría/huecos → re-mapea sobre lo ya trazado.
+  // Se salta hasta que haya al menos un trazado hecho (evita el flash inicial).
+  useEffect(() => {
+    if (!selected || selected.cutShape !== 'contour') return;
+    if (!appliedTraceSigRef.current) return;
+    computeContourNow(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contourMapSig]);
+
+  // Cambios de TRAZADO sin aplicar → resalta el botón "Aplicar contorno".
+  const contourDirty = selected?.cutShape === 'contour'
+    && contourTraceSig !== appliedTraceSigRef.current;
+
   // Cuando la plantilla recien creada por auto-pack queda activa y el layout
   // hook ya tiene las celdas listas, asignamos las imagenes preloaded segun
   // el cellMapping (que puede repetir indices cuando es modo "repetir").
@@ -1319,6 +1428,11 @@ export default function App() {
     if (!pendingAutoAssign) return;
     if (selected?.id !== pendingAutoAssign.templateId) return;
     if (layout.totalCellsCount === 0) return;
+    // Idempotencia: loadImagesWithMapping AGREGA imágenes. En dev, StrictMode
+    // corre el efecto dos veces con el mismo pendingAutoAssign → sin este guard
+    // la imagen se cargaba duplicada en la lista. Procesamos cada objeto una vez.
+    if (processedAutoAssignRef.current === pendingAutoAssign) return;
+    processedAutoAssignRef.current = pendingAutoAssign;
     layout.loadImagesWithMapping(pendingAutoAssign.images, pendingAutoAssign.cellMapping);
     setPendingAutoAssign(null);
   }, [pendingAutoAssign, selected?.id, layout.totalCellsCount, layout.loadImagesWithMapping]);
@@ -2359,6 +2473,9 @@ export default function App() {
             onChangeBorderLine={(v) => handlePatchActiveTemplate({ cellBorderLineMm: v })}
             onChangeBorderColor={(v) => handlePatchActiveTemplate({ cellBorderColor: v })}
             onUpdateTemporal={handleUpdateTemporalTemplate}
+            onApplyContour={computeContourNow}
+            contourDirty={contourDirty}
+            contourComputing={contourComputing}
             onSaveTemporal={(tpl) => setSaveTemplatePrompt(tpl)}
             onAddImages={handleAddImages}
             onImportPdfImages={handleImportPdfImages}

@@ -9,6 +9,13 @@ import {
 import { readImageFiles } from '../lib/images.js';
 import SidebarImageItem from './SidebarImageItem.jsx';
 
+// Tolerancia de simplificación del contorno (mm). Normaliza valores viejos del
+// Chaikin (escala 0–3) que quedarían fuera de la escala nueva 0–0.5 → default 0.12.
+const SIMPLIFY_MAX_MM = 0.5;
+function normSimplifyMm(v) {
+  return (typeof v === 'number' && v >= 0 && v <= SIMPLIFY_MAX_MM) ? v : 0.12;
+}
+
 // Input mm inline para Properties: edita un valor numerico, valida en blur o
 // Enter. No emite mientras escribis para no regenerar cortes en cada tecla.
 function NumberMmInput({ value, onChange, title }) {
@@ -91,6 +98,9 @@ export default function PropertiesSidebar({
   onChangeBorderLine,
   onChangeBorderColor,
   onUpdateTemporal,
+  onApplyContour,
+  contourDirty = false,
+  contourComputing = false,
   onSaveTemporal,
   onRenameTemplate,
   onSetCategoria,
@@ -357,6 +367,16 @@ export default function PropertiesSidebar({
                     Quitar
                   </button>
                 </div>
+                {template.cutShape === 'contour' && onUpdateTemporal && (
+                  <ContourImageOverride
+                    template={template}
+                    imgId={selectedImg.id}
+                    onUpdate={onUpdateTemporal}
+                    onApply={onApplyContour}
+                    dirty={contourDirty}
+                    computing={contourComputing}
+                  />
+                )}
               </>
             ) : (
               <button
@@ -571,9 +591,30 @@ export default function PropertiesSidebar({
                       >
                         Círculo
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => onUpdateTemporal({ cutShape: 'contour' })}
+                        title="Corta por el contorno de cada imagen (saca el fondo y sigue la silueta)"
+                        className={`rounded px-2 py-0.5 text-[10px] ${
+                          template.cutShape === 'contour'
+                            ? 'bg-accent-600 text-white'
+                            : 'text-ink-300 hover:bg-ink-700'
+                        }`}
+                      >
+                        Contorno
+                      </button>
                     </div>
                   </dd>
                 </div>
+                {template.cutShape === 'contour' && (
+                  <ContourControls
+                    template={template}
+                    onUpdate={onUpdateTemporal}
+                    onApply={onApplyContour}
+                    dirty={contourDirty}
+                    computing={contourComputing}
+                  />
+                )}
               </>
             )}
             <div className="flex items-center justify-between">
@@ -663,5 +704,230 @@ export default function PropertiesSidebar({
         )}
       </div>
     </aside>
+  );
+}
+
+// Controles de la forma de corte "Contorno": motor + ajustes de hoja + avanzado,
+// y override por imagen (default de hoja + ajuste propio de la imagen seleccionada).
+function ContourControls({ template, onUpdate, onApply, dirty, computing }) {
+  const [adv, setAdv] = useState(false);
+
+  const dEngine = template.contourEngine ?? 'potrace';
+  const dTol = template.contourTolerance ?? 32;
+  const dBleed = template.contourBleedMm ?? 0;
+  const dHoles = template.contourIncludeHoles === true;
+  const dThr = template.contourThreshold ?? 128;
+  const dTurd = template.contourTurdsize ?? 2;
+  const dSmooth = normSimplifyMm(template.contourSmoothMm);
+  const dOpt = template.contourOpttolerance ?? 0.2;
+  const nCutPts = (template.cortes || []).reduce((a, c) => a + (c?.length || 0), 0);
+
+  return (
+    <div className="space-y-2 rounded border border-ink-700 bg-ink-800/40 p-2">
+      <CRow label="Motor">
+        <div className="flex gap-0.5 rounded border border-ink-700 bg-ink-800 p-0.5">
+          {['potrace', 'imagetracer'].map((e) => (
+            <button
+              key={e}
+              type="button"
+              onClick={() => onUpdate({ contourEngine: e })}
+              className={`rounded px-1.5 py-0.5 text-[10px] ${dEngine === e ? 'bg-accent-600 text-white' : 'text-ink-300 hover:bg-ink-700'}`}
+            >
+              {e === 'potrace' ? 'Potrace' : 'ImageTracer'}
+            </button>
+          ))}
+        </div>
+      </CRow>
+
+      <div className="pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-500">Toda la hoja</div>
+      <CRange label="Tolerancia fondo" value={dTol} min={0} max={128} step={1} onChange={(v) => onUpdate({ contourTolerance: v })} />
+      <CNum label="Sangrado (vivo)" value={dBleed} step={0.1} min={-10} max={10} onChange={(v) => onUpdate({ contourBleedMm: v })} />
+      <CRange label="Suavizado (vivo)" value={dSmooth} min={0} max={0.5} step={0.02} onChange={(v) => onUpdate({ contourSmoothMm: v })} />
+      <CCheck label="Cortar huecos internos" checked={dHoles} onChange={(v) => onUpdate({ contourIncludeHoles: v })} />
+      <div className="flex items-center justify-between text-[10px] text-ink-500">
+        <span>Puntos de corte</span>
+        <span className="tabular-nums text-ink-300">{nCutPts}</span>
+      </div>
+
+      <button
+        type="button"
+        onClick={() => setAdv((a) => !a)}
+        className="flex w-full items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-ink-400 hover:text-ink-200"
+      >
+        <span className="text-ink-500">{adv ? '▾' : '▸'}</span> Avanzado
+      </button>
+      {adv && (
+        <div className="space-y-2 border-l border-ink-700 pl-2">
+          <CRange label="Umbral" value={dThr} min={1} max={254} step={1} onChange={(v) => onUpdate({ contourThreshold: v })} />
+          <CRange label="Tamaño mínimo" value={dTurd} min={0} max={50} step={1} onChange={(v) => onUpdate({ contourTurdsize: v })} />
+          <CRange label="Simplificación" value={dOpt} min={0} max={1} step={0.05} onChange={(v) => onUpdate({ contourOpttolerance: v })} />
+        </div>
+      )}
+
+      <ApplyContourButton onApply={onApply} dirty={dirty} computing={computing} />
+
+      <p className="text-[10px] leading-snug text-ink-500">
+        Movés los ajustes mirando el preview rojo y tocás "Aplicar contorno" para calcular el corte. Para ajustar UNA imagen aparte, click en su celda.
+      </p>
+    </div>
+  );
+}
+
+// Botón para calcular el corte (trazar). Resaltado cuando hay cambios sin aplicar.
+function ApplyContourButton({ onApply, dirty, computing }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onApply?.()}
+      disabled={computing || !onApply}
+      className={`mt-1 w-full rounded px-2 py-1.5 text-[11px] font-medium disabled:opacity-60 ${
+        computing
+          ? 'bg-ink-700 text-ink-300'
+          : dirty
+            ? 'bg-accent-600 text-white hover:bg-accent-500'
+            : 'border border-ink-700 text-ink-300 hover:bg-ink-800'
+      }`}
+    >
+      {computing ? 'Calculando…' : dirty ? '✓ Aplicar contorno (hay cambios)' : '↻ Recalcular contorno'}
+    </button>
+  );
+}
+
+function CRow({ label, children }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-ink-400">{label}</span>
+      <span>{children}</span>
+    </div>
+  );
+}
+function CRange({ label, value, min, max, step, onChange }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-ink-400">{label}</span>
+      <span className="flex items-center gap-2">
+        <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} className="w-20 accent-accent-500" />
+        <span className="w-8 text-right font-mono text-[11px] text-ink-300">{Number.isInteger(step) ? value : Number(value).toFixed(2)}</span>
+      </span>
+    </div>
+  );
+}
+function CNum({ label, value, step, min, max, onChange }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-ink-400">{label}</span>
+      <span className="inline-flex items-center gap-1">
+        <input
+          type="number"
+          step={step}
+          min={min}
+          max={max}
+          value={value}
+          onChange={(e) => onChange(Number(e.target.value))}
+          className="w-12 rounded border border-ink-700 bg-ink-800 px-1.5 py-0.5 text-right text-xs text-ink-100 outline-none focus:border-accent-500"
+        />
+        <span className="text-[10px] text-ink-500">mm</span>
+      </span>
+    </div>
+  );
+}
+function CCheck({ label, checked, onChange }) {
+  return (
+    <label className="flex items-center justify-between gap-2">
+      <span className="text-ink-400">{label}</span>
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="h-3.5 w-3.5 accent-accent-500" />
+    </label>
+  );
+}
+
+// Ajuste de contorno PROPIO de una imagen (se muestra en "Celda seleccionada"
+// cuando la forma de corte es Contorno). Default = el de la hoja; tildando
+// "ajuste propio" se guarda en template.contourByImage[imgId].
+function ContourImageOverride({ template, imgId, onUpdate, onApply, dirty, computing }) {
+  const [adv, setAdv] = useState(false);
+
+  const dEngine = template.contourEngine ?? 'potrace';
+  const dTol = template.contourTolerance ?? 32;
+  const dBleed = template.contourBleedMm ?? 0;
+  const dHoles = template.contourIncludeHoles === true;
+  const dThr = template.contourThreshold ?? 128;
+  const dTurd = template.contourTurdsize ?? 2;
+  const dSmooth = normSimplifyMm(template.contourSmoothMm);
+  const dOpt = template.contourOpttolerance ?? 0.2;
+
+  const byImg = template.contourByImage || {};
+  const ov = byImg[imgId] || null;
+  const hasOv = !!ov;
+
+  const setOv = (patch) => onUpdate({ contourByImage: { ...byImg, [imgId]: { ...(ov || {}), ...patch } } });
+  const enableOv = () => onUpdate({ contourByImage: { ...byImg, [imgId]: { tolerance: dTol, bleedMm: dBleed, includeHoles: dHoles, smoothMm: dSmooth } } });
+  const disableOv = () => {
+    const n = { ...byImg };
+    delete n[imgId];
+    onUpdate({ contourByImage: n });
+  };
+
+  // Efectivos: lo del override si está seteado, sino el default de la hoja.
+  const eng = hasOv && ov.engine !== undefined ? ov.engine : dEngine;
+  const tol = hasOv && ov.tolerance !== undefined ? ov.tolerance : dTol;
+  const bleed = hasOv && ov.bleedMm !== undefined ? ov.bleedMm : dBleed;
+  const holes = hasOv && ov.includeHoles !== undefined ? ov.includeHoles : dHoles;
+  const thr = hasOv && ov.threshold !== undefined ? ov.threshold : dThr;
+  const turd = hasOv && ov.turdsize !== undefined ? ov.turdsize : dTurd;
+  const smooth = hasOv && ov.smoothMm !== undefined ? normSimplifyMm(ov.smoothMm) : dSmooth;
+  const opt = hasOv && ov.opttolerance !== undefined ? ov.opttolerance : dOpt;
+
+  return (
+    <div className="mt-2 space-y-2 rounded border border-accent-500/30 bg-accent-500/5 p-2">
+      <label className="flex items-center justify-between gap-2">
+        <span className="text-[11px] font-medium text-ink-200">Contorno propio de esta imagen</span>
+        <input
+          type="checkbox"
+          checked={hasOv}
+          onChange={(e) => (e.target.checked ? enableOv() : disableOv())}
+          className="h-3.5 w-3.5 accent-accent-500"
+        />
+      </label>
+      {hasOv ? (
+        <>
+          <CRow label="Motor">
+            <div className="flex gap-0.5 rounded border border-ink-700 bg-ink-800 p-0.5">
+              {['potrace', 'imagetracer'].map((e) => (
+                <button
+                  key={e}
+                  type="button"
+                  onClick={() => setOv({ engine: e })}
+                  className={`rounded px-1.5 py-0.5 text-[10px] ${eng === e ? 'bg-accent-600 text-white' : 'text-ink-300 hover:bg-ink-700'}`}
+                >
+                  {e === 'potrace' ? 'Potrace' : 'ImageTracer'}
+                </button>
+              ))}
+            </div>
+          </CRow>
+          <CRange label="Tolerancia" value={tol} min={0} max={128} step={1} onChange={(v) => setOv({ tolerance: v })} />
+          <CNum label="Sangrado (vivo)" value={bleed} step={0.1} min={-10} max={10} onChange={(v) => setOv({ bleedMm: v })} />
+          <CRange label="Suavizado (vivo)" value={smooth} min={0} max={0.5} step={0.02} onChange={(v) => setOv({ smoothMm: v })} />
+          <CCheck label="Cortar huecos internos" checked={holes} onChange={(v) => setOv({ includeHoles: v })} />
+
+          <button
+            type="button"
+            onClick={() => setAdv((a) => !a)}
+            className="flex w-full items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-ink-400 hover:text-ink-200"
+          >
+            <span className="text-ink-500">{adv ? '▾' : '▸'}</span> Avanzado
+          </button>
+          {adv && (
+            <div className="space-y-2 border-l border-ink-700 pl-2">
+              <CRange label="Umbral" value={thr} min={1} max={254} step={1} onChange={(v) => setOv({ threshold: v })} />
+              <CRange label="Tamaño mínimo" value={turd} min={0} max={50} step={1} onChange={(v) => setOv({ turdsize: v })} />
+              <CRange label="Simplificación" value={opt} min={0} max={1} step={0.05} onChange={(v) => setOv({ opttolerance: v })} />
+            </div>
+          )}
+        </>
+      ) : (
+        <p className="text-[10px] leading-snug text-ink-500">Usa el ajuste general de la hoja. Tildá para darle uno propio.</p>
+      )}
+      <ApplyContourButton onApply={onApply} dirty={dirty} computing={computing} />
+    </div>
   );
 }
