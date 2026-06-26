@@ -9,6 +9,13 @@ import {
 import { readImageFiles } from '../lib/images.js';
 import SidebarImageItem from './SidebarImageItem.jsx';
 
+// Tolerancia de simplificación del contorno (mm). Normaliza valores viejos del
+// Chaikin (escala 0–3) que quedarían fuera de la escala nueva 0–0.5 → default 0.12.
+const SIMPLIFY_MAX_MM = 0.5;
+function normSimplifyMm(v) {
+  return (typeof v === 'number' && v >= 0 && v <= SIMPLIFY_MAX_MM) ? v : 0.12;
+}
+
 // Input mm inline para Properties: edita un valor numerico, valida en blur o
 // Enter. No emite mientras escribis para no regenerar cortes en cada tecla.
 function NumberMmInput({ value, onChange, title }) {
@@ -711,8 +718,9 @@ function ContourControls({ template, onUpdate, onApply, dirty, computing }) {
   const dHoles = template.contourIncludeHoles === true;
   const dThr = template.contourThreshold ?? 128;
   const dTurd = template.contourTurdsize ?? 2;
-  const dAlpha = template.contourAlphamax ?? 1.0;
+  const dSmooth = normSimplifyMm(template.contourSmoothMm);
   const dOpt = template.contourOpttolerance ?? 0.2;
+  const nCutPts = (template.cortes || []).reduce((a, c) => a + (c?.length || 0), 0);
 
   return (
     <div className="space-y-2 rounded border border-ink-700 bg-ink-800/40 p-2">
@@ -734,7 +742,12 @@ function ContourControls({ template, onUpdate, onApply, dirty, computing }) {
       <div className="pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-500">Toda la hoja</div>
       <CRange label="Tolerancia fondo" value={dTol} min={0} max={128} step={1} onChange={(v) => onUpdate({ contourTolerance: v })} />
       <CNum label="Sangrado (vivo)" value={dBleed} step={0.1} min={-10} max={10} onChange={(v) => onUpdate({ contourBleedMm: v })} />
+      <CRange label="Suavizado (vivo)" value={dSmooth} min={0} max={0.5} step={0.02} onChange={(v) => onUpdate({ contourSmoothMm: v })} />
       <CCheck label="Cortar huecos internos" checked={dHoles} onChange={(v) => onUpdate({ contourIncludeHoles: v })} />
+      <div className="flex items-center justify-between text-[10px] text-ink-500">
+        <span>Puntos de corte</span>
+        <span className="tabular-nums text-ink-300">{nCutPts}</span>
+      </div>
 
       <button
         type="button"
@@ -747,9 +760,6 @@ function ContourControls({ template, onUpdate, onApply, dirty, computing }) {
         <div className="space-y-2 border-l border-ink-700 pl-2">
           <CRange label="Umbral" value={dThr} min={1} max={254} step={1} onChange={(v) => onUpdate({ contourThreshold: v })} />
           <CRange label="Tamaño mínimo" value={dTurd} min={0} max={50} step={1} onChange={(v) => onUpdate({ contourTurdsize: v })} />
-          {dEngine === 'potrace' && (
-            <CRange label="Suavizado" value={dAlpha} min={0} max={1.3334} step={0.05} onChange={(v) => onUpdate({ contourAlphamax: v })} />
-          )}
           <CRange label="Simplificación" value={dOpt} min={0} max={1} step={0.05} onChange={(v) => onUpdate({ contourOpttolerance: v })} />
         </div>
       )}
@@ -842,7 +852,7 @@ function ContourImageOverride({ template, imgId, onUpdate, onApply, dirty, compu
   const dHoles = template.contourIncludeHoles === true;
   const dThr = template.contourThreshold ?? 128;
   const dTurd = template.contourTurdsize ?? 2;
-  const dAlpha = template.contourAlphamax ?? 1.0;
+  const dSmooth = normSimplifyMm(template.contourSmoothMm);
   const dOpt = template.contourOpttolerance ?? 0.2;
 
   const byImg = template.contourByImage || {};
@@ -850,7 +860,7 @@ function ContourImageOverride({ template, imgId, onUpdate, onApply, dirty, compu
   const hasOv = !!ov;
 
   const setOv = (patch) => onUpdate({ contourByImage: { ...byImg, [imgId]: { ...(ov || {}), ...patch } } });
-  const enableOv = () => onUpdate({ contourByImage: { ...byImg, [imgId]: { tolerance: dTol, bleedMm: dBleed, includeHoles: dHoles } } });
+  const enableOv = () => onUpdate({ contourByImage: { ...byImg, [imgId]: { tolerance: dTol, bleedMm: dBleed, includeHoles: dHoles, smoothMm: dSmooth } } });
   const disableOv = () => {
     const n = { ...byImg };
     delete n[imgId];
@@ -864,7 +874,7 @@ function ContourImageOverride({ template, imgId, onUpdate, onApply, dirty, compu
   const holes = hasOv && ov.includeHoles !== undefined ? ov.includeHoles : dHoles;
   const thr = hasOv && ov.threshold !== undefined ? ov.threshold : dThr;
   const turd = hasOv && ov.turdsize !== undefined ? ov.turdsize : dTurd;
-  const alpha = hasOv && ov.alphamax !== undefined ? ov.alphamax : dAlpha;
+  const smooth = hasOv && ov.smoothMm !== undefined ? normSimplifyMm(ov.smoothMm) : dSmooth;
   const opt = hasOv && ov.opttolerance !== undefined ? ov.opttolerance : dOpt;
 
   return (
@@ -896,6 +906,7 @@ function ContourImageOverride({ template, imgId, onUpdate, onApply, dirty, compu
           </CRow>
           <CRange label="Tolerancia" value={tol} min={0} max={128} step={1} onChange={(v) => setOv({ tolerance: v })} />
           <CNum label="Sangrado (vivo)" value={bleed} step={0.1} min={-10} max={10} onChange={(v) => setOv({ bleedMm: v })} />
+          <CRange label="Suavizado (vivo)" value={smooth} min={0} max={0.5} step={0.02} onChange={(v) => setOv({ smoothMm: v })} />
           <CCheck label="Cortar huecos internos" checked={holes} onChange={(v) => setOv({ includeHoles: v })} />
 
           <button
@@ -909,9 +920,6 @@ function ContourImageOverride({ template, imgId, onUpdate, onApply, dirty, compu
             <div className="space-y-2 border-l border-ink-700 pl-2">
               <CRange label="Umbral" value={thr} min={1} max={254} step={1} onChange={(v) => setOv({ threshold: v })} />
               <CRange label="Tamaño mínimo" value={turd} min={0} max={50} step={1} onChange={(v) => setOv({ turdsize: v })} />
-              {eng === 'potrace' && (
-                <CRange label="Suavizado" value={alpha} min={0} max={1.3334} step={0.05} onChange={(v) => setOv({ alphamax: v })} />
-              )}
               <CRange label="Simplificación" value={opt} min={0} max={1} step={0.05} onChange={(v) => setOv({ opttolerance: v })} />
             </div>
           )}

@@ -1337,8 +1337,10 @@ export default function App() {
     }
     return Object.keys(out).length ? out : null;
   };
-  // includeHoles afecta la MÁSCARA (rellenar el centro o no) → es TRAZADO.
-  const TRACE_KEYS = ['engine', 'tolerance', 'threshold', 'turdsize', 'alphamax', 'opttolerance', 'includeHoles'];
+  // includeHoles y suavizado ya NO afectan la máscara/trazado (detectHoles siempre
+  // on; la unión/suavizado se hacen al mapear) → son MAPEO barato e instantáneo.
+  const TRACE_KEYS = ['engine', 'tolerance', 'threshold', 'turdsize', 'alphamax', 'opttolerance'];
+  const MAP_KEYS = ['bleedMm', 'includeHoles', 'smoothMm'];
   const contourTraceSig = selected?.cutShape === 'contour'
     ? JSON.stringify({
       e: selected.contourEngine ?? 'potrace',
@@ -1347,15 +1349,16 @@ export default function App() {
       tu: selected.contourTurdsize ?? 2,
       a: selected.contourAlphamax ?? 1.0,
       o: selected.contourOpttolerance ?? 0.2,
-      h: selected.contourIncludeHoles === true,
       by: pickByImage(selected.contourByImage, TRACE_KEYS),
     })
     : '';
-  // Solo el sangrado es mapeo barato → instantáneo.
+  // Sangría + huecos + suavizado son mapeo barato (offset/unión) → instantáneo.
   const contourMapSig = selected?.cutShape === 'contour'
     ? JSON.stringify({
       b: selected.contourBleedMm ?? 0,
-      by: pickByImage(selected.contourByImage, ['bleedMm']),
+      h: selected.contourIncludeHoles === true,
+      s: selected.contourSmoothMm ?? 0.12,
+      by: pickByImage(selected.contourByImage, MAP_KEYS),
     })
     : '';
   const appliedTraceSigRef = useRef('');
@@ -1378,6 +1381,7 @@ export default function App() {
       opttolerance: selected.contourOpttolerance ?? 0.2,
       bleedMm: selected.contourBleedMm ?? 0,
       includeHoles: selected.contourIncludeHoles === true,
+      smoothMm: selected.contourSmoothMm ?? 0.12,
     };
     if (!cacheOnly) setContourComputing(true);
     try {

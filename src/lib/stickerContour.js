@@ -9,8 +9,7 @@
 
 import { solidBgRemoval } from './contour/solidBgRemoval.js'
 import { traceContour } from './contour/trace.js'
-import { offsetPolygons, unionOuter, CLIPPER_SCALE } from './contour/offset.js'
-import { polyArea } from './contour/geometry.js'
+import { mergeContours, CLIPPER_SCALE } from './contour/offset.js'
 
 function blobToDataUrl(blob) {
   return new Promise((resolve, reject) => {
@@ -37,13 +36,13 @@ export async function computeStickerContour(fileOrBlob, {
   turdsize = 2,
   alphamax = 1.0,
   opttolerance = 0.2,
-  includeHoles = false,
 } = {}) {
-  // includeHoles controla detectHoles: OFF rellena el centro (silueta exterior →
-  // un solo corte por el borde); ON vuelve transparentes las regiones internas
-  // del color del fondo (huecos reales: ojal, contador de una "O", etc.).
+  // detectHoles SIEMPRE on: necesitamos la geometría REAL del diseño (el aro como
+  // banda, los contadores de las letras como huecos) para que la sangría pueda
+  // crecer y cerrarlos. `includeHoles` (Keep Holes) ya NO cambia la máscara: solo
+  // decide, al final del mapeo, si esos huecos se cortan o no.
   const maskedBlob = await solidBgRemoval(fileOrBlob, {
-    tolerance, detectHoles: includeHoles, defringe: true,
+    tolerance, detectHoles: true, defringe: true,
   })
   const result = await traceContour(maskedBlob, {
     engine, threshold, turdsize, alphamax, opttolerance,
@@ -54,30 +53,13 @@ export async function computeStickerContour(fileOrBlob, {
   const maskedDataUrl = await blobToDataUrl(maskedBlob)
   const toFrac = (poly) => poly.map(p => [p.X / (W * CLIPPER_SCALE), p.Y / (H * CLIPPER_SCALE)])
 
-  let contours
-  if (includeHoles) {
-    // Con huecos: cada forma + sus huecos reales. Filtra motas (< 0.2% del mayor).
-    const maxArea = result.classified.reduce((m, c) => Math.max(m, c.area), 0) || 1
-    contours = result.classified
-      .filter(c => c.area >= maxArea * 0.002)
-      .map(c => ({ isOuter: c.isOuter, area: c.area, points: toFrac(c.poly) }))
-  } else {
-    // Silueta: UNE los contornos exteriores y se queda SOLO con la marca más
-    // externa (la de mayor área) = el borde del sticker. Todo lo de adentro
-    // (letras, anillo interno, adornos que quedan como islas en el hueco del aro)
-    // es parte del sticker impreso, NO se corta. Un solo corte limpio por el borde.
-    const outerPolys = result.classified.filter(c => c.isOuter).map(c => c.poly)
-    const merged = unionOuter(outerPolys)
-    let bestPoly = null
-    let bestArea = -1
-    for (const poly of merged) {
-      const a = polyArea(poly)
-      if (a > bestArea) { bestArea = a; bestPoly = poly }
-    }
-    contours = bestPoly
-      ? [{ isOuter: true, area: bestArea, points: toFrac(bestPoly) }]
-      : []
-  }
+  // TODAS las formas (exteriores + huecos), sin unir ni descartar: la unión se
+  // hace en el mapeo, DESPUÉS de aplicar la sangría (así se fusiona lo que se toca
+  // al crecer). Solo se filtran motas muy chicas.
+  const maxArea = result.classified.reduce((m, c) => Math.max(m, c.area), 0) || 1
+  const contours = result.classified
+    .filter(c => c.area >= maxArea * 0.0008)
+    .map(c => ({ isOuter: c.isOuter, area: c.area, points: toFrac(c.poly) }))
 
   return { maskedDataUrl, maskedW: W, maskedH: H, contours }
 }
@@ -98,7 +80,7 @@ export async function computeStickerContour(fileOrBlob, {
  * @param {string} opts.joinType - 'round' | 'miter' | 'square' (para el sangrado)
  * @returns {Array<Array<[number,number]>>} polilíneas mm cerradas
  */
-export function contoursToCellCortes(contours, cell, imgW, imgH, { bleedMm = 0, joinType = 'round' } = {}) {
+export function contoursToCellCortes(contours, cell, imgW, imgH, { bleedMm = 0, includeHoles = false, smoothMm = 0, joinType = 'round' } = {}) {
   if (!contours?.length || !imgW || !imgH) return []
   // Encuadre 'contain': escala que entra en la celda preservando aspecto.
   const s = Math.min(cell.w / imgW, cell.h / imgH)
@@ -107,20 +89,16 @@ export function contoursToCellCortes(contours, cell, imgW, imgH, { bleedMm = 0, 
   const ox = cell.x + (cell.w - drawW) / 2
   const oy = cell.y + (cell.h - drawH) / 2
 
-  const toMm = ([fx, fy]) => [ox + fx * drawW, oy + fy * drawH]
-  const mmPolys = contours.map(c => c.points.map(toMm))
-
-  if (!bleedMm) {
-    // Asegura cierre (primer punto == último).
-    return mmPolys.map(closePoly)
-  }
-
-  // Sangrado: pasa a unidades Clipper, ofsetea (auto-orienta huecos), vuelve a mm.
-  const clip = mmPolys.map(poly => poly.map(([x, y]) => ({
-    X: Math.round(x * CLIPPER_SCALE), Y: Math.round(y * CLIPPER_SCALE),
+  // Todas las formas a unidades Clipper (mm x1000) en su lugar dentro de la celda.
+  const clip = contours.map(c => c.points.map(([fx, fy]) => ({
+    X: Math.round((ox + fx * drawW) * CLIPPER_SCALE),
+    Y: Math.round((oy + fy * drawH) * CLIPPER_SCALE),
   })))
-  const { polys } = offsetPolygons(clip, bleedMm, { joinType })
-  return polys.map(poly => closePoly(poly.map(p => [p.X / CLIPPER_SCALE, p.Y / CLIPPER_SCALE])))
+
+  // Agranda por la sangría, une lo que se toca y SIMPLIFICA la línea final (RDP).
+  // Con includeHoles OFF solo quedan los contornos de afuera (lo de adentro no se corta).
+  const merged = mergeContours(clip, bleedMm, { joinType, includeHoles, simplifyMm: smoothMm })
+  return merged.map(poly => closePoly(poly.map(p => [p.X / CLIPPER_SCALE, p.Y / CLIPPER_SCALE])))
 }
 
 function closePoly(poly) {
@@ -158,6 +136,10 @@ export async function contourCutsByAssignments(assignments, cells, imageMap, {
 } = {}) {
   const cortes = []
   if (!Array.isArray(cells) || !imageMap) return cortes
+  // Dedup por (imagen + tamaño de celda + params): una hoja con 15 celdas IGUALES
+  // calcula el contorno UNA sola vez y lo TRASLADA a cada celda (antes se recalculaba
+  // el merge+RDP 15 veces → era la causa principal de la lentitud al mover sliders).
+  const mapCache = new Map()
   for (let i = 0; i < cells.length; i++) {
     const imgId = assignments?.[i]
     if (!imgId) continue
@@ -175,13 +157,16 @@ export async function contourCutsByAssignments(assignments, cells, imageMap, {
     const alphamax = p.alphamax ?? 1.0
     const opttolerance = p.opttolerance ?? 0.2
     const bleedMm = p.bleedMm ?? 0
-    const includeHoles = p.includeHoles !== false
+    const includeHoles = p.includeHoles === true
+    // Tolerancia de simplificación (mm). Valores viejos del Chaikin (escala 0–3)
+    // quedarían enormes para RDP → facetado; los normalizo al default.
+    let smoothMm = p.smoothMm ?? 0.12
+    if (!(smoothMm >= 0 && smoothMm <= 0.5)) smoothMm = 0.12
 
-    // Cache por IMAGEN con su "traceKey" = params que afectan el TRAZADO/MÁSCARA
-    // (incluye includeHoles, porque rellenar o no el centro cambia la máscara).
-    // El sangrado NO entra: cambiarlo re-mapea sobre el sc ya trazado (instantáneo).
-    // En cacheOnly NO se traza: si no hay sc para esa imagen, se saltea.
-    const traceKey = `${engine}:${tolerance}:${threshold}:${turdsize}:${alphamax}:${opttolerance}:${includeHoles}`
+    // Cache por IMAGEN con su "traceKey" = SOLO los params que afectan el TRAZADO.
+    // sangría/huecos/suavizado NO entran: son mapeo (re-unen sobre el sc ya
+    // trazado = instantáneo). En cacheOnly NO se traza: si no hay sc, se saltea.
+    const traceKey = `${engine}:${tolerance}:${threshold}:${turdsize}:${alphamax}:${opttolerance}`
     const cached = cache ? cache.get(imgId) : null
     let sc
     if (cached && cached.traceKey === traceKey) {
@@ -192,7 +177,7 @@ export async function contourCutsByAssignments(assignments, cells, imageMap, {
       try {
         const blob = await dataUrlToBlob(image.dataUrl)
         sc = await computeStickerContour(blob, {
-          engine, tolerance, threshold, turdsize, alphamax, opttolerance, includeHoles,
+          engine, tolerance, threshold, turdsize, alphamax, opttolerance,
         })
         if (cache) cache.set(imgId, { sc, traceKey })
       } catch (e) {
@@ -202,9 +187,17 @@ export async function contourCutsByAssignments(assignments, cells, imageMap, {
     }
     if (!sc) continue
 
-    const contours = includeHoles ? sc.contours : sc.contours.filter(c => c.isOuter)
-    const polys = contoursToCellCortes(contours, cell, sc.maskedW, sc.maskedH, { bleedMm })
-    for (const p2 of polys) cortes.push(p2)
+    // Calcula el contorno UNA vez por (imagen + tamaño de celda + params) en una
+    // celda en el origen, y para cada celda solo TRASLADA por (cell.x, cell.y).
+    // El merge+RDP (lo caro) corre una sola vez aunque la hoja tenga 15 iguales.
+    const cw = Math.round(cell.w * 100), ch = Math.round(cell.h * 100)
+    const mapKey = `${imgId}:${cw}:${ch}:${bleedMm}:${includeHoles}:${smoothMm}`
+    let base = mapCache.get(mapKey)
+    if (!base) {
+      base = contoursToCellCortes(sc.contours, { x: 0, y: 0, w: cell.w, h: cell.h }, sc.maskedW, sc.maskedH, { bleedMm, includeHoles, smoothMm })
+      mapCache.set(mapKey, base)
+    }
+    for (const poly of base) cortes.push(poly.map(([x, y]) => [x + cell.x, y + cell.y]))
   }
   return cortes
 }

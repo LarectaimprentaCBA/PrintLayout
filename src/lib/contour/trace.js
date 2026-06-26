@@ -35,7 +35,13 @@ async function buildAlphaMaskCanvas(blob, threshold = 128) {
   canvas.width = width
   canvas.height = height
   const ctx = canvas.getContext('2d')
+  // Anti-aliasing: un blur leve ANTES de binarizar lima la escalera de píxeles del
+  // borde. Clave en imágenes pixeladas o de líneas finas (el borde entra ya
+  // escalonado desde la imagen) → al binarizar al 50% la frontera queda más suave
+  // y Potrace traza curvas más prolijas. En imágenes limpias el efecto es ínfimo.
+  ctx.filter = 'blur(0.8px)'
   ctx.drawImage(bitmap, 0, 0, width, height)
+  ctx.filter = 'none'
 
   const img = ctx.getImageData(0, 0, width, height)
   const data = img.data

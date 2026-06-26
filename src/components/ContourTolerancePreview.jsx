@@ -50,7 +50,9 @@ export default function ContourTolerancePreview({ imageUrl, tolerance, includeHo
       canvas.width = w; canvas.height = h;
       const cx = canvas.getContext('2d');
       const buf = new Uint8ClampedArray(data.data);
-      applySolidBgRemoval(buf, w, h, { tolerance, detectHoles: !!includeHoles, defringe: true });
+      // detectHoles SIEMPRE on para reflejar la geometría real que se traza
+      // (el aro queda como aro, las letras visibles), igual que computeStickerContour.
+      applySolidBgRemoval(buf, w, h, { tolerance, detectHoles: true, defringe: true });
       const out = cx.createImageData(w, h);
       const od = out.data;
       for (let i = 0; i < buf.length; i += 4) {
