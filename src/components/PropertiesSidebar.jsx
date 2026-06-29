@@ -94,6 +94,7 @@ export default function PropertiesSidebar({
   onChangeMinPages,
   onShare,
   onEditMargin,
+  onEditDobble,
   onChangeWhiteBorder,
   onChangeBorderLine,
   onChangeBorderColor,
@@ -456,7 +457,28 @@ export default function PropertiesSidebar({
               <dt className="text-ink-400">Celdas</dt>
               <dd>{totalCells(template)}</dd>
             </div>
-            {onChangeWhiteBorder && (
+            {template.dobble && (
+              <div className="mt-1 rounded border border-accent-500/30 bg-accent-500/5 px-2 py-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-accent-200">Mazo Dobble</span>
+                  <span className="text-[11px] text-ink-300">⌀ {template.dobble.diametroMM} mm</span>
+                </div>
+                <div className="mt-0.5 text-[10px] text-ink-500">
+                  n{template.dobble.n ?? '?'} · sangrado {template.dobble.bleedMM} mm
+                  {template.dobble.doubleSided ? ' · doble faz' : ''}
+                </div>
+                {onEditDobble && (
+                  <button
+                    type="button"
+                    onClick={onEditDobble}
+                    className="mt-1.5 w-full rounded border border-accent-500/40 bg-accent-500/10 px-2 py-1 text-[11px] font-medium text-accent-200 hover:bg-accent-500/20"
+                  >
+                    Editar diámetro…
+                  </button>
+                )}
+              </div>
+            )}
+            {onChangeWhiteBorder && !template.dobble && (
               <div className="flex items-center justify-between">
                 <dt className="text-ink-400">Borde blanco</dt>
                 <dd>
@@ -468,7 +490,7 @@ export default function PropertiesSidebar({
                 </dd>
               </div>
             )}
-            {onChangeBorderLine && (
+            {onChangeBorderLine && !template.dobble && (
               <div className="flex items-center justify-between">
                 <dt className="text-ink-400">Línea de marco</dt>
                 <dd className="flex items-center gap-1.5">
@@ -553,7 +575,7 @@ export default function PropertiesSidebar({
                 )}
               </dd>
             </div>
-            {template.temporal && onUpdateTemporal && (
+            {template.temporal && onUpdateTemporal && !template.dobble && (
               <>
                 <div className="flex items-center justify-between">
                   <dt className="text-ink-400">Margen corte</dt>

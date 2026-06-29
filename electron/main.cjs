@@ -234,6 +234,71 @@ ipcMain.handle('jobs:load-from-path', async (_evt, { path: filePath }) => {
   }
 });
 
+// Importar mazo Dobble: abre el JSON `recta-dobble-deck` y, si es modo 'assets',
+// resuelve cada ref de simbolo a dataUrl leyendo los archivos al lado del JSON
+// (o en una subcarpeta assets/). Devuelve la receta lista para renderizar inline.
+function mimeDeExt(p) {
+  const ext = String(p || '').toLowerCase().split('.').pop();
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  if (ext === 'webp') return 'image/webp';
+  if (ext === 'svg') return 'image/svg+xml';
+  if (ext === 'gif') return 'image/gif';
+  return 'image/png';
+}
+function leerAssetDataUrl(dir, ref) {
+  const candidatos = [
+    path.join(dir, ref),
+    path.join(dir, 'assets', ref),
+    path.join(dir, 'simbolos', ref),
+  ];
+  for (const c of candidatos) {
+    try {
+      if (fs.existsSync(c)) {
+        const buf = fs.readFileSync(c);
+        return `data:${mimeDeExt(c)};base64,${buf.toString('base64')}`;
+      }
+    } catch (_) { /* probar siguiente */ }
+  }
+  return null;
+}
+ipcMain.handle('dobble:import-recipe', async () => {
+  try {
+    const win = BrowserWindow.getFocusedWindow();
+    const result = await dialog.showOpenDialog(win, {
+      title: 'Importar mazo Dobble (recta-dobble-deck.json)…',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Mazo Dobble', extensions: ['json', 'recta-dobble-deck'] },
+        { name: 'Todos los archivos', extensions: ['*'] },
+      ],
+    });
+    if (result.canceled || !result.filePaths?.[0]) return { canceled: true };
+    const filePath = result.filePaths[0];
+    const dir = path.dirname(filePath);
+    const receta = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+
+    // Resolver assets → dataUrl (si la receta vino en modo 'assets').
+    if (receta && receta.modo === 'assets' && Array.isArray(receta.simbolos)) {
+      const faltan = [];
+      receta.simbolos = receta.simbolos.map((s, i) => {
+        if (s && s.dataUrl) return s; // ya inline
+        const ref = s && (s.ref ?? s.url ?? s.v);
+        if (!ref) { faltan.push(`simbolo ${i} (sin ref)`); return s; }
+        const dataUrl = leerAssetDataUrl(dir, ref);
+        if (!dataUrl) { faltan.push(String(ref)); return s; }
+        return { tipo: 'img', dataUrl };
+      });
+      receta.modo = 'inline';
+      if (faltan.length) {
+        return { ok: false, error: `No se encontraron assets: ${faltan.slice(0, 8).join(', ')}${faltan.length > 8 ? '…' : ''}` };
+      }
+    }
+    return { ok: true, path: filePath, receta };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 // Sobreescribe un job en un path conocido (Ctrl+S despues de un Save As).
 ipcMain.handle('jobs:save-to-path', async (_evt, { path: filePath, payload }) => {
   try {

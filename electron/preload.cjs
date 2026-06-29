@@ -47,6 +47,9 @@ contextBridge.exposeInMainWorld('printlayout', {
   plotter: {
     sendCut: (payload) => ipcRenderer.invoke('plotter:send-cut', payload),
   },
+  dobble: {
+    importRecipe: () => ipcRenderer.invoke('dobble:import-recipe'),
+  },
   contour: {
     tracePotrace: (arrayBuffer, opts) =>
       ipcRenderer.invoke('contour:trace-potrace', arrayBuffer, opts),

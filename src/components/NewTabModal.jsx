@@ -28,6 +28,7 @@ export default function NewTabModal({
   onCountPack,
   onUploadPdf,
   onOpenJobsList,
+  onImportDobble,
   onClose,
 }) {
   const [view, setView] = useState('main'); // 'main' | 'templates'
@@ -218,6 +219,19 @@ export default function NewTabModal({
               )}
               onClick={handleOption(onOpenJobsList)}
             />
+            {onImportDobble && (
+              <OptionCard
+                title="Importar mazo Dobble"
+                subtitle="Abrir un mazo recta-dobble-deck (.json) y armar la hoja"
+                icon={(
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+                    <circle cx="9" cy="9" r="5" />
+                    <circle cx="15" cy="15" r="5" />
+                  </svg>
+                )}
+                onClick={handleOption(onImportDobble)}
+              />
+            )}
           </div>
         ) : (
           <>

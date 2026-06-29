@@ -11,6 +11,9 @@ import TabsBar from './components/TabsBar.jsx';
 import ConfirmModal from './components/ConfirmModal.jsx';
 import LayoutCanvas from './components/LayoutCanvas.jsx';
 import PropertiesSidebar from './components/PropertiesSidebar.jsx';
+import { buildDobbleJob } from './dobble/buildDobbleJob.js';
+import { validarReceta } from './dobble/vendor/receta.js';
+import DobbleDiameterModal from './components/DobbleDiameterModal.jsx';
 import PromptModal from './components/PromptModal.jsx';
 import PdfUploadModal from './components/PdfUploadModal.jsx';
 import PdfImageExtractModal from './components/PdfImageExtractModal.jsx';
@@ -342,6 +345,11 @@ export default function App() {
   const [pdfUpload, setPdfUpload] = useState(null);
   // Modal de grilla rapida (plantilla en memoria, sin PDF).
   const [gridModalOpen, setGridModalOpen] = useState(false);
+  // Dobble: receta por pestaña (templateId → receta resuelta) para re-render al
+  // editar el diámetro; estado del modal de edición y flag de ocupado.
+  const dobbleRecetasRef = useRef(new Map());
+  const [dobbleEdit, setDobbleEdit] = useState(null); // { templateId, diametroMM, doubleSided } | null
+  const [dobbleBusy, setDobbleBusy] = useState(false);
   // Editor de plantillas (botón "Plantillas" de la barra) + edición de medidas.
   const [templatesManagerOpen, setTemplatesManagerOpen] = useState(false);
   const [editGeometryTemplate, setEditGeometryTemplate] = useState(null);
@@ -452,6 +460,91 @@ export default function App() {
     }
     return tabId;
   }, [activeTab, updateActiveTab, createTab]);
+
+  // === Dobble: importar mazo (recta-dobble-deck) y armar la hoja ===
+  const handleImportDobble = useCallback(async () => {
+    try {
+      const r = await window.printlayout.dobble.importRecipe();
+      if (!r || r.canceled) return;
+      if (!r.ok) { setToast({ kind: 'error', text: `No se pudo importar: ${r.error}` }); return; }
+      const val = validarReceta(r.receta);
+      if (!val.ok) { setToast({ kind: 'error', text: `Receta inválida: ${val.errores.join(' · ')}` }); return; }
+      setDobbleBusy(true);
+      const { spec, error } = await buildDobbleJob(r.receta);
+      if (!spec) { setToast({ kind: 'error', text: error || 'No se pudo armar el mazo.' }); return; }
+      const tabId = openInTab(spec.template, {
+        name: spec.name,
+        forceNew: true,
+        initialLayout: {
+          images: spec.images,
+          assignmentsFront: spec.assignmentsFront,
+          assignmentsBack: spec.assignmentsBack,
+          minPages: spec.minPages,
+        },
+      });
+      dobbleRecetasRef.current.set(`tabtpl_${tabId}`, r.receta);
+      const aviso = val.avisos?.length ? ` · ${val.avisos.join(' · ')}` : '';
+      setToast({
+        kind: 'success',
+        text: `Mazo Dobble importado: ${spec.template.celdas.length} por hoja, ${spec.minPages} hoja(s)${aviso}.`,
+      });
+    } catch (err) {
+      setToast({ kind: 'error', text: `Error importando: ${err.message}` });
+    } finally {
+      setDobbleBusy(false);
+    }
+  }, [openInTab]);
+
+  // Abrir el editor de diámetro (solo si la pestaña activa es un mazo Dobble).
+  const handleEditDobble = useCallback(() => {
+    const t = activeTab?.template;
+    if (!t?.dobble) return;
+    setDobbleEdit({
+      templateId: t.id,
+      diametroMM: t.dobble.diametroMM,
+      doubleSided: !!t.dobble.doubleSided,
+    });
+  }, [activeTab]);
+
+  // Aplicar nuevo diámetro: re-render de las cartas al nuevo px + recálculo de
+  // grilla y cortes; recarga el layout de la pestaña activa.
+  const submitDobbleDiameter = useCallback(async (nuevoDiam) => {
+    const tplId = dobbleEdit?.templateId;
+    const receta = tplId ? dobbleRecetasRef.current.get(tplId) : null;
+    if (!receta) {
+      setToast({ kind: 'error', text: 'No tengo la receta de este mazo para regenerar (reimportá el mazo).' });
+      setDobbleEdit(null);
+      return;
+    }
+    setDobbleBusy(true);
+    try {
+      const base = activeTab?.template?.dobble || {};
+      const { spec, error } = await buildDobbleJob(receta, {
+        diametroMM: nuevoDiam,
+        dobleFaz: base.doubleSided,
+        paperWidthMm: base.paperWidthMm,
+        paperHeightMm: base.paperHeightMm,
+        gapMM: base.gapMM,
+        markMarginMm: base.markMarginMm,
+        holguraMM: base.holguraMM,
+        dpi: base.dpi,
+      });
+      if (!spec) { setToast({ kind: 'error', text: error || 'No se pudo regenerar.' }); return; }
+      updateActiveTab({ template: { ...spec.template, id: tplId, temporal: true, tabBacked: true } });
+      layout.loadFromJob({
+        images: spec.images,
+        assignmentsFront: spec.assignmentsFront,
+        assignmentsBack: spec.assignmentsBack,
+        minPages: spec.minPages,
+      });
+      setToast({ kind: 'success', text: `Mazo regenerado a ${nuevoDiam} mm.` });
+      setDobbleEdit(null);
+    } catch (err) {
+      setToast({ kind: 'error', text: `Error regenerando: ${err.message}` });
+    } finally {
+      setDobbleBusy(false);
+    }
+  }, [dobbleEdit, activeTab, updateActiveTab, layout]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -2469,6 +2562,7 @@ export default function App() {
             onSetCategoria={handleSetCategoria}
             categoriasList={categoriasList}
             onEditMargin={handleEditMargin}
+            onEditDobble={handleEditDobble}
             onChangeWhiteBorder={(v) => handlePatchActiveTemplate({ cellWhiteBorderMm: v })}
             onChangeBorderLine={(v) => handlePatchActiveTemplate({ cellBorderLineMm: v })}
             onChangeBorderColor={(v) => handlePatchActiveTemplate({ cellBorderColor: v })}
@@ -2802,6 +2896,16 @@ export default function App() {
           onCountPack={() => newTabCountPickerRef.current?.click()}
           onUploadPdf={() => blankPdfInputRef.current?.click()}
           onOpenJobsList={() => setJobsListOpen(true)}
+          onImportDobble={() => { setNewTabModalOpen(false); handleImportDobble(); }}
+        />
+
+        <DobbleDiameterModal
+          open={!!dobbleEdit}
+          diametroMM={dobbleEdit?.diametroMM ?? 65}
+          doubleSided={!!dobbleEdit?.doubleSided}
+          busy={dobbleBusy}
+          onSubmit={submitDobbleDiameter}
+          onCancel={() => setDobbleEdit(null)}
         />
 
         <input
