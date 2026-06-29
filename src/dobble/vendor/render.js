@@ -54,6 +54,9 @@ function normalizarEstilo(estilo = {}) {
   return {
     forma: estilo.forma ?? 'circulo',
     fondo: estilo.fondo ?? '#ffffff',
+    // Imagen de fondo opcional (dataUrl/URL). Se dibuja embebida, recortada a la
+    // forma de la carta + sangrado, DETRÁS de los símbolos. null = sin imagen.
+    fondoImagen: estilo.fondoImagen ?? null,
     bordeColor: borde.color ?? '#1f2430',
     bordeGrosor: borde.grosor ?? 0.02, // normalizado (fracción del radio 1)
     radioBorde: estilo.radioBorde ?? 0.14,
@@ -85,14 +88,19 @@ export function renderCartaSVG({ placements, simbolos, estilo, bleedNorm = 0, id
   const vb = `${num(-ext)} ${num(-ext)} ${num(2 * ext)} ${num(2 * ext)}`;
 
   const idClip = `${idPrefijo}-clip`;
+  const idClipBg = `${idPrefijo}-clipbg`;
   const partes = [];
   partes.push(
     `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ` +
       `viewBox="${vb}" preserveAspectRatio="xMidYMid meet">`
   );
 
-  // defs: clip a la forma interior + imágenes únicas usadas en esta carta.
+  // defs: clip a la forma interior (símbolos) + clip a la forma exterior con
+  // sangrado (imagen de fondo) + imágenes únicas usadas en esta carta.
   const defs = [`<clipPath id="${idClip}">${forma(e.forma, 1 - borde, e.radioBorde)}</clipPath>`];
+  if (e.fondoImagen) {
+    defs.push(`<clipPath id="${idClipBg}">${forma(e.forma, ext, e.radioBorde)}</clipPath>`);
+  }
   const idsImg = new Map();
   for (const p of placements) {
     const { esImg, url } = imagenDe(simbolos[p.i]);
@@ -107,21 +115,23 @@ export function renderCartaSVG({ placements, simbolos, estilo, bleedNorm = 0, id
   }
   partes.push(`<defs>${defs.join('')}</defs>`);
 
-  // Fondo (extendido al sangrado si bleedNorm>0).
+  // Orden de dibujo: fondo (color → imagen) → símbolos → borde.
+
+  // 1) Fondo color (extendido al sangrado si bleedNorm>0).
   partes.push(forma(e.forma, ext, e.radioBorde, ` fill="${attr(e.fondo)}"`));
-  // Borde: anillo con su contorno sobre la línea de corte (radio 1).
-  if (borde > 0) {
+  // 2) Imagen de fondo: cubre la carta + sangrado (slice = cover), recortada a la
+  //    forma exterior. Va sobre el color (que sigue tapando las esquinas fuera del
+  //    círculo) y detrás de los símbolos.
+  if (e.fondoImagen) {
     partes.push(
-      forma(
-        e.forma,
-        1 - borde / 2,
-        e.radioBorde,
-        ` fill="none" stroke="${attr(e.bordeColor)}" stroke-width="${num(borde)}"`
-      )
+      `<g clip-path="url(#${idClipBg})">` +
+        `<image href="${attr(e.fondoImagen)}" xlink:href="${attr(e.fondoImagen)}" ` +
+        `x="${num(-ext)}" y="${num(-ext)}" width="${num(2 * ext)}" height="${num(2 * ext)}" ` +
+        `preserveAspectRatio="xMidYMid slice"/></g>`
     );
   }
 
-  // Símbolos (recortados a la forma interior).
+  // 3) Símbolos (recortados a la forma interior).
   partes.push(`<g clip-path="url(#${idClip})">`);
   for (const p of placements) {
     const sim = simbolos[p.i];
@@ -146,7 +156,23 @@ export function renderCartaSVG({ placements, simbolos, estilo, bleedNorm = 0, id
       );
     }
   }
-  partes.push('</g></svg>');
+  partes.push('</g>');
+
+  // 4) Borde: anillo con su contorno sobre la línea de corte (radio 1). Se dibuja
+  //    al final (sobre los símbolos); como los símbolos se recortan a la forma
+  //    interior (radio 1−borde) no se solapan, el resultado es idéntico, pero
+  //    respeta el orden fondo → símbolos → borde.
+  if (borde > 0) {
+    partes.push(
+      forma(
+        e.forma,
+        1 - borde / 2,
+        e.radioBorde,
+        ` fill="none" stroke="${attr(e.bordeColor)}" stroke-width="${num(borde)}"`
+      )
+    );
+  }
+  partes.push('</svg>');
   return partes.join('');
 }
 

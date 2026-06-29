@@ -1,28 +1,28 @@
-// buildDobbleJob.js — arma un JOB de PrintLayout a partir de una RECETA
-// `recta-dobble-deck` (Paso 2 de la unión Dobble↔PrintLayout). Análogo a
-// src/intake/buildOrderJob.js: función de orquestación del RENDERER (usa canvas)
-// que devuelve { template, images, assignmentsFront, assignmentsBack, minPages }
-// listo para openInTab. NO toca red ni estado de React.
+// buildDobbleJob.js — POSA un mazo Dobble (receta `recta-dobble-deck`) sobre una
+// PLANTILLA de PrintLayout ya elegida por el usuario. Análogo a buildOrderJob:
+// función de orquestación del RENDERER (usa canvas) que devuelve
+// { template, images, assignmentsFront, assignmentsBack, minPages } listo para
+// openInTab. NO toca red ni estado de React, NO arma grilla ni cortes: la hoja,
+// los márgenes, la separación, el diámetro de la celda y el corte circular los
+// define la plantilla (controles normales de PrintLayout). Las cartas se
+// regeneran al tamaño de esa celda y se reparten (multipágina si hace falta).
 //
-// Render a TAMAÑO FÍSICO con el renderer compartido (vendor): por carta, SVG con
-// sangrado (el fondo se pinta hasta el borde de la celda = bleed REAL), rasterizado
-// a PNG a `dpi`. La celda = diámetro + 2·bleed. El objeto-imagen se fabrica a mano
-// (sin readImageFile/normalizeImageToSrgb: no re-muestrear ni hacer snap-blanco),
-// con fitOverride:'cover' y physicalSizeMm.
+// Geometría derivada de la plantilla (celdas circulares homogéneas):
+//   - lado de la celda  S = min(celda.w, celda.h)
+//   - inset del corte    M = cutMarginMm (o derivado de los cortes)  = SANGRADO
+//   - diámetro de carta  D = S − 2·M          (el corte = borde visible de la carta)
+// Render a tamaño físico: por carta, SVG con sangrado (radio 1 = corte; el fondo
+// se extiende hasta el borde de la celda) → rasterizado a PNG a `dpi`. El objeto
+// imagen se fabrica a mano (sin readImageFile/normalizeImageToSrgb: no re-muestrear
+// ni snap-blanco), con fitOverride:'cover' y physicalSizeMm = la celda.
 
-import { computeBestGrid, centerCellsInSheet, generateCuts } from '../lib/grid.js';
-import { renderCartaDeReceta, estiloDeReceta } from './vendor/receta.js';
-import { renderDorsoSVG, bleedNormal } from './vendor/render.js';
+import { renderCartaSVG, renderDorsoSVG, bleedNormal } from './vendor/render.js';
+import { estiloDeReceta } from './vendor/receta.js';
+import { bleedMmForCell } from '../lib/templates.js';
 
 const MM_PER_IN = 25.4;
 
-// Defaults de imposición (la hoja y los márgenes los puede pasar el caller).
 export const DOBBLE_DEFAULTS = {
-  paperWidthMm: 210,   // A4
-  paperHeightMm: 297,
-  gapMM: 3,            // separación mínima entre cartas
-  markMarginMm: 10,    // marcas L de registro (igual que grilla rápida)
-  holguraMM: 2,        // el margen ≥ markMargin + holgura (las marcas no pisan cartas)
   dpi: 300,
 };
 
@@ -49,12 +49,12 @@ function imagenAMano(name, dataUrl, pxW, pxH, cellMM) {
   };
 }
 
-// Rasteriza un string SVG a PNG dataUrl de pxW×pxH. El SVG extiende el fondo como
-// CÍRCULO de sangrado (radio 1+bleed); para que la celda quede pintada hasta el
-// borde (bleed REAL en toda la celda, esquinas incluidas), pintamos primero el
-// `bgColor` (el fondo de la carta) y encima el SVG. Así, aunque el plotter se
-// desfase, el corte siempre cae sobre tinta. Los <image href="data:..."> no tiñen
-// el canvas (data: = same-origin) → toDataURL funciona.
+// Rasteriza un string SVG a PNG dataUrl de pxW×pxH. El SVG dibuja la carta como
+// CÍRCULO (radio 1+sangrado); para que la celda CUADRADA quede pintada hasta el
+// borde (esquinas incluidas) pintamos primero el `bgColor` (el fondo de la carta)
+// y encima el SVG. Así, aunque el plotter se desfase, el corte siempre cae sobre
+// tinta. Los <image href="data:..."> no tiñen el canvas (data: = same-origin) →
+// toDataURL funciona.
 function rasterizarSVG(svgString, pxW, pxH, bgColor) {
   return new Promise((resolve, reject) => {
     const src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgString)}`;
@@ -82,148 +82,159 @@ function rasterizarSVG(svgString, pxW, pxH, bgColor) {
   });
 }
 
+// Inset del corte (mm) de una celda: cutMarginMm de la plantilla si está, sino se
+// deriva del corte real (mínimo de los 4 lados), sino 0. Es el SANGRADO de la carta.
+function cutInsetMm(template, cell) {
+  const m = Number(template?.cutMarginMm);
+  if (Number.isFinite(m) && m >= 0) return m;
+  const b = bleedMmForCell(template, cell);
+  if (b) {
+    const min = Math.min(b.top, b.right, b.bottom, b.left);
+    if (Number.isFinite(min) && min >= 0) return min;
+  }
+  return 0;
+}
+
 /**
- * Arma el job de un mazo Dobble a partir de la receta (con dataUrls ya resueltos).
- * @param {object} receta  receta `recta-dobble-deck` v1 (modo inline o con assets ya resueltos a dataUrl).
- * @param {object} [opts]
- * @param {number} [opts.diametroMM]  override del diámetro (modo editar). Default = receta.carta.diametroMM.
- * @param {boolean} [opts.dobleFaz]   override doble faz. Default = !!receta.dorso.
- * @param {number} [opts.paperWidthMm] / [opts.paperHeightMm] / [opts.gapMM] / [opts.markMarginMm] / [opts.holguraMM] / [opts.dpi]
+ * Geometría Dobble derivada de una plantilla. La usa el modal de posado para
+ * mostrar el ⌀ de carta / sangrado / cartas por hoja antes de posar.
+ * @returns {{ ok:boolean, reason?:string, side?:number, cutMargin?:number,
+ *   diam?:number, bleed?:number, cellsPerPage?:number, circular?:boolean }}
+ */
+export function dobbleGeometryFromTemplate(template) {
+  const cells = template?.celdas ?? [];
+  if (cells.length === 0) return { ok: false, reason: 'La plantilla no tiene celdas.' };
+  const c0 = cells[0];
+  const side = Math.min(c0.w, c0.h);
+  if (!(side > 0)) return { ok: false, reason: 'La celda de la plantilla no tiene tamaño válido.' };
+  const cutMargin = cutInsetMm(template, c0);
+  const diam = side - 2 * cutMargin;
+  if (!(diam > 0)) {
+    return { ok: false, reason: `El margen de corte (${cutMargin} mm) deja la carta en 0.` };
+  }
+  return {
+    ok: true,
+    side: Math.round(side * 10) / 10,
+    cutMargin: Math.round(cutMargin * 100) / 100,
+    diam: Math.round(diam * 10) / 10,
+    bleed: Math.round(cutMargin * 100) / 100,
+    cellsPerPage: cells.length,
+    circular: (template.cutShape ?? 'rect') === 'circle',
+  };
+}
+
+// Estilo de render de la carta: el de la receta + override de fondo (color) y la
+// imagen de fondo opcional, ambos definidos en PrintLayout (viajan en la plantilla).
+function estiloConFondo(carta, fondoColor, fondoImagen) {
+  const base = estiloDeReceta(carta);
+  return {
+    ...base,
+    fondo: fondoColor || base.fondo || '#ffffff',
+    fondoImagen: fondoImagen || null,
+  };
+}
+
+/**
+ * Posa un mazo Dobble (receta con dataUrls resueltos) sobre una plantilla.
+ * @param {object} receta   receta `recta-dobble-deck` v1 (modo inline / assets resueltos).
+ * @param {object} opts
+ * @param {object} opts.template     plantilla de PrintLayout elegida (celdas + cortes + hoja).
+ * @param {string} [opts.fondo]      color de fondo de la carta (override de receta.carta.fondo).
+ * @param {string} [opts.fondoImagen] dataUrl de imagen de fondo de la carta.
+ * @param {boolean} [opts.dobleFaz]  override doble faz (default = template.doubleSided).
+ * @param {number}  [opts.dpi]       dpi del raster (default 300).
  * @returns {Promise<{spec:object|null, error?:string}>}
  */
 export async function buildDobbleJob(receta, opts = {}) {
-  const o = { ...DOBBLE_DEFAULTS, ...opts };
+  const template = opts.template;
+  if (!template) return { spec: null, error: 'Falta la plantilla para posar el mazo.' };
+
+  const geo = dobbleGeometryFromTemplate(template);
+  if (!geo.ok) return { spec: null, error: geo.error || geo.reason || 'Plantilla no apta para Dobble.' };
+
   const carta = receta.carta || {};
-  const diam = Number(opts.diametroMM ?? carta.diametroMM);
-  const bleed = Number(carta.bleedMM ?? 3);
-  const registroTol = Number(carta.registroToleranciaMM ?? 0.5);
-  if (!(diam > 0)) return { spec: null, error: 'La receta no tiene un diámetro válido.' };
+  const dpi = Number(opts.dpi ?? DOBBLE_DEFAULTS.dpi) || 300;
+  const side = geo.side;          // tamaño de la celda (mm) = tamaño del PNG
+  const diam = geo.diam;          // ⌀ de carta (corte)
+  const bleed = geo.bleed;        // sangrado (= inset del corte)
+  const cellsPorHoja = geo.cellsPerPage;
+  const doubleSided = opts.dobleFaz != null ? !!opts.dobleFaz : !!template.doubleSided;
 
-  const cellMM = diam + 2 * bleed;                 // celda cuadrada (incluye sangrado)
-  const margin = o.markMarginMm + o.holguraMM;     // margen ≥ markMargin + holgura
-  const doubleSided = opts.dobleFaz != null ? !!opts.dobleFaz : !!receta.dorso;
+  const fondoColor = opts.fondo || carta.fondo || '#ffffff';
+  const fondoImagen = opts.fondoImagen || null;
+  const bleedNorm = bleedNormal(diam, bleed);
+  const pxCell = Math.max(1, Math.round((side / MM_PER_IN) * dpi));
 
-  // 1) Grilla circular: celdas cuadradas de lado cellMM, mejor encaje en la hoja.
-  const grid = computeBestGrid(
-    {
-      paperW: o.paperWidthMm,
-      paperH: o.paperHeightMm,
-      cellW: cellMM,
-      cellH: cellMM,
-      marginX: margin,
-      marginY: margin,
-      spacingX: o.gapMM,
-      spacingY: o.gapMM,
-    },
-    { rotateMode: 'direct' }, // celda cuadrada: rotar no cambia nada
-  );
-  const cellsPorHoja = grid.cells.length;
-  if (cellsPorHoja === 0) {
-    return {
-      spec: null,
-      error: `La carta de ${cellMM.toFixed(1)}mm (con sangrado) no entra en la hoja ${o.paperWidthMm}×${o.paperHeightMm}mm.`,
-    };
-  }
-
-  // 2) Celdas (con id) centradas en la hoja.
-  const cells = grid.cells.map((c, idx) => ({ id: idx, x: c.x, y: c.y, w: c.w, h: c.h }));
-  centerCellsInSheet(cells, {
-    direction: 'rows',
-    innerW: o.paperWidthMm - 2 * margin,
-    innerH: o.paperHeightMm - 2 * margin,
-    marginX: margin,
-    marginY: margin,
-  });
-
-  // 3) Cortes circulares.
-  //    1 cara  → cutMarginMm = bleed  → el corte cae EXACTO en el diámetro.
-  //    doble faz → cutMarginMm = bleed + registroTolerancia → muerde para adentro
-  //                (absorbe el desfase frente/dorso).
-  const cutMarginMm = doubleSided ? bleed + registroTol : bleed;
-  const cortes = generateCuts(cells, { cutShape: 'circle', cutMarginMm });
-
-  // 4) Render a tamaño físico de cada carta (con sangrado) → PNG.
-  const pxCell = Math.max(1, Math.round((cellMM / MM_PER_IN) * o.dpi));
+  // 1) Render a tamaño físico de cada carta (con sangrado) → PNG.
+  const estilo = estiloConFondo(carta, fondoColor, fondoImagen);
   const images = [];
   const frontIds = [];
   for (let i = 0; i < receta.cartas.length; i++) {
-    const svg = renderCartaDeReceta(receta, i, { idPrefijo: `d${i}`, conSangrado: true });
-    const dataUrl = await rasterizarSVG(svg, pxCell, pxCell, carta.fondo);
-    const im = imagenAMano(`Carta ${i + 1}`, dataUrl, pxCell, pxCell, cellMM);
+    const svg = renderCartaSVG({
+      placements: receta.cartas[i].placements,
+      simbolos: receta.simbolos,
+      estilo,
+      bleedNorm,
+      idPrefijo: `d${i}`,
+    });
+    const dataUrl = await rasterizarSVG(svg, pxCell, pxCell, fondoColor);
+    const im = imagenAMano(`Carta ${i + 1}`, dataUrl, pxCell, pxCell, side);
     images.push(im);
     frontIds.push(im.id);
   }
 
-  // 5) assignmentsFront: cada carta una vez, paginado por cellsPorHoja.
+  // 2) assignmentsFront: cada carta una vez, paginado por cellsPorHoja.
   const assignmentsFront = frontIds.slice();
   while (assignmentsFront.length % cellsPorHoja !== 0) assignmentsFront.push(null);
   const minPages = Math.max(1, Math.ceil(assignmentsFront.length / cellsPorHoja));
 
-  // 6) Doble faz: un único dorso compartido en TODAS las celdas (backMirror:'y').
-  //    El arte del dorso pinta el fondo más allá del corte (bleed) igual que el frente.
+  // 3) Doble faz: un único dorso compartido en TODAS las celdas (la plantilla
+  //    deriva las celdas del dorso espejando el frente). El arte del dorso pinta
+  //    el fondo más allá del corte (sangrado) igual que el frente.
+  //    FIX: el color de relleno de las esquinas (pre-pintado del canvas) usa el
+  //    fondo EFECTIVO del dorso (con default), nunca undefined → no quedan
+  //    esquinas transparentes en el reverso.
   let assignmentsBack = [];
   if (doubleSided) {
-    const dorsoSvg = renderDorsoSVG(receta.dorso || {}, estiloDeReceta(carta), {
-      bleedNorm: bleedNormal(diam, bleed),
-    });
-    const dorsoData = await rasterizarSVG(dorsoSvg, pxCell, pxCell, receta.dorso?.fondo);
-    const dorsoImg = imagenAMano('Dorso', dorsoData, pxCell, pxCell, cellMM);
+    const dorsoFondo = receta.dorso?.fondo ?? '#2f6df6'; // = default de renderDorsoSVG
+    const dorso = { ...(receta.dorso || {}), fondo: dorsoFondo };
+    const dorsoSvg = renderDorsoSVG(dorso, estiloDeReceta(carta), { bleedNorm });
+    const dorsoData = await rasterizarSVG(dorsoSvg, pxCell, pxCell, dorsoFondo);
+    const dorsoImg = imagenAMano('Dorso', dorsoData, pxCell, pxCell, side);
     images.push(dorsoImg);
     assignmentsBack = assignmentsFront.map((id) => (id == null ? null : dorsoImg.id));
   }
 
-  // 7) Plantilla temporal (vive en la pestaña; cortes ya generados).
-  const template = {
-    name: `Dobble n${receta.mazo?.n ?? '?'} · ${diam}mm${doubleSided ? ' (doble faz)' : ''}`,
-    pdfBase64: null,
-    pageWidthMm: o.paperWidthMm,
-    pageHeightMm: o.paperHeightMm,
-    pageCount: 1,
-    celdas: cells,
-    celdasDorso: [],
-    cortes,
-    cutMarginMm,
-    markMarginMm: o.markMarginMm,
-    cutShape: 'circle',
+  // 4) Plantilla de salida = la elegida + marca de mazo Dobble + fondo de carta.
+  //    Conserva celdas / cortes / hoja / márgenes de la plantilla (NO se regeneran).
+  const dobbleFondo = (fondoColor || fondoImagen)
+    ? {
+        ...(opts.fondo ? { color: opts.fondo } : {}),
+        ...(fondoImagen ? { imagen: fondoImagen } : {}),
+      }
+    : (template.dobbleFondo || undefined);
+
+  const templateOut = {
+    ...template,
     doubleSided,
-    backMirror: doubleSided ? 'y' : undefined,
-    backRotate180: doubleSided ? false : undefined,
-    singlePage: true,
-    temporal: true,
-    tabBacked: true,
-    gridParams: {
-      paperW: o.paperWidthMm,
-      paperH: o.paperHeightMm,
-      cellW: cellMM,
-      cellH: cellMM,
-      margin,
-      spacingX: o.gapMM,
-      spacingY: o.gapMM,
-      cutMargin: cutMarginMm,
-      markMargin: o.markMarginMm,
-      cutShape: 'circle',
-    },
-    // Marca este template como un mazo Dobble + datos para re-render al editar
-    // el diámetro (los placements son lossless: re-render === preview).
+    dobbleFondo,
     dobble: {
       n: receta.mazo?.n ?? null,
-      diametroMM: diam,
+      diametroMM: diam,        // ⌀ de carta (corte)
+      cellDiamMm: side,        // ⌀ de celda (impreso, con sangrado)
       bleedMM: bleed,
-      registroToleranciaMM: registroTol,
-      dpi: o.dpi,
-      paperWidthMm: o.paperWidthMm,
-      paperHeightMm: o.paperHeightMm,
-      gapMM: o.gapMM,
-      markMarginMm: o.markMarginMm,
-      holguraMM: o.holguraMM,
+      dpi,
       doubleSided,
+      cellsPerPage: cellsPorHoja,
+      cartas: receta.cartas.length,
     },
   };
 
+  const nLbl = receta.mazo?.n ?? '?';
   return {
     spec: {
-      name: template.name,
-      template,
+      name: `Dobble n${nLbl} · ${template.name || 'plantilla'}${doubleSided ? ' (doble faz)' : ''}`,
+      template: templateOut,
       images,
       assignmentsFront,
       assignmentsBack,

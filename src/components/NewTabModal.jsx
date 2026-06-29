@@ -222,7 +222,7 @@ export default function NewTabModal({
             {onImportDobble && (
               <OptionCard
                 title="Importar mazo Dobble"
-                subtitle="Abrir un mazo recta-dobble-deck (.json) y armar la hoja"
+                subtitle="Abrir un mazo (.json) y posarlo sobre una plantilla redonda"
                 icon={(
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
                     <circle cx="9" cy="9" r="5" />

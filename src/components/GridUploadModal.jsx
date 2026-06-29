@@ -23,6 +23,9 @@ export default function GridUploadModal({
   title = 'Nueva grilla rápida',
   description = 'Hoja en blanco con celdas uniformes. No se guarda como plantilla — al cerrar la app se descarta.',
   submitLabel = 'Crear grilla',
+  // Forma de corte inicial cuando no viene `initial.cutShape` (ej. 'circle' al
+  // crear una plantilla redonda para un mazo Dobble).
+  defaultCutShape = 'rect',
 }) {
   const paperList = useMemo(
     () => (Array.isArray(presets) && presets.length > 0 ? presets : BUILTIN_PAPER_PRESETS),
@@ -45,7 +48,7 @@ export default function GridUploadModal({
   const [cutMargin, setCutMargin] = useState(s(ini.cutMargin, '0'));
   const [markMargin, setMarkMargin] = useState(s(ini.markMargin, '10'));
   const [doubleSided, setDoubleSided] = useState(!!ini.doubleSided);
-  const [cutShape, setCutShape] = useState(ini.cutShape || 'rect'); // 'rect' | 'circle'
+  const [cutShape, setCutShape] = useState(ini.cutShape || defaultCutShape || 'rect'); // 'rect' | 'circle'
   const [diameter, setDiameter] = useState(s(ini.diameter, '60'));
   const [rotateMode, setRotateMode] = useState(ini.rotateMode || 'auto'); // 'auto' | 'direct' | 'rotated'
   const cellWRef = useRef(null);

@@ -13,7 +13,7 @@ import LayoutCanvas from './components/LayoutCanvas.jsx';
 import PropertiesSidebar from './components/PropertiesSidebar.jsx';
 import { buildDobbleJob } from './dobble/buildDobbleJob.js';
 import { validarReceta } from './dobble/vendor/receta.js';
-import DobbleDiameterModal from './components/DobbleDiameterModal.jsx';
+import DobblePoseModal from './components/DobblePoseModal.jsx';
 import PromptModal from './components/PromptModal.jsx';
 import PdfUploadModal from './components/PdfUploadModal.jsx';
 import PdfImageExtractModal from './components/PdfImageExtractModal.jsx';
@@ -346,9 +346,10 @@ export default function App() {
   // Modal de grilla rapida (plantilla en memoria, sin PDF).
   const [gridModalOpen, setGridModalOpen] = useState(false);
   // Dobble: receta por pestaña (templateId → receta resuelta) para re-render al
-  // editar el diámetro; estado del modal de edición y flag de ocupado.
+  // cambiar el fondo de carta o re-posar en otra plantilla; flag de ocupado.
   const dobbleRecetasRef = useRef(new Map());
-  const [dobbleEdit, setDobbleEdit] = useState(null); // { templateId, diametroMM, doubleSided } | null
+  const [dobblePose, setDobblePose] = useState(null); // { receta } | null  (modal de posado abierto)
+  const [gridForDobbleReceta, setGridForDobbleReceta] = useState(null); // receta esperando una plantilla nueva
   const [dobbleBusy, setDobbleBusy] = useState(false);
   // Editor de plantillas (botón "Plantillas" de la barra) + edición de medidas.
   const [templatesManagerOpen, setTemplatesManagerOpen] = useState(false);
@@ -461,7 +462,10 @@ export default function App() {
     return tabId;
   }, [activeTab, updateActiveTab, createTab]);
 
-  // === Dobble: importar mazo (recta-dobble-deck) y armar la hoja ===
+  // === Dobble: importar mazo (recta-dobble-deck) → POSAR sobre una plantilla ===
+  // Ya no arma la hoja solo: abre el modal de posado para elegir (o crear) una
+  // plantilla redonda. La plantilla define hoja/márgenes/separación/⌀ de celda/
+  // corte; el ⌀ de la carta sale de la celda. Mismo principio que stickers.
   const handleImportDobble = useCallback(async () => {
     try {
       const r = await window.printlayout.dobble.importRecipe();
@@ -469,9 +473,27 @@ export default function App() {
       if (!r.ok) { setToast({ kind: 'error', text: `No se pudo importar: ${r.error}` }); return; }
       const val = validarReceta(r.receta);
       if (!val.ok) { setToast({ kind: 'error', text: `Receta inválida: ${val.errores.join(' · ')}` }); return; }
-      setDobbleBusy(true);
-      const { spec, error } = await buildDobbleJob(r.receta);
-      if (!spec) { setToast({ kind: 'error', text: error || 'No se pudo armar el mazo.' }); return; }
+      if (val.avisos?.length) setToast({ kind: 'info', text: val.avisos.join(' · ') });
+      setDobblePose({ receta: r.receta });
+    } catch (err) {
+      setToast({ kind: 'error', text: `Error importando: ${err.message}` });
+    }
+  }, []);
+
+  // Posa una receta sobre una plantilla concreta (guardada o recién creada).
+  // Abre una pestaña nueva con la plantilla + las cartas posadas y guarda la
+  // receta (por tab) para re-renderizar al cambiar el fondo o re-posar.
+  const poseDobbleOnTemplate = useCallback(async (template, receta) => {
+    if (!template || !receta) return;
+    setDobbleBusy(true);
+    try {
+      const fondo = template.dobbleFondo || {};
+      const { spec, error } = await buildDobbleJob(receta, {
+        template,
+        fondo: fondo.color,
+        fondoImagen: fondo.imagen,
+      });
+      if (!spec) { setToast({ kind: 'error', text: error || 'No se pudo posar el mazo.' }); return; }
       const tabId = openInTab(spec.template, {
         name: spec.name,
         forceNew: true,
@@ -482,69 +504,104 @@ export default function App() {
           minPages: spec.minPages,
         },
       });
-      dobbleRecetasRef.current.set(`tabtpl_${tabId}`, r.receta);
-      const aviso = val.avisos?.length ? ` · ${val.avisos.join(' · ')}` : '';
+      dobbleRecetasRef.current.set(`tabtpl_${tabId}`, receta);
+      const d = spec.template.dobble;
       setToast({
         kind: 'success',
-        text: `Mazo Dobble importado: ${spec.template.celdas.length} por hoja, ${spec.minPages} hoja(s)${aviso}.`,
+        text: `Mazo posado: ${d.cartas} cartas (⌀ ${d.diametroMM} mm), ${d.cellsPerPage}/hoja, ${spec.minPages} hoja(s).`,
       });
     } catch (err) {
-      setToast({ kind: 'error', text: `Error importando: ${err.message}` });
+      setToast({ kind: 'error', text: `Error posando: ${err.message}` });
     } finally {
       setDobbleBusy(false);
     }
   }, [openInTab]);
 
-  // Abrir el editor de diámetro (solo si la pestaña activa es un mazo Dobble).
-  const handleEditDobble = useCallback(() => {
-    const t = activeTab?.template;
-    if (!t?.dobble) return;
-    setDobbleEdit({
-      templateId: t.id,
-      diametroMM: t.dobble.diametroMM,
-      doubleSided: !!t.dobble.doubleSided,
-    });
-  }, [activeTab]);
+  // Elegir una plantilla guardada desde el modal de posado.
+  const handlePosePickTemplate = useCallback((templateId) => {
+    const tpl = templates.find((t) => t.id === templateId);
+    const receta = dobblePose?.receta;
+    setDobblePose(null);
+    if (!tpl || !receta) return;
+    poseDobbleOnTemplate(tpl, receta);
+  }, [templates, dobblePose, poseDobbleOnTemplate]);
 
-  // Aplicar nuevo diámetro: re-render de las cartas al nuevo px + recálculo de
-  // grilla y cortes; recarga el layout de la pestaña activa.
-  const submitDobbleDiameter = useCallback(async (nuevoDiam) => {
-    const tplId = dobbleEdit?.templateId;
-    const receta = tplId ? dobbleRecetasRef.current.get(tplId) : null;
+  // Crear una plantilla redonda nueva y posar encima: dejamos la receta pendiente
+  // y abrimos la grilla rápida (arranca en modo círculo).
+  const handlePoseCreateTemplate = useCallback(() => {
+    const receta = dobblePose?.receta;
+    setDobblePose(null);
+    if (!receta) return;
+    setGridForDobbleReceta(receta);
+    setGridModalOpen(true);
+  }, [dobblePose]);
+
+  // Re-posar el mazo de la pestaña activa en otra plantilla (sin re-elegir el .json).
+  const handleReposeDobble = useCallback(() => {
+    const t = activeTab?.template;
+    const receta = t ? dobbleRecetasRef.current.get(t.id) : null;
     if (!receta) {
-      setToast({ kind: 'error', text: 'No tengo la receta de este mazo para regenerar (reimportá el mazo).' });
-      setDobbleEdit(null);
+      setToast({ kind: 'error', text: 'No tengo la receta de este mazo (reimportá el .json).' });
       return;
     }
+    setDobblePose({ receta });
+  }, [activeTab]);
+
+  // Cambiar el fondo de carta (color o imagen) de la pestaña Dobble activa:
+  // re-renderiza TODAS las cartas con el nuevo fondo, lo persiste con la plantilla
+  // (si la pestaña referencia una guardada) y recarga el layout.
+  const applyDobbleFondo = useCallback(async (nextFondo) => {
+    const tpl = activeTab?.template;
+    if (!tpl?.dobble) return;
+    const receta = dobbleRecetasRef.current.get(tpl.id);
+    if (!receta) {
+      setToast({ kind: 'error', text: 'No tengo la receta de este mazo (reimportá el .json).' });
+      return;
+    }
+    const fondo = {};
+    if (nextFondo?.color) fondo.color = nextFondo.color;
+    if (nextFondo?.imagen) fondo.imagen = nextFondo.imagen;
+    const fondoOut = Object.keys(fondo).length ? fondo : undefined;
     setDobbleBusy(true);
     try {
-      const base = activeTab?.template?.dobble || {};
       const { spec, error } = await buildDobbleJob(receta, {
-        diametroMM: nuevoDiam,
-        dobleFaz: base.doubleSided,
-        paperWidthMm: base.paperWidthMm,
-        paperHeightMm: base.paperHeightMm,
-        gapMM: base.gapMM,
-        markMarginMm: base.markMarginMm,
-        holguraMM: base.holguraMM,
-        dpi: base.dpi,
+        template: { ...tpl, dobbleFondo: fondoOut },
+        fondo: fondo.color,
+        fondoImagen: fondo.imagen,
+        dobleFaz: tpl.dobble.doubleSided,
+        dpi: tpl.dobble.dpi,
       });
-      if (!spec) { setToast({ kind: 'error', text: error || 'No se pudo regenerar.' }); return; }
-      updateActiveTab({ template: { ...spec.template, id: tplId, temporal: true, tabBacked: true } });
+      if (!spec) { setToast({ kind: 'error', text: error || 'No se pudo aplicar el fondo.' }); return; }
+      updateActiveTab({ template: { ...spec.template, id: tpl.id, temporal: true, tabBacked: true } });
       layout.loadFromJob({
         images: spec.images,
         assignmentsFront: spec.assignmentsFront,
         assignmentsBack: spec.assignmentsBack,
         minPages: spec.minPages,
       });
-      setToast({ kind: 'success', text: `Mazo regenerado a ${nuevoDiam} mm.` });
-      setDobbleEdit(null);
+      if (tpl.sourceTemplateId) {
+        const storeTpl = templates.find((t) => t.id === tpl.sourceTemplateId);
+        if (storeTpl) update({ ...storeTpl, dobbleFondo: fondoOut }).catch(() => {});
+      }
     } catch (err) {
-      setToast({ kind: 'error', text: `Error regenerando: ${err.message}` });
+      setToast({ kind: 'error', text: `Error aplicando fondo: ${err.message}` });
     } finally {
       setDobbleBusy(false);
     }
-  }, [dobbleEdit, activeTab, updateActiveTab, layout]);
+  }, [activeTab, updateActiveTab, layout, templates, update]);
+
+  // Helpers de fondo de carta: parten del fondo actual y cambian una clave.
+  const dobbleFondoActual = () => activeTab?.template?.dobbleFondo || {};
+  const handleDobbleColor = useCallback((color) => {
+    applyDobbleFondo({ ...dobbleFondoActual(), color });
+  }, [applyDobbleFondo, activeTab]);
+  const handleDobbleImage = useCallback((dataUrl) => {
+    applyDobbleFondo({ ...dobbleFondoActual(), imagen: dataUrl });
+  }, [applyDobbleFondo, activeTab]);
+  const handleDobbleClearImage = useCallback(() => {
+    const { imagen, ...rest } = dobbleFondoActual();
+    applyDobbleFondo(rest);
+  }, [applyDobbleFondo, activeTab]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -1038,6 +1095,16 @@ export default function App() {
       // Guardamos los parámetros crudos para poder re-editar medidas exacto.
       gridParams,
     };
+    // Si la grilla se creó para posar un mazo Dobble, posamos encima en vez de
+    // abrir una hoja vacía. La plantilla queda como "Guardar como plantilla…".
+    if (gridForDobbleReceta) {
+      const receta = gridForDobbleReceta;
+      setGridForDobbleReceta(null);
+      setGridModalOpen(false);
+      tpl.name = doubleSided ? 'Plantilla Dobble doble faz' : 'Plantilla Dobble';
+      poseDobbleOnTemplate(tpl, receta);
+      return;
+    }
     openInTab(tpl, { name: tpl.name, forceNew: true });
     setGridModalOpen(false);
   };
@@ -2562,7 +2629,11 @@ export default function App() {
             onSetCategoria={handleSetCategoria}
             categoriasList={categoriasList}
             onEditMargin={handleEditMargin}
-            onEditDobble={handleEditDobble}
+            dobbleBusy={dobbleBusy}
+            onReposeDobble={handleReposeDobble}
+            onChangeDobbleColor={handleDobbleColor}
+            onSetDobbleImage={handleDobbleImage}
+            onClearDobbleImage={handleDobbleClearImage}
             onChangeWhiteBorder={(v) => handlePatchActiveTemplate({ cellWhiteBorderMm: v })}
             onChangeBorderLine={(v) => handlePatchActiveTemplate({ cellBorderLineMm: v })}
             onChangeBorderColor={(v) => handlePatchActiveTemplate({ cellBorderColor: v })}
@@ -2659,9 +2730,15 @@ export default function App() {
           <GridUploadModal
             open
             onConfirm={handleCreateGrid}
-            onCancel={() => setGridModalOpen(false)}
+            onCancel={() => { setGridModalOpen(false); setGridForDobbleReceta(null); }}
             presets={paperPresetList}
             onOpenPresetsEditor={() => setPresetsModalOpen(true)}
+            defaultCutShape={gridForDobbleReceta ? 'circle' : 'rect'}
+            {...(gridForDobbleReceta ? {
+              title: 'Plantilla redonda para el mazo Dobble',
+              description: 'Definí hoja, separación, diámetro de celda y corte circular. Las cartas se posan sobre estas celdas. El ⌀ de la carta = diámetro de celda − 2× margen de corte.',
+              submitLabel: 'Crear y posar',
+            } : {})}
           />
         )}
 
@@ -2899,13 +2976,14 @@ export default function App() {
           onImportDobble={() => { setNewTabModalOpen(false); handleImportDobble(); }}
         />
 
-        <DobbleDiameterModal
-          open={!!dobbleEdit}
-          diametroMM={dobbleEdit?.diametroMM ?? 65}
-          doubleSided={!!dobbleEdit?.doubleSided}
+        <DobblePoseModal
+          open={!!dobblePose}
+          receta={dobblePose?.receta}
+          templates={templates}
           busy={dobbleBusy}
-          onSubmit={submitDobbleDiameter}
-          onCancel={() => setDobbleEdit(null)}
+          onPickTemplate={handlePosePickTemplate}
+          onCreateTemplate={handlePoseCreateTemplate}
+          onClose={() => setDobblePose(null)}
         />
 
         <input

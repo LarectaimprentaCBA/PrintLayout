@@ -94,7 +94,11 @@ export default function PropertiesSidebar({
   onChangeMinPages,
   onShare,
   onEditMargin,
-  onEditDobble,
+  dobbleBusy = false,
+  onReposeDobble,
+  onChangeDobbleColor,
+  onSetDobbleImage,
+  onClearDobbleImage,
   onChangeWhiteBorder,
   onChangeBorderLine,
   onChangeBorderColor,
@@ -133,6 +137,7 @@ export default function PropertiesSidebar({
   const multiInputRef = useRef(null);
   const singleInputRef = useRef(null);
   const pdfInputRef = useRef(null);
+  const dobbleImgInputRef = useRef(null);
   const [dragKind, setDragKind] = useState(null); // 'pdf' | 'image' | null
   const dragCounterRef = useRef(0);
 
@@ -201,6 +206,17 @@ export default function PropertiesSidebar({
     if (imgs.length === 0) return;
     const loaded = await readImageFiles(imgs);
     if (loaded.length > 0) onAddImages?.(loaded);
+  };
+
+  // Imagen de fondo de carta (Dobble): la leemos a dataUrl embebido y la
+  // mandamos al renderer compartido (estilo.fondoImagen).
+  const handleDobbleImagePick = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => onSetDobbleImage?.(reader.result);
+    reader.readAsDataURL(file);
   };
 
   const handleSinglePick = async (e) => {
@@ -458,23 +474,82 @@ export default function PropertiesSidebar({
               <dd>{totalCells(template)}</dd>
             </div>
             {template.dobble && (
-              <div className="mt-1 rounded border border-accent-500/30 bg-accent-500/5 px-2 py-1.5">
+              <div className="mt-1 space-y-2 rounded border border-accent-500/30 bg-accent-500/5 px-2 py-2">
+                <input
+                  ref={dobbleImgInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/jpg,image/webp"
+                  className="hidden"
+                  onChange={handleDobbleImagePick}
+                />
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-semibold text-accent-200">Mazo Dobble</span>
-                  <span className="text-[11px] text-ink-300">⌀ {template.dobble.diametroMM} mm</span>
+                  <span className="text-[11px] text-ink-300">carta ⌀ {template.dobble.diametroMM} mm</span>
                 </div>
-                <div className="mt-0.5 text-[10px] text-ink-500">
-                  n{template.dobble.n ?? '?'} · sangrado {template.dobble.bleedMM} mm
+                <div className="text-[10px] leading-snug text-ink-500">
+                  n{template.dobble.n ?? '?'} · {template.dobble.cartas ?? '?'} cartas · sangrado{' '}
+                  {template.dobble.bleedMM} mm · {template.dobble.cellsPerPage ?? '?'}/hoja
                   {template.dobble.doubleSided ? ' · doble faz' : ''}
+                  <div>El tamaño lo define la plantilla.</div>
                 </div>
-                {onEditDobble && (
+
+                {/* Fondo de carta (color + imagen). Persiste con la plantilla. */}
+                <div className="space-y-1.5 border-t border-accent-500/20 pt-2">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-ink-400">
+                    Fondo de carta
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-ink-400">Color</span>
+                    <input
+                      type="color"
+                      value={template.dobbleFondo?.color || '#ffffff'}
+                      disabled={dobbleBusy}
+                      onChange={(e) => onChangeDobbleColor?.(e.target.value)}
+                      title="Color de fondo de la carta (detrás de los símbolos)"
+                      className="h-5 w-8 cursor-pointer rounded border border-ink-700 bg-ink-800 p-0 disabled:opacity-40"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={dobbleBusy}
+                      onClick={() => dobbleImgInputRef.current?.click()}
+                      className="flex-1 rounded border border-ink-700 px-2 py-1 text-[11px] text-ink-200 hover:bg-ink-800 disabled:opacity-40"
+                    >
+                      {template.dobbleFondo?.imagen ? 'Cambiar imagen…' : 'Imagen de fondo…'}
+                    </button>
+                    {template.dobbleFondo?.imagen && (
+                      <button
+                        type="button"
+                        disabled={dobbleBusy}
+                        onClick={() => onClearDobbleImage?.()}
+                        title="Quitar la imagen de fondo"
+                        className="rounded border border-red-500/40 px-2 py-1 text-[11px] text-red-300 hover:bg-red-500/10 disabled:opacity-40"
+                      >
+                        Quitar
+                      </button>
+                    )}
+                  </div>
+                  {template.dobbleFondo?.imagen && (
+                    <div className="text-[10px] text-ink-500">
+                      Imagen recortada al círculo de la carta (con sangrado), detrás de los símbolos.
+                    </div>
+                  )}
+                </div>
+
+                {onReposeDobble && (
                   <button
                     type="button"
-                    onClick={onEditDobble}
-                    className="mt-1.5 w-full rounded border border-accent-500/40 bg-accent-500/10 px-2 py-1 text-[11px] font-medium text-accent-200 hover:bg-accent-500/20"
+                    disabled={dobbleBusy}
+                    onClick={onReposeDobble}
+                    title="Posar este mismo mazo sobre otra plantilla (cambia tamaño/hoja)"
+                    className="w-full rounded border border-accent-500/40 bg-accent-500/10 px-2 py-1 text-[11px] font-medium text-accent-200 hover:bg-accent-500/20 disabled:opacity-40"
                   >
-                    Editar diámetro…
+                    Cambiar plantilla…
                   </button>
+                )}
+                {dobbleBusy && (
+                  <div className="text-[10px] text-ink-500">Regenerando cartas…</div>
                 )}
               </div>
             )}
