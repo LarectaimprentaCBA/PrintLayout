@@ -28,7 +28,7 @@ globalThis.document = {
   }),
 };
 
-const { buildDobbleJob, dobbleGeometryFromTemplate } = await import('../buildDobbleJob.js');
+const { buildDobbleJob, dobbleGeometryFromTemplate, buildComboTemplate, dobbleCardCapacity } = await import('../buildDobbleJob.js');
 const { computeBestGrid, generateCuts } = await import('../../lib/grid.js');
 const { validarReceta } = await import('../vendor/receta.js');
 
@@ -95,48 +95,85 @@ await check('n3 · 1 hoja (⌀65, sangrado 3)', circleTemplate({ side: 71, cutMa
 await check('n3 · multipágina (celda chica)', circleTemplate({ side: 56, cutMargin: 3 }));
 await check('n3 · doble faz', circleTemplate({ side: 71, cutMargin: 3.5, doubleSided: true }));
 
-// --- Combo 3 hojas (pages=[A,A,B]) con SOLO 2 roles: card + caja (+frente-caja) ---
+// --- Combo 3 hojas (pages=[A,A,B]) · 2 roles (card + caja) · DOBLE FAZ ---
 // Las instrucciones/QR van horneadas en el fondo del Corel (no son celdas).
 async function checkCombo() {
   const mk = (role, i, w = 65, h = 65) => ({ id: i, x: (i % 6) * 68, y: 0, w, h, role });
   const cardGrid = (n) => Array.from({ length: n }, (_, i) => mk('card', i));
-  const A = { celdas: cardGrid(6), pdfBase64: 'AAAA', bgKey: 'A' };
+  const A = { celdas: cardGrid(6), celdasDorso: cardGrid(6), pdfBase64: 'AAAA', bgKey: 'A' };
   const B = {
-    celdas: [
-      mk('card', 0), mk('card', 1), mk('card', 2),
-      mk('caja', 3, 180, 120), mk('frente-caja', 4, 60, 60),
-    ],
+    celdas: [mk('card', 0), mk('card', 1), mk('card', 2), mk('caja', 3, 180, 120), mk('frente-caja', 4, 60, 60)],
+    celdasDorso: [mk('card', 0), mk('card', 1), mk('card', 2), mk('caja', 3, 180, 120), mk('frente-caja', 4, 60, 60)],
     pdfBase64: 'BBBB', bgKey: 'B',
   };
-  const tpl = { id: 'tpl_combo', name: 'Combo 3 hojas', pageWidthMm: 210, pageHeightMm: 297, pages: [A, A, B] };
-  const IMG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const tpl = { id: 'tpl_combo', name: 'Combo 3 hojas', pageWidthMm: 210, pageHeightMm: 297, pages: [A, A, B], doubleSided: true };
 
-  const res = await buildDobbleJob(receta, {
-    template: tpl, fondo: '#ffeecc',
-    caja: { color: '#8b5a2b', imagen: IMG },
-  });
+  const res = await buildDobbleJob(receta, { template: tpl });
   const spec = res.spec;
-  console.log('# combo 3 hojas [A,A,B] · 2 roles (card + caja)');
+  console.log('# combo 3 hojas [A,A,B] · doble faz · MVP (caja en blanco)');
   ok(!!spec, `spec presente (${res.error || ''})`);
   if (!spec) return;
-  const AF = spec.assignmentsFront;
+  const AF = spec.assignmentsFront, AB = spec.assignmentsBack;
   // flat: p0 0-5 card · p1 6-11 card · p2 12,13,14 card / 15 caja / 16 frente-caja
   ok(spec.template.dobble.combo === true, 'dobble.combo=true');
-  ok(spec.template.dobble.pages === 3 && spec.minPages === 3, 'pages=3 y minPages=3');
-  ok(AF.length === 17, `assignments length = 17 (6+6+5) (got ${AF.length})`);
-  ok(AF.slice(0, 12).every((x) => x != null), 'hojas 1-2 (12 celdas card) llenas');
-  ok(AF[12] != null, 'primera card de hoja 3 llena (carta 13)');
+  ok(spec.template.dobble.doubleSided === true && spec.template.doubleSided === true, 'doubleSided=true');
+  ok(spec.minPages === 3, 'minPages=3');
+  ok(AF.length === 17, `front length = 17 (6+6+5) (got ${AF.length})`);
+  ok(AF.slice(0, 12).every((x) => x != null) && AF[12] != null, '13 cartas en hojas 1-2-3 (12+1)');
   ok(AF[13] == null && AF[14] == null, 'cards sobrantes de hoja 3 vacías');
-  ok(AF[15] != null, 'celda caja (color) llena');
-  ok(AF[16] != null, 'celda frente-caja (imagen) llena');
-  // 13 cartas + 1 caja-color + 1 frente-imagen = 15 (color NO se aplica a la celda que cubre la imagen)
-  ok(spec.images.length === 15, `images = 13 + caja + frente = 15 (got ${spec.images.length})`);
+  ok(AF[15] == null && AF[16] == null, 'MVP: caja/frente EN BLANCO (sin opts.caja)');
+  // DOBLE FAZ: dorso compartido solo en las celdas card con carta
+  ok(AB.length === AF.length, 'back y front misma longitud');
+  const dorsoId = AB[0];
+  ok(dorsoId != null && AB.slice(0, 12).every((x) => x === dorsoId) && AB[12] === dorsoId, 'dorso compartido en las 13 card cells');
+  ok(AB[13] == null && AB[14] == null && AB[15] == null && AB[16] == null, 'dorso NO en cards vacías ni caja');
   const cardIds = new Set(AF.slice(0, 13).filter(Boolean));
-  ok(![AF[15], AF[16]].some((id) => cardIds.has(id)), 'caja/frente NO reciben cartas Dobble');
-  ok(spec.template.cajaFondo && spec.template.cajaFondo.color === '#8b5a2b', 'cajaFondo.color persistido');
+  ok(!cardIds.has(dorsoId), 'dorso es una imagen distinta de las cartas');
+  ok(spec.images.length === 14, `images = 13 cartas + 1 dorso = 14 (got ${spec.images.length})`);
   ok(!res.warning, `sin warning (13 ≤ 15 card cells) (${res.warning || ''})`);
 }
 await checkCombo();
+
+// --- buildComboTemplate: arma pages=[A,A,B] desde 2 plantillas de Corel ---
+async function checkComboBuild() {
+  const mk = (i, w = 65, h = 65) => ({ id: i, x: (i % 6) * 68, y: 0, w, h }); // sin role (default card)
+  const A = { id: 'tA', name: 'Hoja cartas', pageWidthMm: 210, pageHeightMm: 297, doubleSided: true,
+    pdfBase64: 'PDF_A', celdas: Array.from({ length: 6 }, (_, i) => mk(i)), celdasDorso: Array.from({ length: 6 }, (_, i) => mk(i)) };
+  const B = { id: 'tB', name: 'Hoja caja', pageWidthMm: 210, pageHeightMm: 297, doubleSided: true,
+    pdfBase64: 'PDF_B', celdas: [mk(0), mk(1), mk(2), { id: 3, x: 0, y: 150, w: 180, h: 100 }], celdasDorso: [mk(0), mk(1), mk(2)] };
+  const { template: combo, error } = buildComboTemplate(A, B, { name: 'Mazo Dobble' });
+  console.log('# buildComboTemplate (A,A,B)');
+  ok(!!combo, `combo armado (${error || ''})`);
+  if (!combo) return;
+  ok(combo.pages.length === 3, 'pages.length=3');
+  ok(combo.doubleSided === true, 'combo doubleSided');
+  ok(combo.pages[0].bgKey === 'A' && combo.pages[1].bgKey === 'A' && combo.pages[2].bgKey === 'B', 'bgKey A,A,B');
+  ok(combo.pages[0].pdfBase64 === 'PDF_A' && combo.pages[2].pdfBase64 === 'PDF_B', 'pdfBase64 per-hoja A/B');
+  ok(combo.pages[0].celdas.every((c) => c.role === 'card'), 'A: todas card');
+  const bRoles = combo.pages[2].celdas.map((c) => c.role);
+  ok(bRoles.slice(0, 3).every((r) => r === 'card') && bRoles[3] === 'caja', 'B: 3 card + 1 caja (por tamaño vs carta de A)');
+  const cap = dobbleCardCapacity(combo);
+  ok(cap.multi && cap.pages === 3 && cap.cardCells === 15, `capacidad: 15 card cells en 3 hojas (got ${cap.cardCells})`);
+  // Posar sobre el combo: la caja de B (flat idx 15) NO recibe carta; doble faz OK.
+  const res = await buildDobbleJob(receta, { template: combo });
+  ok(!!res.spec && res.spec.assignmentsFront[15] == null, 'la celda caja de B queda vacía al posar');
+  ok(!!res.spec && res.spec.template.doubleSided === true, 'combo posado es doble faz');
+}
+await checkComboBuild();
+
+// --- Overflow: mazo más grande que las card cells → warning (no trunca en silencio) ---
+async function checkOverflow() {
+  const mk = (i) => ({ id: i, x: 0, y: i * 70, w: 65, h: 65, role: 'card' });
+  const A = { celdas: [mk(0), mk(1)], celdasDorso: [mk(0), mk(1)], pdfBase64: 'A', bgKey: 'A' };
+  const B = { celdas: [mk(0)], celdasDorso: [mk(0)], pdfBase64: 'B', bgKey: 'B' };
+  const tpl = { name: 'Combo chico', pageWidthMm: 210, pageHeightMm: 297, pages: [A, A, B], doubleSided: true };
+  const res = await buildDobbleJob(receta, { template: tpl }); // 13 cartas, 5 card cells
+  console.log('# overflow (13 cartas, 5 celdas card)');
+  ok(!!res.spec, 'spec presente');
+  ok(!!res.warning && /sobran/.test(res.warning), `warning de overflow (${res.warning || 'NINGUNO'})`);
+  ok(res.spec.assignmentsFront.filter((x) => x != null).length === 5, 'posa 5 cartas (las que entran), no trunca en silencio');
+}
+await checkOverflow();
 
 console.log(`\n==== ${pass} OK, ${fail} FALLOS ====`);
 process.exit(fail ? 1 : 0);

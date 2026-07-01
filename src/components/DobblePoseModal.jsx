@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { dobbleGeometryFromTemplate } from '../dobble/buildDobbleJob.js';
+import { dobbleGeometryFromTemplate, dobbleCardCapacity } from '../dobble/buildDobbleJob.js';
 
 // Modal de POSADO de un mazo Dobble: elegí sobre qué plantilla redonda posar las
 // cartas (lista de plantillas guardadas con corte circular) o creá una nueva.
@@ -13,6 +13,7 @@ export default function DobblePoseModal({
   busy = false,
   onPickTemplate,
   onCreateTemplate,
+  onCreateCombo,
   onClose,
 }) {
   const [query, setQuery] = useState('');
@@ -34,22 +35,27 @@ export default function DobblePoseModal({
   const n = receta?.mazo?.n ?? '?';
   const doble = !!receta?.dorso;
 
-  // Plantillas aptas: corte circular + geometría válida. Cada una con su ⌀ de
-  // carta derivado y cuántas hojas necesitaría este mazo.
+  // Plantillas aptas: cualquiera con celdas de carta válidas (redonda, PDF-base o
+  // combo de 3 hojas). Cada una con su ⌀ de carta derivado, la capacidad de
+  // cartas y cuántas hojas usa este mazo. Combos primero.
   const aptas = useMemo(() => {
     const q = query.trim().toLowerCase();
     return templates
-      .filter((t) => (t.cutShape ?? 'rect') === 'circle')
-      .map((t) => ({ t, geo: dobbleGeometryFromTemplate(t) }))
+      .map((t) => ({ t, geo: dobbleGeometryFromTemplate(t), cap: dobbleCardCapacity(t) }))
       .filter(({ geo }) => geo.ok)
       .filter(({ t }) =>
         !q || `${t.name || ''} ${t.categoria || ''}`.toLowerCase().includes(q))
-      .map(({ t, geo }) => ({
+      .map(({ t, geo, cap }) => ({
         t,
         geo,
-        hojas: Math.max(1, Math.ceil(cartas / geo.cellsPerPage)),
+        cap,
+        hojas: cap.multi ? cap.pages : Math.max(1, Math.ceil(cartas / Math.max(1, cap.cardCells))),
+        faltan: Math.max(0, cartas - cap.cardCells),
       }))
-      .sort((a, b) => (a.t.name || '').localeCompare(b.t.name || ''));
+      .sort((a, b) => {
+        if (!!a.cap.multi !== !!b.cap.multi) return a.cap.multi ? -1 : 1; // combos primero
+        return (a.t.name || '').localeCompare(b.t.name || '');
+      });
   }, [templates, query, cartas]);
 
   if (!open) return null;
@@ -90,23 +96,34 @@ export default function DobblePoseModal({
             className="flex-1 rounded border border-ink-700 bg-ink-800 px-3 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
             autoFocus
           />
+          {onCreateCombo && (
+            <button
+              type="button"
+              onClick={() => onCreateCombo?.()}
+              disabled={busy}
+              className="shrink-0 rounded border border-accent-500/40 bg-accent-500/10 px-3 py-1.5 text-xs font-medium text-accent-200 hover:bg-accent-500/20 disabled:opacity-40"
+              title="Armar un combo Mazo Dobble de 3 hojas con 2 plantillas de Corel (cartas + cartas/caja)"
+            >
+              + Combo 3 hojas…
+            </button>
+          )}
           <button
             type="button"
             onClick={() => onCreateTemplate?.()}
             disabled={busy}
-            className="shrink-0 rounded border border-accent-500/40 bg-accent-500/10 px-3 py-1.5 text-xs font-medium text-accent-200 hover:bg-accent-500/20 disabled:opacity-40"
+            className="shrink-0 rounded border border-ink-700 px-3 py-1.5 text-xs text-ink-200 hover:bg-ink-800 disabled:opacity-40"
             title="Crear una plantilla con corte circular y posar el mazo encima"
           >
-            + Crear plantilla redonda…
+            + Redonda…
           </button>
         </div>
 
         <div className="min-h-[8rem] flex-1 overflow-y-auto px-3 py-2">
           {aptas.length === 0 ? (
             <div className="px-3 py-8 text-center text-xs text-ink-400">
-              {templates.some((t) => (t.cutShape ?? 'rect') === 'circle')
-                ? 'Ninguna plantilla redonda coincide con la búsqueda.'
-                : 'Todavía no tenés plantillas redondas.'}
+              {templates.length
+                ? 'Ninguna plantilla apta coincide con la búsqueda.'
+                : 'Todavía no tenés plantillas para posar.'}
               <div className="mt-2">
                 <button
                   type="button"
@@ -120,7 +137,7 @@ export default function DobblePoseModal({
             </div>
           ) : (
             <ul className="space-y-1">
-              {aptas.map(({ t, geo, hojas }) => (
+              {aptas.map(({ t, geo, cap, hojas, faltan }) => (
                 <li key={t.id}>
                   <button
                     type="button"
@@ -129,11 +146,21 @@ export default function DobblePoseModal({
                     className="group flex w-full items-center gap-3 rounded-md border border-transparent px-3 py-2 text-left hover:border-ink-700 hover:bg-ink-800 disabled:opacity-50"
                   >
                     <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-accent-500/40 text-[10px] font-semibold text-accent-300">
-                      ⌀
+                      {cap.multi ? cap.pages : '⌀'}
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center gap-1.5 truncate text-sm font-medium text-ink-100">
                         <span className="truncate">{t.name}</span>
+                        {cap.multi && (
+                          <span className="shrink-0 rounded bg-accent-500/20 px-1 text-[9px] font-semibold text-accent-200" title="Combo de varias hojas">
+                            combo {cap.pages}h
+                          </span>
+                        )}
+                        {t.doubleSided && (
+                          <span className="shrink-0 rounded bg-ink-700 px-1 text-[9px] text-ink-300" title="Doble faz">
+                            doble faz
+                          </span>
+                        )}
                         {t.dobbleFondo && (
                           <span className="shrink-0 rounded bg-accent-500/15 px-1 text-[9px] text-accent-300" title="Tiene fondo de carta configurado">
                             fondo
@@ -141,11 +168,19 @@ export default function DobblePoseModal({
                         )}
                       </span>
                       <span className="mt-0.5 block text-[11px] text-ink-400">
-                        carta ⌀ {geo.diam} mm · sangrado {geo.bleed} mm ·{' '}
-                        {geo.cellsPerPage}/hoja · {hojas} hoja{hojas === 1 ? '' : 's'}
+                        {cap.multi ? (
+                          <>combo {cap.pages} hojas · hasta {cap.cardCells} cartas · carta ⌀ {geo.diam} mm</>
+                        ) : (
+                          <>carta ⌀ {geo.diam} mm · sangrado {geo.bleed} mm · {cap.cardCells}/hoja · {hojas} hoja{hojas === 1 ? '' : 's'}</>
+                        )}
                         <span className="ml-1 text-ink-500">
                           · {Math.round(t.pageWidthMm)}×{Math.round(t.pageHeightMm)} mm
                         </span>
+                        {faltan > 0 && (
+                          <span className="ml-1 text-amber-400" title="El mazo no entra completo en las celdas de carta">
+                            · faltan {faltan} celdas
+                          </span>
+                        )}
                       </span>
                     </span>
                     <span className="shrink-0 text-[11px] text-accent-400 opacity-0 transition group-hover:opacity-100">

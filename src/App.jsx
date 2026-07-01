@@ -11,9 +11,10 @@ import TabsBar from './components/TabsBar.jsx';
 import ConfirmModal from './components/ConfirmModal.jsx';
 import LayoutCanvas from './components/LayoutCanvas.jsx';
 import PropertiesSidebar from './components/PropertiesSidebar.jsx';
-import { buildDobbleJob } from './dobble/buildDobbleJob.js';
+import { buildDobbleJob, buildComboTemplate } from './dobble/buildDobbleJob.js';
 import { validarReceta } from './dobble/vendor/receta.js';
 import DobblePoseModal from './components/DobblePoseModal.jsx';
+import DobbleComboModal from './components/DobbleComboModal.jsx';
 import PromptModal from './components/PromptModal.jsx';
 import PdfUploadModal from './components/PdfUploadModal.jsx';
 import PdfImageExtractModal from './components/PdfImageExtractModal.jsx';
@@ -350,6 +351,8 @@ export default function App() {
   const dobbleRecetasRef = useRef(new Map());
   const [dobblePose, setDobblePose] = useState(null); // { receta } | null  (modal de posado abierto)
   const [gridForDobbleReceta, setGridForDobbleReceta] = useState(null); // receta esperando una plantilla nueva
+  const [dobbleComboOpen, setDobbleComboOpen] = useState(false); // config del combo Mazo Dobble
+  const [comboForReceta, setComboForReceta] = useState(null); // receta esperando un combo nuevo
   const [dobbleBusy, setDobbleBusy] = useState(false);
   // Editor de plantillas (botón "Plantillas" de la barra) + edición de medidas.
   const [templatesManagerOpen, setTemplatesManagerOpen] = useState(false);
@@ -488,7 +491,7 @@ export default function App() {
     setDobbleBusy(true);
     try {
       const fondo = template.dobbleFondo || {};
-      const { spec, error } = await buildDobbleJob(receta, {
+      const { spec, error, warning } = await buildDobbleJob(receta, {
         template,
         fondo: fondo.color,
         fondoImagen: fondo.imagen,
@@ -506,10 +509,13 @@ export default function App() {
       });
       dobbleRecetasRef.current.set(`tabtpl_${tabId}`, receta);
       const d = spec.template.dobble;
-      setToast({
-        kind: 'success',
-        text: `Mazo posado: ${d.cartas} cartas (⌀ ${d.diametroMM} mm), ${d.cellsPerPage}/hoja, ${spec.minPages} hoja(s).`,
-      });
+      const resumen = d.combo
+        ? `Mazo posado en combo: ${Math.min(d.cardCells, d.cartas)}/${d.cartas} cartas en ${d.pages} hojas${d.doubleSided ? ' (doble faz)' : ''}.`
+        : `Mazo posado: ${d.cartas} cartas (⌀ ${d.diametroMM} mm), ${d.cellsPerPage}/hoja, ${spec.minPages} hoja(s).`;
+      // No truncar en silencio: si sobran cartas, avisamos (kind info).
+      setToast(warning
+        ? { kind: 'info', text: `${resumen} ⚠ ${warning}` }
+        : { kind: 'success', text: resumen });
     } catch (err) {
       setToast({ kind: 'error', text: `Error posando: ${err.message}` });
     } finally {
@@ -535,6 +541,38 @@ export default function App() {
     setGridForDobbleReceta(receta);
     setGridModalOpen(true);
   }, [dobblePose]);
+
+  // Armar un combo Mazo Dobble (3 hojas): dejamos la receta pendiente y abrimos
+  // el config del combo (elegir 2 plantillas de Corel).
+  const handlePoseCreateCombo = useCallback(() => {
+    const receta = dobblePose?.receta;
+    setDobblePose(null);
+    setComboForReceta(receta || null);
+    setDobbleComboOpen(true);
+  }, [dobblePose]);
+
+  // Confirmar el combo: arma la plantilla multi-hoja (pages=[A,A,B]), la GUARDA en
+  // el store (reutilizable) y posa el mazo pendiente encima.
+  const handleCreateCombo = useCallback(async ({ aId, bId, name }) => {
+    const A = templates.find((t) => t.id === aId);
+    const B = templates.find((t) => t.id === bId);
+    const receta = comboForReceta;
+    setDobbleComboOpen(false);
+    setComboForReceta(null);
+    if (!A || !B) { setToast({ kind: 'error', text: 'Faltan las plantillas del combo.' }); return; }
+    const { template: combo, error } = buildComboTemplate(A, B, { name });
+    if (!combo) { setToast({ kind: 'error', text: error || 'No se pudo armar el combo.' }); return; }
+    setDobbleBusy(true);
+    try {
+      const saved = await update(combo);
+      setToast({ kind: 'success', text: `Combo "${saved.name}" guardado (3 hojas). Ya podés reusarlo.` });
+      if (receta) await poseDobbleOnTemplate(saved, receta);
+    } catch (err) {
+      setToast({ kind: 'error', text: `No se pudo guardar el combo: ${err.message}` });
+    } finally {
+      setDobbleBusy(false);
+    }
+  }, [templates, comboForReceta, update, poseDobbleOnTemplate]);
 
   // Re-posar el mazo de la pestaña activa en otra plantilla (sin re-elegir el .json).
   const handleReposeDobble = useCallback(() => {
@@ -2983,7 +3021,16 @@ export default function App() {
           busy={dobbleBusy}
           onPickTemplate={handlePosePickTemplate}
           onCreateTemplate={handlePoseCreateTemplate}
+          onCreateCombo={handlePoseCreateCombo}
           onClose={() => setDobblePose(null)}
+        />
+
+        <DobbleComboModal
+          open={dobbleComboOpen}
+          templates={templates}
+          busy={dobbleBusy}
+          onConfirm={handleCreateCombo}
+          onCancel={() => { setDobbleComboOpen(false); setComboForReceta(null); }}
         />
 
         <input

@@ -16,12 +16,13 @@ y las **marcas L de registro** en las 4 esquinas (a 10 mm del borde).
 
 ## Combo Dobble de 3 hojas (camino QR/tarjetas)
 
-`dobble-combo-3hojas.pdf` — plantilla SINTÉTICA `pages=[A,A,B]` (los PDF reales los aporta
-Mariano). Demuestra: **posado multi-hoja** en orden, **FONDO POR HOJA** (hojas 1-2 con
-"FONDO A", hoja 3 con "FONDO B" — cada una con su QR simulado), **2 roles de celda**
-(`card` + `caja`/`frente-caja`) y **fondo de caja** (recuadro color + cuadrado del frente
-con imagen). Las **instrucciones van horneadas en el fondo** de la hoja 3 (arte fijo, no
-celda), igual que el QR. El corte/hendido/QR los hace el plotter (no la app).
+`dobble-combo-3hojas.pdf` — combo SINTÉTICO `pages=[A,A,B]` **doble faz** (los PDF reales
+los aporta Mariano). **6 páginas** = 3 frentes + 3 dorsos, como produce `buildDoubleSidedPdf`.
+Demuestra: **posado multi-hoja** en orden, **FONDO POR HOJA** (frentes 1-2 "FONDO A",
+frente 3 "FONDO B" — cada uno con su QR simulado), **doble faz** (dorso compartido en las
+celdas `card`, espejado en X, sin fondo), **instrucciones horneadas en el fondo** de la
+hoja 3 (no celda) y **caja EN BLANCO** (MVP — la corta/pliega el plotter por QR). El
+relleno de caja color/imagen queda para más adelante (fuera del MVP).
 
 ## Regenerar
 

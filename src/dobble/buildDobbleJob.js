@@ -171,6 +171,61 @@ export function dobbleGeometryFromTemplate(template) {
   };
 }
 
+// Capacidad de posado de una plantilla (para el modal): cuántas celdas 'card'
+// tiene y si es multi-hoja (combo). Para single-page, cardCells = celdas 'card';
+// para combo, suma las celdas 'card' de todas las páginas.
+export function dobbleCardCapacity(template) {
+  if (fixedPageCount(template) !== null) {
+    let cardCells = 0;
+    for (const pg of (template.pages || [])) {
+      for (const c of (pg.celdas || [])) if (cellRole(c) === 'card') cardCells++;
+    }
+    return { cardCells, multi: true, pages: template.pages.length };
+  }
+  const cardCells = (template.celdas || []).filter((c) => cellRole(c) === 'card').length;
+  return { cardCells, multi: false, pages: 1 };
+}
+
+// Arma un COMBO "Mazo Dobble" de 3 hojas a partir de 2 plantillas guardadas:
+//   A = hoja de cartas (se usa ×2 → hojas 1 y 2), B = hoja cartas+caja (→ hoja 3).
+// El resultado es una plantilla multi-hoja `pages=[A,A,B]`, cada página con su
+// propio `pdfBase64` (+`bgKey`) para que el export embeba el fondo A en 1-2 y el
+// B en 3. Los roles se marcan por tamaño RELATIVO al de la carta de A (que es,
+// por definición, la hoja de cartas): las celdas del tamaño de la carta → 'card';
+// las de otro tamaño (la caja) → 'caja' (en blanco en el MVP). Es dato explícito
+// horneado en `cell.role`, no una heurística en tiempo de posado.
+export function buildComboTemplate(A, B, { name, categoria } = {}) {
+  if (!A || !B) return { error: 'Faltan las dos plantillas (A = cartas, B = cartas+caja).' };
+  const cardRef = firstCardCell(A);
+  if (!cardRef) return { error: 'La plantilla A (hoja de cartas) no tiene celdas de carta.' };
+  if (Math.round(A.pageWidthMm) !== Math.round(B.pageWidthMm)
+      || Math.round(A.pageHeightMm) !== Math.round(B.pageHeightMm)) {
+    return { error: 'Las plantillas A y B tienen distinto tamaño de hoja.' };
+  }
+  const cw = cardRef.w, ch = cardRef.h;
+  const tag = (cells) => (cells || []).map((c) => ({
+    ...c,
+    role: (Math.abs(c.w - cw) <= 2 && Math.abs(c.h - ch) <= 2) ? 'card' : (c.role || 'caja'),
+  }));
+  const pageOf = (t, bgKey) => ({
+    celdas: tag(t.celdas),
+    celdasDorso: t.celdasDorso || [],
+    pdfBase64: t.pdfBase64 || null,
+    bgKey,
+  });
+  const template = {
+    name: name || 'Mazo Dobble (3 hojas)',
+    ...(categoria ? { categoria } : {}),
+    pageWidthMm: A.pageWidthMm,
+    pageHeightMm: A.pageHeightMm,
+    pageCount: 3,
+    pages: [pageOf(A, 'A'), pageOf(A, 'A'), pageOf(B, 'B')],
+    doubleSided: true,
+    comboDobble: { aName: A.name, bName: B.name },
+  };
+  return { template };
+}
+
 // Estilo de render de la carta: el de la receta + override de fondo (color) y la
 // imagen de fondo opcional, ambos definidos en PrintLayout (viajan en la plantilla).
 function estiloConFondo(carta, fondoColor, fondoImagen) {
@@ -394,6 +449,26 @@ async function buildDobbleComboSpec(receta, opts = {}) {
     }
   }
 
+  // 3) DOBLE FAZ: las cartas son doble faz siempre. Un único dorso compartido
+  //    (renderDorsoSVG) para las celdas 'card' de las 3 hojas. Caja e
+  //    instrucciones = solo frente (dorso en blanco → null). El export
+  //    (buildDoubleSidedPdf) pone el fondo per-hoja en el frente y el dorso en blanco.
+  const doubleSided = opts.dobleFaz != null ? !!opts.dobleFaz : (template.doubleSided !== false);
+  let assignmentsBack = [];
+  if (doubleSided) {
+    const dorsoFondo = receta.dorso?.fondo ?? '#2f6df6'; // = default de renderDorsoSVG
+    const dorso = { ...(receta.dorso || {}), fondo: dorsoFondo };
+    const dorsoSvg = renderDorsoSVG(dorso, estiloDeReceta(carta), { bleedNorm });
+    const dorsoData = await rasterizarSVG(dorsoSvg, pxCell, pxCell, dorsoFondo);
+    const c0 = cardCells[0]?.cell || { w: side, h: side };
+    const dorsoImg = imagenAMano('Dorso', dorsoData, pxCell, pxCell, c0.w, c0.h);
+    images.push(dorsoImg);
+    const roleByIdx = {};
+    for (const f of flat) roleByIdx[f.idx] = f.role;
+    // Solo las celdas 'card' con carta asignada llevan dorso; caja/frente = null.
+    assignmentsBack = assignmentsFront.map((id, idx) => (id != null && roleByIdx[idx] === 'card' ? dorsoImg.id : null));
+  }
+
   const dobbleFondo = (opts.fondo || fondoImagen)
     ? { ...(opts.fondo ? { color: opts.fondo } : {}), ...(fondoImagen ? { imagen: fondoImagen } : {}) }
     : (template.dobbleFondo || undefined);
@@ -403,7 +478,7 @@ async function buildDobbleComboSpec(receta, opts = {}) {
 
   const templateOut = {
     ...template,
-    doubleSided: false,
+    doubleSided,
     dobbleFondo,
     cajaFondo,
     dobble: {
@@ -412,7 +487,7 @@ async function buildDobbleComboSpec(receta, opts = {}) {
       cellDiamMm: side,
       bleedMM: bleed,
       dpi,
-      doubleSided: false,
+      doubleSided,
       combo: true,
       pages: pages.length,
       cartas: receta.cartas.length,
@@ -423,11 +498,11 @@ async function buildDobbleComboSpec(receta, opts = {}) {
 
   const nLbl = receta.mazo?.n ?? '?';
   const spec = {
-    name: `Dobble n${nLbl} · ${template.name || 'combo'} (${pages.length} hojas)`,
+    name: `Dobble n${nLbl} · ${template.name || 'combo'} (${pages.length} hojas${doubleSided ? ' · doble faz' : ''})`,
     template: templateOut,
     images,
     assignmentsFront,
-    assignmentsBack: [],
+    assignmentsBack,
     minPages: pages.length,
   };
   if (cartasSobrantes > 0) {
