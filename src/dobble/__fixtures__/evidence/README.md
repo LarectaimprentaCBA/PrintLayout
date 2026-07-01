@@ -14,11 +14,20 @@ sangrado 3 mm**), 6 por hoja → **3 hojas**.
 Cada hoja muestra: la **grilla** posada, los **círculos de corte** (punteado fucsia, ⌀ = ⌀ carta)
 y las **marcas L de registro** en las 4 esquinas (a 10 mm del borde).
 
+## Combo Dobble de 3 hojas (camino QR/tarjetas)
+
+`dobble-combo-3hojas.pdf` — plantilla SINTÉTICA `pages=[A,A,B]` (los PDF reales los aporta
+Mariano). Demuestra: **posado multi-hoja** en orden, **FONDO POR HOJA** (hojas 1-2 con
+"FONDO A", hoja 3 con "FONDO B" — cada una con su QR simulado), **roles de celda**
+(`card`/`fija`/`caja`/`frente-caja`) y **fondo de caja** (recuadro color + cuadrado del
+frente con imagen). El corte/hendido/QR los hace el plotter (no la app).
+
 ## Regenerar
 
 ```
-npm run test:dobble       # smoke test puro (geometría + grilla + cortes + assignments)
-npm run evidence:dobble    # regenera los PDF de esta carpeta (vía Electron printToPDF)
+npm run test:dobble            # smoke test puro (geometría + grilla + cortes + assignments + combo por rol)
+npm run evidence:dobble         # PDFs del posado sobre plantilla redonda (fondo color / imagen)
+npm run evidence:dobble-combo   # PDF del combo de 3 hojas (fondo por hoja + roles + caja)
 ```
 
 > Nota: el export/print/plotter de la app es el pipeline normal de PrintLayout (sin cambios):

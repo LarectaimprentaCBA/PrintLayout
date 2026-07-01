@@ -18,7 +18,12 @@
 
 import { renderCartaSVG, renderDorsoSVG, bleedNormal } from './vendor/render.js';
 import { estiloDeReceta } from './vendor/receta.js';
-import { bleedMmForCell } from '../lib/templates.js';
+import {
+  bleedMmForCell,
+  fixedPageCount,
+  cellsForPage,
+  pageStartOffset,
+} from '../lib/templates.js';
 
 const MM_PER_IN = 25.4;
 
@@ -34,7 +39,8 @@ function nuevoId() {
 
 // Fabrica el objeto-imagen que espera el layout, SIN pasar por el pipeline de
 // carga (que re-muestrea y hace snap a blanco). La imagen ya está a tamaño físico.
-function imagenAMano(name, dataUrl, pxW, pxH, cellMM) {
+// wMM/hMM = tamaño físico de la celda (hMM = wMM si es cuadrada).
+function imagenAMano(name, dataUrl, pxW, pxH, wMM, hMM = wMM) {
   return {
     id: nuevoId(),
     name,
@@ -43,10 +49,52 @@ function imagenAMano(name, dataUrl, pxW, pxH, cellMM) {
     height: pxH,
     mime: 'image/png',
     faces: [],
-    physicalSizeMm: { w: cellMM, h: cellMM },
+    physicalSizeMm: { w: wMM, h: hMM },
     physicalSizeMmTrusted: true,
     fitOverride: 'cover',
   };
+}
+
+// Rol EXPLÍCITO de la celda (NUNCA por tamaño — las 'fija' son del mismo tamaño
+// que las 'card'): 'card' (default) | 'fija' | 'caja' | 'frente-caja'.
+export function cellRole(cell) {
+  return cell?.role || 'card';
+}
+
+// PNG chico de color sólido, para pintar una celda entera de ese color (cover).
+// Lo usa el "fondo de caja" en modo color.
+function solidColorImage(hex, px = 8) {
+  const canvas = document.createElement('canvas');
+  canvas.width = px;
+  canvas.height = px;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = hex || '#ffffff';
+  ctx.fillRect(0, 0, px, px);
+  return canvas.toDataURL('image/png');
+}
+
+// Dimensiones px de un dataUrl (para que el cover-crop del export recorte bien).
+function medirImagen(dataUrl) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({ w: img.naturalWidth || img.width || 1, h: img.naturalHeight || img.height || 1 });
+    img.onerror = () => resolve({ w: 1, h: 1 });
+    img.src = dataUrl;
+  });
+}
+
+// Primera celda de carta (rol 'card') de la plantilla, mirando `celdas` o `pages[]`.
+function firstCardCell(template) {
+  const scan = (cells) => (cells || []).find((c) => cellRole(c) === 'card') || (cells || [])[0] || null;
+  const fromCeldas = scan(template?.celdas);
+  if (fromCeldas) return fromCeldas;
+  if (Array.isArray(template?.pages)) {
+    for (const pg of template.pages) {
+      const c = scan(pg?.celdas);
+      if (c) return c;
+    }
+  }
+  return null;
 }
 
 // Rasteriza un string SVG a PNG dataUrl de pxW×pxH. El SVG dibuja la carta como
@@ -102,9 +150,8 @@ function cutInsetMm(template, cell) {
  *   diam?:number, bleed?:number, cellsPerPage?:number, circular?:boolean }}
  */
 export function dobbleGeometryFromTemplate(template) {
-  const cells = template?.celdas ?? [];
-  if (cells.length === 0) return { ok: false, reason: 'La plantilla no tiene celdas.' };
-  const c0 = cells[0];
+  const c0 = firstCardCell(template);
+  if (!c0) return { ok: false, reason: 'La plantilla no tiene celdas de carta.' };
   const side = Math.min(c0.w, c0.h);
   if (!(side > 0)) return { ok: false, reason: 'La celda de la plantilla no tiene tamaño válido.' };
   const cutMargin = cutInsetMm(template, c0);
@@ -118,8 +165,8 @@ export function dobbleGeometryFromTemplate(template) {
     cutMargin: Math.round(cutMargin * 100) / 100,
     diam: Math.round(diam * 10) / 10,
     bleed: Math.round(cutMargin * 100) / 100,
-    cellsPerPage: cells.length,
-    circular: (template.cutShape ?? 'rect') === 'circle',
+    cellsPerPage: template?.celdas?.length ?? 0, // solo aplica a plantilla de 1 hoja
+    circular: (template?.cutShape ?? 'rect') === 'circle',
   };
 }
 
@@ -148,6 +195,12 @@ function estiloConFondo(carta, fondoColor, fondoImagen) {
 export async function buildDobbleJob(receta, opts = {}) {
   const template = opts.template;
   if (!template) return { spec: null, error: 'Falta la plantilla para posar el mazo.' };
+
+  // Plantilla multi-hoja (combo Dobble de 3 hojas): reparto por rol de celda a lo
+  // largo de las páginas. NO genera cortes ni QR (los pone el plotter por QR).
+  if (fixedPageCount(template) !== null) {
+    return buildDobbleComboSpec(receta, opts);
+  }
 
   const geo = dobbleGeometryFromTemplate(template);
   if (!geo.ok) return { spec: null, error: geo.error || geo.reason || 'Plantilla no apta para Dobble.' };
@@ -241,4 +294,150 @@ export async function buildDobbleJob(receta, opts = {}) {
       minPages,
     },
   };
+}
+
+/**
+ * Posa un mazo sobre una plantilla MULTI-HOJA (combo Dobble de 3 hojas). Reparte
+ * por ROL EXPLÍCITO de celda a lo largo de las páginas (`pages[]`), en orden:
+ *   - 'card'        → cartas Dobble (render redondo al tamaño de la celda)
+ *   - 'fija'        → imágenes fijas subidas (instrucciones/portada) — opts.fijas
+ *   - 'caja'        → recuadro de la caja, pintado con opts.caja.color (cover)
+ *   - 'frente-caja' → cuadrado del frente de la caja, con opts.caja.imagen (cover)
+ * NO genera cortes ni QR (van en el fondo del PDF de Corel; el plotter corta/hiende).
+ * El export usa el fondo per-hoja (`template.pages[p].pdfBase64`).
+ * @param {object} receta
+ * @param {object} opts  { template, fondo, fondoImagen (carta), caja:{color,imagen}, fijas:[{name,dataUrl}], dpi }
+ * @returns {Promise<{spec:object|null, error?:string, warning?:string}>}
+ */
+async function buildDobbleComboSpec(receta, opts = {}) {
+  const template = opts.template;
+  const pages = template.pages || [];
+  if (pages.length === 0) return { spec: null, error: 'La plantilla multi-hoja no tiene páginas.' };
+
+  const geo = dobbleGeometryFromTemplate(template);
+  if (!geo.ok) return { spec: null, error: geo.reason || 'Plantilla no apta para Dobble.' };
+
+  const carta = receta.carta || {};
+  const dpi = Number(opts.dpi ?? DOBBLE_DEFAULTS.dpi) || 300;
+  const side = geo.side;
+  const diam = geo.diam;
+  const bleed = geo.bleed;
+  const bleedNorm = bleedNormal(diam, bleed);
+  const pxCell = Math.max(1, Math.round((side / MM_PER_IN) * dpi));
+  const fondoColor = opts.fondo || carta.fondo || '#ffffff';
+  const fondoImagen = opts.fondoImagen || null;
+  const estilo = estiloConFondo(carta, fondoColor, fondoImagen);
+
+  // Orden PLANO de celdas — mismo criterio que exportPdf (cellsForPage + pageStartOffset).
+  const flat = [];
+  let totalCells = 0;
+  for (let p = 0; p < pages.length; p++) {
+    const cells = cellsForPage(template, p, 'front');
+    const off = pageStartOffset(template, p, 'front');
+    for (let i = 0; i < cells.length; i++) {
+      flat.push({ cell: cells[i], role: cellRole(cells[i]), idx: off + i, page: p });
+      totalCells = Math.max(totalCells, off + i + 1);
+    }
+  }
+
+  const assignmentsFront = Array(totalCells).fill(null);
+  const images = [];
+
+  // 1) Cartas Dobble → celdas 'card' en orden (a lo largo de las 3 hojas).
+  const cardCells = flat.filter((f) => f.role === 'card');
+  const nCards = Math.min(receta.cartas.length, cardCells.length);
+  for (let i = 0; i < nCards; i++) {
+    const svg = renderCartaSVG({
+      placements: receta.cartas[i].placements,
+      simbolos: receta.simbolos,
+      estilo,
+      bleedNorm,
+      idPrefijo: `d${i}`,
+    });
+    const dataUrl = await rasterizarSVG(svg, pxCell, pxCell, fondoColor);
+    const cell = cardCells[i].cell;
+    const im = imagenAMano(`Carta ${i + 1}`, dataUrl, pxCell, pxCell, cell.w, cell.h);
+    images.push(im);
+    assignmentsFront[cardCells[i].idx] = im.id;
+  }
+  const cartasSobrantes = receta.cartas.length - nCards;
+
+  // 2) Cartas fijas (imágenes subidas) → celdas 'fija' en orden. Excluidas del
+  //    reparto de cartas Dobble por ser rol distinto.
+  const fijaCells = flat.filter((f) => f.role === 'fija');
+  const fijas = Array.isArray(opts.fijas) ? opts.fijas : [];
+  for (let k = 0; k < fijaCells.length && k < fijas.length; k++) {
+    const f = fijas[k];
+    const dataUrl = typeof f === 'string' ? f : f?.dataUrl;
+    if (!dataUrl) continue;
+    const dims = await medirImagen(dataUrl);
+    const cell = fijaCells[k].cell;
+    const im = imagenAMano(f?.name || `Fija ${k + 1}`, dataUrl, dims.w, dims.h, cell.w, cell.h);
+    images.push(im);
+    assignmentsFront[fijaCells[k].idx] = im.id;
+  }
+
+  // 3) Caja: color pinta el recuadro completo ('caja'); imagen va en el cuadrado
+  //    del frente ('frente-caja', cover). El corte/hendido lo hace el plotter (QR).
+  const caja = opts.caja || template.cajaFondo || {};
+  if (caja.color) {
+    const dataUrl = solidColorImage(caja.color);
+    for (const f of flat.filter((x) => x.role === 'caja')) {
+      const im = imagenAMano('Caja (color)', dataUrl, 8, 8, f.cell.w, f.cell.h);
+      images.push(im);
+      assignmentsFront[f.idx] = im.id;
+    }
+  }
+  if (caja.imagen) {
+    const dims = await medirImagen(caja.imagen);
+    for (const f of flat.filter((x) => x.role === 'frente-caja')) {
+      const im = imagenAMano('Caja (frente)', caja.imagen, dims.w, dims.h, f.cell.w, f.cell.h);
+      images.push(im);
+      assignmentsFront[f.idx] = im.id;
+    }
+  }
+
+  const dobbleFondo = (opts.fondo || fondoImagen)
+    ? { ...(opts.fondo ? { color: opts.fondo } : {}), ...(fondoImagen ? { imagen: fondoImagen } : {}) }
+    : (template.dobbleFondo || undefined);
+  const cajaFondo = (caja.color || caja.imagen)
+    ? { ...(caja.color ? { color: caja.color } : {}), ...(caja.imagen ? { imagen: caja.imagen } : {}) }
+    : (template.cajaFondo || undefined);
+
+  const templateOut = {
+    ...template,
+    doubleSided: false,
+    dobbleFondo,
+    cajaFondo,
+    dobble: {
+      n: receta.mazo?.n ?? null,
+      diametroMM: diam,
+      cellDiamMm: side,
+      bleedMM: bleed,
+      dpi,
+      doubleSided: false,
+      combo: true,
+      pages: pages.length,
+      cartas: receta.cartas.length,
+      cardCells: cardCells.length,
+      fijaCells: fijaCells.length,
+    },
+  };
+
+  const nLbl = receta.mazo?.n ?? '?';
+  const spec = {
+    name: `Dobble n${nLbl} · ${template.name || 'combo'} (${pages.length} hojas)`,
+    template: templateOut,
+    images,
+    assignmentsFront,
+    assignmentsBack: [],
+    minPages: pages.length,
+  };
+  if (cartasSobrantes > 0) {
+    return {
+      spec,
+      warning: `El mazo tiene ${receta.cartas.length} cartas pero la plantilla solo ${cardCells.length} celdas de carta; sobran ${cartasSobrantes}.`,
+    };
+  }
+  return { spec };
 }

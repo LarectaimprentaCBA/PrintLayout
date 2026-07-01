@@ -140,19 +140,28 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
   const offsetXpt = (pageW - templateWpt) / 2;
   const offsetYpt = (pageH - templateHpt) / 2;
 
-  let bgPage = null;
-  if (embedBackground && template.pdfBase64) {
-    if (ctx.bgPageCache) {
-      bgPage = ctx.bgPageCache;
-    } else {
-      try {
-        const bytes = base64ToBytes(template.pdfBase64);
-        [bgPage] = await doc.embedPdf(bytes, [0]);
-        ctx.bgPageCache = bgPage;
-      } catch (err) {
-        console.error('No se pudo embeber pag 1 del PDF de plantilla:', err);
-      }
+  // Fondo POR HOJA: cada hoja embebe el fondo de SU plantilla. En multi-page,
+  // `template.pages[p].pdfBase64` puede traer un fondo propio (ej. combo Dobble:
+  // hojas de cartas con un fondo, hoja de caja con otro). Se cachea por clave
+  // (`bgKey` o el propio base64) para no re-embeber el mismo fondo. Sin fondo
+  // per-page, cae al `template.pdfBase64` de siempre (misma hoja en todas).
+  async function backgroundForPage(p) {
+    if (!embedBackground) return null;
+    const perPage = isMulti ? (template.pages?.[p] || null) : null;
+    const b64 = (perPage && perPage.pdfBase64) || template.pdfBase64;
+    if (!b64) return null;
+    const key = (perPage && perPage.pdfBase64)
+      ? (perPage.bgKey || perPage.pdfBase64)
+      : '__tpl__';
+    if (ctx.bgCache.has(key)) return ctx.bgCache.get(key);
+    let embedded = null;
+    try {
+      [embedded] = await doc.embedPdf(base64ToBytes(b64), [0]);
+    } catch (err) {
+      console.error('No se pudo embeber el fondo de la hoja:', err);
     }
+    ctx.bgCache.set(key, embedded);
+    return embedded;
   }
 
   async function embedFull(image) {
@@ -210,6 +219,7 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
 
     const page = doc.addPage([pageW, pageH]);
 
+    const bgPage = await backgroundForPage(p);
     if (bgPage) {
       page.drawPage(bgPage, {
         x: offsetXpt,
@@ -357,7 +367,7 @@ export async function buildPdf(template, assignments, imageMap, options = {}) {
   doc.setProducer('PrintLayout');
   doc.setCreator('PrintLayout');
 
-  const ctx = { imageMap, embedCache: new Map(), bgPageCache: null };
+  const ctx = { imageMap, embedCache: new Map(), bgCache: new Map() };
   await appendFaceToDoc(doc, ctx, template, assignments, {
     layoutFitMode,
     embedBackground,
@@ -392,7 +402,7 @@ export async function buildDoubleSidedPdf(
   doc.setProducer('PrintLayout');
   doc.setCreator('PrintLayout');
 
-  const ctx = { imageMap, embedCache: new Map(), bgPageCache: null };
+  const ctx = { imageMap, embedCache: new Map(), bgCache: new Map() };
   await appendFaceToDoc(doc, ctx, template, assignmentsFront, {
     layoutFitMode,
     embedBackground: true,

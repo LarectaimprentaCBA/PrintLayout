@@ -16,7 +16,10 @@ import { dirname, join } from 'node:path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // --- stub mínimo de navegador para el rasterizador (no es un DOM real) ---
-globalThis.Image = class { set src(_v) { Promise.resolve().then(() => this.onload && this.onload()); } };
+globalThis.Image = class {
+  constructor() { this.naturalWidth = 100; this.naturalHeight = 100; this.width = 100; this.height = 100; }
+  set src(_v) { Promise.resolve().then(() => this.onload && this.onload()); }
+};
 globalThis.document = {
   createElement: () => ({
     width: 0, height: 0,
@@ -91,6 +94,49 @@ async function check(label, tpl, opts = {}) {
 await check('n3 · 1 hoja (⌀65, sangrado 3)', circleTemplate({ side: 71, cutMargin: 3 }));
 await check('n3 · multipágina (celda chica)', circleTemplate({ side: 56, cutMargin: 3 }));
 await check('n3 · doble faz', circleTemplate({ side: 71, cutMargin: 3.5, doubleSided: true }));
+
+// --- Combo 3 hojas (pages=[A,A,B]) con roles explícitos ---
+async function checkCombo() {
+  const mk = (role, i, w = 65, h = 65) => ({ id: i, x: (i % 6) * 68, y: 0, w, h, role });
+  const cardGrid = (n) => Array.from({ length: n }, (_, i) => mk('card', i));
+  const A = { celdas: cardGrid(6), pdfBase64: 'AAAA', bgKey: 'A' };
+  const B = {
+    celdas: [
+      mk('card', 0), mk('card', 1), mk('card', 2),
+      mk('fija', 3), mk('fija', 4),
+      mk('caja', 5, 180, 120), mk('frente-caja', 6, 60, 60),
+    ],
+    pdfBase64: 'BBBB', bgKey: 'B',
+  };
+  const tpl = { id: 'tpl_combo', name: 'Combo 3 hojas', pageWidthMm: 210, pageHeightMm: 297, pages: [A, A, B] };
+  const IMG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+  const res = await buildDobbleJob(receta, {
+    template: tpl, fondo: '#ffeecc',
+    caja: { color: '#8b5a2b', imagen: IMG },
+    fijas: [{ name: 'Instr', dataUrl: IMG }, { name: 'Portada', dataUrl: IMG }],
+  });
+  const spec = res.spec;
+  console.log('# combo 3 hojas [A,A,B] con roles');
+  ok(!!spec, `spec presente (${res.error || ''})`);
+  if (!spec) return;
+  const AF = spec.assignmentsFront;
+  ok(spec.template.dobble.combo === true, 'dobble.combo=true');
+  ok(spec.template.dobble.pages === 3 && spec.minPages === 3, 'pages=3 y minPages=3');
+  ok(AF.length === 19, `assignments length = 19 (6+6+7) (got ${AF.length})`);
+  ok(AF.slice(0, 12).every((x) => x != null), 'hojas 1-2 (12 celdas card) llenas');
+  ok(AF[12] != null, 'primera card de hoja 3 llena (carta 13)');
+  ok(AF[13] == null && AF[14] == null, 'cards sobrantes de hoja 3 vacías');
+  ok(AF[15] != null && AF[16] != null, 'celdas fija llenas');
+  ok(AF[17] != null, 'celda caja (color) llena');
+  ok(AF[18] != null, 'celda frente-caja (imagen) llena');
+  ok(spec.images.length === 17, `images = 13 cartas + 2 fija + 1 caja + 1 frente = 17 (got ${spec.images.length})`);
+  const cardIds = new Set(AF.slice(0, 13).filter(Boolean));
+  ok(![AF[15], AF[16], AF[17], AF[18]].some((id) => cardIds.has(id)), 'fija/caja NO reciben cartas Dobble');
+  ok(spec.template.cajaFondo && spec.template.cajaFondo.color === '#8b5a2b', 'cajaFondo.color persistido');
+  ok(!res.warning, `sin warning (13 ≤ 15 card cells) (${res.warning || ''})`);
+}
+await checkCombo();
 
 console.log(`\n==== ${pass} OK, ${fail} FALLOS ====`);
 process.exit(fail ? 1 : 0);
