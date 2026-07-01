@@ -37,11 +37,11 @@ async function main() {
   const xs = [35, 110], ys = [20, 95, 170];
   for (const y of ys) for (const x of xs) cardA.push({ x, y, w: SIDE, h: SIDE, role: 'card' });
   const pageA = { celdas: cardA };
+  // Hoja 3: SOLO card + caja (+frente-caja). Las instrucciones/portada van
+  // horneadas en el fondo del Corel (arte de fondo, no celdas).
   const pageB = {
     celdas: [
       { x: 35, y: 20, w: SIDE, h: SIDE, role: 'card' },
-      { x: 110, y: 20, w: SIDE, h: SIDE, role: 'fija' },
-      { x: 35, y: 95, w: SIDE, h: SIDE, role: 'fija' },
       { x: 20, y: 175, w: 170, h: 100, role: 'caja' },
       { x: 135, y: 185, w: 45, h: 45, role: 'frente-caja' },
     ],
@@ -54,19 +54,28 @@ async function main() {
     + [[2, 2], [6, 2], [10, 2], [2, 6], [10, 6], [2, 10], [6, 10], [10, 10], [12, 12], [4, 12]]
       .map(([a, b]) => `<rect x="${a}" y="${b}" width="3" height="3" fill="#111"/>`).join('')
     + `<text x="8" y="21" font-size="2.4" text-anchor="middle" fill="#111">QR</text></g>`;
-  const bgLayer = (label, color) =>
+  // Instrucciones HORNEADAS en el fondo (arte de Corel, no celda). Solo en hoja B.
+  const instrArt =
+    `<g transform="translate(${PW / 2} 105)">`
+    + `<rect x="-92" y="-8" width="184" height="52" rx="2" fill="#ffffffcc" stroke="#111" stroke-width="0.3"/>`
+    + `<text x="0" y="0" font-size="4.5" text-anchor="middle" font-family="sans-serif" fill="#111">INSTRUCCIONES (horneadas en el fondo del Corel — no es celda)</text>`
+    + `<text x="0" y="9" font-size="2.8" text-anchor="middle" fill="#444">Cada 2 cartas comparten exactamente 1 símbolo. ¡El primero que lo encuentra, gana!</text>`
+    + `<text x="0" y="17" font-size="2.8" text-anchor="middle" fill="#444">Igual que el QR, no cambian entre mazos → van como arte fijo del fondo.</text>`
+    + `</g>`;
+  const bgLayer = (label, color, extra = '') =>
     `<svg class="bg" viewBox="0 0 ${PW} ${PH}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">`
     + `<rect width="${PW}" height="${PH}" fill="${color}"/>`
     + `<rect x="0" y="0" width="${PW}" height="12" fill="${color === '#eaf2ff' ? '#c9ddff' : '#c9f0c9'}"/>`
     + `<text x="8" y="8.5" font-size="5" font-family="sans-serif" fill="#123">${label}</text>`
     + fakeQr(PW - 22, 3) + fakeQr(6, PH - 22) + fakeQr(PW - 22, PH - 22)
+    + extra
     + `</svg>`;
 
   const cellHtml = (cell, inner) =>
     `<div style="position:absolute;left:${cell.x}mm;top:${cell.y}mm;width:${cell.w}mm;height:${cell.h}mm">${inner}</div>`;
 
-  // Reparto por rol, en orden a lo largo de las hojas (mismo criterio que buildDobbleComboSpec).
-  let cardIdx = 0, fijaIdx = 0;
+  // Reparto por rol (card + caja), en orden (mismo criterio que buildDobbleComboSpec).
+  let cardIdx = 0;
   const cajaColor = '#8b5a2b';
   const sheetHtml = (page, pIdx) => {
     const isB = pIdx === 2;
@@ -77,15 +86,15 @@ async function main() {
           cells += cellHtml(cell, `<div class="svg">${cardSvg(cardIdx)}</div>`);
           cardIdx++;
         }
-      } else if (cell.role === 'fija') {
-        cells += cellHtml(cell, `<img class="fill" src="${imgDataUrl}"/><div class="tag">FIJA ${++fijaIdx}<br/>(instrucciones)</div>`);
       } else if (cell.role === 'caja') {
         cells += cellHtml(cell, `<div class="fill" style="background:${cajaColor}"></div><div class="tag">CAJA — fondo color (recuadro completo)</div>`);
       } else if (cell.role === 'frente-caja') {
         cells += cellHtml(cell, `<img class="fill" src="${imgDataUrl}"/><div class="tag">FRENTE (imagen cover)</div>`);
       }
     }
-    const bg = isB ? bgLayer('FONDO B — HOJA CARTAS + CAJA', '#eafbea') : bgLayer('FONDO A — HOJA DE CARTAS', '#eaf2ff');
+    const bg = isB
+      ? bgLayer('FONDO B — HOJA CARTAS + CAJA', '#eafbea', instrArt)
+      : bgLayer('FONDO A — HOJA DE CARTAS', '#eaf2ff');
     return `<div class="sheet">${bg}${cells}</div>`;
   };
 

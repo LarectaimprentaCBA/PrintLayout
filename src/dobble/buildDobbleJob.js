@@ -55,8 +55,9 @@ function imagenAMano(name, dataUrl, pxW, pxH, wMM, hMM = wMM) {
   };
 }
 
-// Rol EXPLÍCITO de la celda (NUNCA por tamaño — las 'fija' son del mismo tamaño
-// que las 'card'): 'card' (default) | 'fija' | 'caja' | 'frente-caja'.
+// Rol EXPLÍCITO de la celda (data-driven, NUNCA por tamaño): 'card' (default) |
+// 'caja' | 'frente-caja'. Las instrucciones/portada + QR van horneadas en el
+// fondo del Corel (no son celdas), así que no hay rol 'fija' ni ambigüedad.
 export function cellRole(cell) {
   return cell?.role || 'card';
 }
@@ -298,15 +299,16 @@ export async function buildDobbleJob(receta, opts = {}) {
 
 /**
  * Posa un mazo sobre una plantilla MULTI-HOJA (combo Dobble de 3 hojas). Reparte
- * por ROL EXPLÍCITO de celda a lo largo de las páginas (`pages[]`), en orden:
+ * por ROL EXPLÍCITO de celda a lo largo de las páginas (`pages[]`). Solo 2 roles:
  *   - 'card'        → cartas Dobble (render redondo al tamaño de la celda)
- *   - 'fija'        → imágenes fijas subidas (instrucciones/portada) — opts.fijas
- *   - 'caja'        → recuadro de la caja, pintado con opts.caja.color (cover)
- *   - 'frente-caja' → cuadrado del frente de la caja, con opts.caja.imagen (cover)
- * NO genera cortes ni QR (van en el fondo del PDF de Corel; el plotter corta/hiende).
- * El export usa el fondo per-hoja (`template.pages[p].pdfBase64`).
+ *   - 'caja'        → recuadro de la caja: color sólido (opts.caja.color) o, si no
+ *                     hay 'frente-caja', la imagen (opts.caja.imagen, cover)
+ *   - 'frente-caja' → (opcional) cuadrado del frente de la caja, con la imagen (cover)
+ * Las instrucciones/portada y el QR van HORNEADOS en el fondo del PDF de Corel (no
+ * son celdas). NO genera cortes ni QR (el plotter corta/hiende por QR). El export
+ * usa el fondo per-hoja (`template.pages[p].pdfBase64`).
  * @param {object} receta
- * @param {object} opts  { template, fondo, fondoImagen (carta), caja:{color,imagen}, fijas:[{name,dataUrl}], dpi }
+ * @param {object} opts  { template, fondo, fondoImagen (carta), caja:{color,imagen}, dpi }
  * @returns {Promise<{spec:object|null, error?:string, warning?:string}>}
  */
 async function buildDobbleComboSpec(receta, opts = {}) {
@@ -362,27 +364,22 @@ async function buildDobbleComboSpec(receta, opts = {}) {
   }
   const cartasSobrantes = receta.cartas.length - nCards;
 
-  // 2) Cartas fijas (imágenes subidas) → celdas 'fija' en orden. Excluidas del
-  //    reparto de cartas Dobble por ser rol distinto.
-  const fijaCells = flat.filter((f) => f.role === 'fija');
-  const fijas = Array.isArray(opts.fijas) ? opts.fijas : [];
-  for (let k = 0; k < fijaCells.length && k < fijas.length; k++) {
-    const f = fijas[k];
-    const dataUrl = typeof f === 'string' ? f : f?.dataUrl;
-    if (!dataUrl) continue;
-    const dims = await medirImagen(dataUrl);
-    const cell = fijaCells[k].cell;
-    const im = imagenAMano(f?.name || `Fija ${k + 1}`, dataUrl, dims.w, dims.h, cell.w, cell.h);
-    images.push(im);
-    assignmentsFront[fijaCells[k].idx] = im.id;
-  }
-
-  // 3) Caja: color pinta el recuadro completo ('caja'); imagen va en el cuadrado
-  //    del frente ('frente-caja', cover). El corte/hendido lo hace el plotter (QR).
+  // 2) Caja (control "Fondo de caja"). SOLO 2 roles en la app: 'card' y 'caja'
+  //    (+ 'frente-caja' opcional para el cuadrado del frente). Las cartas de
+  //    instrucción / portada y el QR van HORNEADOS en el fondo del PDF de Corel
+  //    (arte de fondo, sin celda) → el parser no las toma y no compiten en tamaño.
+  //    - color  → pinta las celdas 'caja' (recuadro completo) con color sólido.
+  //    - imagen → va en 'frente-caja' (cuadrado del frente) si existe; si no, en
+  //               las 'caja' (cover). El corte/hendido lo hace el plotter (QR).
   const caja = opts.caja || template.cajaFondo || {};
+  const cajaCells = flat.filter((x) => x.role === 'caja');
+  const frenteCells = flat.filter((x) => x.role === 'frente-caja');
+  const imgTargets = caja.imagen ? (frenteCells.length ? frenteCells : cajaCells) : [];
+  const imgTargetIdx = new Set(imgTargets.map((f) => f.idx));
   if (caja.color) {
     const dataUrl = solidColorImage(caja.color);
-    for (const f of flat.filter((x) => x.role === 'caja')) {
+    for (const f of cajaCells) {
+      if (imgTargetIdx.has(f.idx)) continue; // la imagen cubre esta celda
       const im = imagenAMano('Caja (color)', dataUrl, 8, 8, f.cell.w, f.cell.h);
       images.push(im);
       assignmentsFront[f.idx] = im.id;
@@ -390,7 +387,7 @@ async function buildDobbleComboSpec(receta, opts = {}) {
   }
   if (caja.imagen) {
     const dims = await medirImagen(caja.imagen);
-    for (const f of flat.filter((x) => x.role === 'frente-caja')) {
+    for (const f of imgTargets) {
       const im = imagenAMano('Caja (frente)', caja.imagen, dims.w, dims.h, f.cell.w, f.cell.h);
       images.push(im);
       assignmentsFront[f.idx] = im.id;
@@ -420,7 +417,7 @@ async function buildDobbleComboSpec(receta, opts = {}) {
       pages: pages.length,
       cartas: receta.cartas.length,
       cardCells: cardCells.length,
-      fijaCells: fijaCells.length,
+      cajaCells: cajaCells.length,
     },
   };
 

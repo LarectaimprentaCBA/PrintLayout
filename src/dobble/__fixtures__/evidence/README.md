@@ -18,9 +18,10 @@ y las **marcas L de registro** en las 4 esquinas (a 10 mm del borde).
 
 `dobble-combo-3hojas.pdf` — plantilla SINTÉTICA `pages=[A,A,B]` (los PDF reales los aporta
 Mariano). Demuestra: **posado multi-hoja** en orden, **FONDO POR HOJA** (hojas 1-2 con
-"FONDO A", hoja 3 con "FONDO B" — cada una con su QR simulado), **roles de celda**
-(`card`/`fija`/`caja`/`frente-caja`) y **fondo de caja** (recuadro color + cuadrado del
-frente con imagen). El corte/hendido/QR los hace el plotter (no la app).
+"FONDO A", hoja 3 con "FONDO B" — cada una con su QR simulado), **2 roles de celda**
+(`card` + `caja`/`frente-caja`) y **fondo de caja** (recuadro color + cuadrado del frente
+con imagen). Las **instrucciones van horneadas en el fondo** de la hoja 3 (arte fijo, no
+celda), igual que el QR. El corte/hendido/QR los hace el plotter (no la app).
 
 ## Regenerar
 
