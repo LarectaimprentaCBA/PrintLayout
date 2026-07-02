@@ -47,6 +47,8 @@ import {
   exportLayoutToPdf,
   exportDoubleSidedLayoutToPdf,
   printLayoutPdf,
+  buildPdf,
+  buildDoubleSidedPdf,
 } from './lib/exportPdf.js';
 import {
   hasCuts,
@@ -1761,6 +1763,100 @@ export default function App() {
     if (!api?.onOrderReady) return undefined;
     return api.onOrderReady((order) => { handleIntakeOrder(order); });
   }, [handleIntakeOrder]);
+
+  // Entrada automática Dobble (TOTALMENTE automático, sin clic): el main bajó
+  // <id>/receta.json (+ caja.jpg si hay). Acá posamos el combo por defecto,
+  // exportamos el PDF doble faz y lo GUARDAMOS EN LA CARPETA sin diálogo. Al
+  // terminar confirmamos al main para que marque procesado + limpie el bucket.
+  const handleDobbleIntakeOrder = useCallback(async (order) => {
+    const id = order?.id;
+    const label = `PR-${order?.numero_presupuesto || id}`;
+    // bytes (IPC: Buffer→Uint8Array/ArrayBuffer) → dataUrl base64 en chunks
+    // (evita desbordar el call stack de String.fromCharCode con imágenes grandes).
+    const bytesToDataUrl = (raw, mime) => {
+      const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
+      let bin = '';
+      const CH = 0x8000;
+      for (let i = 0; i < bytes.length; i += CH) {
+        bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+      }
+      return `data:${mime};base64,${btoa(bin)}`;
+    };
+    const mimeFromPath = (p) => {
+      const ext = String(p || '').toLowerCase().split('.').pop();
+      if (ext === 'png') return 'image/png';
+      if (ext === 'webp') return 'image/webp';
+      return 'image/jpeg';
+    };
+    try {
+      setToast({ kind: 'info', text: `Procesando pedido Dobble ${label}…` });
+      const cfg = await window.printlayout.intake.getConfig().catch(() => null);
+      const comboId = cfg?.dobbleComboTemplateId || '';
+      const outDir = (cfg?.dobbleOutputDir || '').replace(/[\\/]+$/, '');
+      const combo = templates.find((t) => t.id === comboId) || null;
+
+      // Sin combo o sin carpeta configurados no podemos exportar: NO marcamos
+      // procesado (se reintenta cuando Mariano configure), avisamos.
+      if (!combo) throw new Error('No hay plantilla combo Dobble configurada (elegila en Pedidos).');
+      if (!outDir) throw new Error('No hay carpeta de salida Dobble configurada (elegila en Pedidos).');
+
+      // 1) Leer receta.json (+ caja) desde temp (el main las bajó).
+      const recetaBytes = await window.printlayout.intake.readFile(order.recetaPath);
+      if (!recetaBytes) throw new Error('No se pudo leer la receta descargada.');
+      const receta = JSON.parse(new TextDecoder('utf-8').decode(recetaBytes));
+      let cajaDataUrl = null;
+      if (order.cajaPath) {
+        const cajaBytes = await window.printlayout.intake.readFile(order.cajaPath);
+        if (cajaBytes) cajaDataUrl = bytesToDataUrl(cajaBytes, mimeFromPath(order.cajaPath));
+      }
+
+      // 2) Posar el combo (3 hojas A,A,B). La receta ya trae carta.fondoImagen y
+      //    el dorso; la caja va al rol frente-caja vía caja.imagen.
+      const { spec, warning, error } = await buildDobbleJob(receta, {
+        template: combo,
+        dobleFaz: order.doble_faz !== false,
+        fondoImagen: receta?.carta?.fondoImagen || undefined,
+        caja: cajaDataUrl ? { imagen: cajaDataUrl } : undefined,
+      });
+      if (error || !spec) throw new Error(error || 'No se pudo posar el mazo sobre el combo.');
+      if (warning) console.warn('[intake-dobble]', warning);
+
+      // 3) Exportar el PDF (doble faz si corresponde) → bytes, sin diálogo.
+      const imageMap = new Map(spec.images.map((im) => [im.id, im]));
+      const bytes = spec.template.doubleSided
+        ? await buildDoubleSidedPdf(spec.template, spec.assignmentsFront, spec.assignmentsBack, imageMap)
+        : await buildPdf(spec.template, spec.assignmentsFront, imageMap);
+
+      // 4) Guardar SOLO en la carpeta (sin diálogo). El main arma el nombre
+      //    "PR-<presupuesto> - <nombre del mazo>.pdf".
+      const saved = await window.printlayout.dobble.saveSilent(
+        outDir, order.numero_presupuesto, order.nombre_mazo, bytes,
+      );
+      if (!saved?.ok) throw new Error(saved?.error || 'No se pudo guardar el PDF.');
+      const fileName = saved.fileName || 'PDF';
+
+      await window.printlayout.intake.dobbleOrderBuilt({ id, ok: true });
+      try {
+        // eslint-disable-next-line no-new
+        new Notification('Pedido Dobble procesado', {
+          body: `${label}: ${spec.minPages} hoja(s) guardadas en la carpeta.${warning ? ' (aviso: ' + warning + ')' : ''}`,
+        });
+      } catch (_) { /* sin permiso de notificaciones */ }
+      setToast({ kind: 'success', text: `${label}: PDF Dobble guardado (${fileName})${warning ? ' · ' + warning : ''}.` });
+    } catch (err) {
+      console.error('[intake-dobble] armado falló:', err);
+      try {
+        await window.printlayout.intake.dobbleOrderBuilt({ id, ok: false, error: err.message });
+      } catch (_) { /* ignore */ }
+      setToast({ kind: 'error', text: `Error procesando el pedido Dobble ${label}: ${err.message}` });
+    }
+  }, [templates]);
+
+  useEffect(() => {
+    const api = window.printlayout?.intake;
+    if (!api?.onDobbleOrderReady) return undefined;
+    return api.onDobbleOrderReady((order) => { handleDobbleIntakeOrder(order); });
+  }, [handleDobbleIntakeOrder]);
 
   // Estado del modo La Recta + atajo OCULTO para la configuración inicial (en
   // las demás PCs el botón "Pedidos" no se muestra). Ctrl+Shift+L abre el panel.

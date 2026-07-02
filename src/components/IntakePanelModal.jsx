@@ -5,7 +5,10 @@ import { useEffect, useRef, useState } from 'react';
 // "Probar conexión" y "Buscar ahora". El servicio sólo ARMA y deja la hoja
 // abierta para revisar (nunca imprime/corta solo).
 
-const EMPTY = { supabaseUrl: '', serviceKey: '', pollSeconds: 60, outputDir: '', activo: false, modoEntrega: 'carpeta' };
+const EMPTY = {
+  supabaseUrl: '', serviceKey: '', pollSeconds: 60, outputDir: '', activo: false, modoEntrega: 'carpeta',
+  dobbleActive: false, dobbleComboTemplateId: '', dobbleOutputDir: '',
+};
 
 export default function IntakePanelModal({ open, onClose, onPublishCatalog }) {
   const [cfg, setCfg] = useState(EMPTY);
@@ -17,6 +20,7 @@ export default function IntakePanelModal({ open, onClose, onPublishCatalog }) {
   const [feedback, setFeedback] = useState(null); // { kind, text }
   const [status, setStatus] = useState(null); // { activo, busy, pollSeconds, lastRun }
   const [logs, setLogs] = useState([]);
+  const [comboTemplates, setComboTemplates] = useState([]); // combos (pages=[A,A,B])
   const logBoxRef = useRef(null);
 
   const api = typeof window !== 'undefined' ? window.printlayout?.intake : null;
@@ -31,6 +35,13 @@ export default function IntakePanelModal({ open, onClose, onPublishCatalog }) {
       setStatus({ activo: !!c?.activo, pollSeconds: c?.pollSeconds ?? 60, busy: false });
       setLoaded(true);
     });
+    // Plantillas combo Dobble guardadas (multi-hoja pages=[A,A,B]) para el selector.
+    window.printlayout?.templates?.list?.().then((list) => {
+      const combos = (Array.isArray(list) ? list : []).filter(
+        (t) => Array.isArray(t?.pages) && t.pages.length > 1,
+      );
+      setComboTemplates(combos);
+    }).catch(() => setComboTemplates([]));
   }, [open, api]);
 
   // Suscripción a estado + log mientras el panel está abierto.
@@ -75,6 +86,11 @@ export default function IntakePanelModal({ open, onClose, onPublishCatalog }) {
   const chooseDir = async () => {
     const r = await api.chooseDir?.();
     if (r?.ok && r.path) patch({ outputDir: r.path });
+  };
+
+  const chooseDobbleDir = async () => {
+    const r = await api.chooseDir?.();
+    if (r?.ok && r.path) patch({ dobbleOutputDir: r.path });
   };
 
   const testConnection = async () => {
@@ -230,6 +246,67 @@ export default function IntakePanelModal({ open, onClose, onPublishCatalog }) {
                 <span className="mt-1 block text-[10px] text-ink-500">
                   "Guardar" deja un archivo por hoja en la subcarpeta <b>Pedidos</b> de la carpeta de salida, sin abrir pestañas. Cada .pljob ya lleva las fotos adentro: lo abrís cuando quieras.
                 </span>
+              </div>
+
+              {/* Pedidos Dobble (exportador TOTALMENTE automático) */}
+              <div className="mt-3 rounded border border-accent-500/30 bg-accent-500/5 px-3 py-2 text-xs text-ink-300">
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={!!cfg.dobbleActive}
+                    onChange={(e) => patch({ dobbleActive: e.target.checked })}
+                    className="h-4 w-4 accent-accent-500"
+                  />
+                  <span>
+                    <span className="font-medium text-ink-100">Procesar pedidos Dobble</span>
+                    <span className="block text-[11px] text-ink-400">
+                      Baja la receta, posa el combo de 3 hojas, exporta el PDF doble faz a la carpeta y marca el pedido como procesado. Sin intervención.
+                    </span>
+                  </span>
+                </label>
+
+                <label className="mt-3 block">
+                  <span className="mb-1 block text-ink-300">Plantilla combo por defecto (3 hojas)</span>
+                  <select
+                    value={cfg.dobbleComboTemplateId || ''}
+                    onChange={(e) => patch({ dobbleComboTemplateId: e.target.value })}
+                    className="w-full rounded border border-ink-700 bg-ink-800 px-3 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
+                  >
+                    <option value="">— Elegí un combo guardado —</option>
+                    {comboTemplates.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name || t.id} ({t.pages.length} hojas)
+                      </option>
+                    ))}
+                  </select>
+                  {comboTemplates.length === 0 && (
+                    <span className="mt-1 block text-[10px] text-amber-300">
+                      No hay combos guardados. Creá uno con "Importar mazo Dobble → + Combo 3 hojas…".
+                    </span>
+                  )}
+                </label>
+
+                <label className="mt-3 block">
+                  <span className="mb-1 block text-ink-300">Carpeta de salida de los PDF Dobble</span>
+                  <div className="flex gap-2">
+                    <input
+                      value={cfg.dobbleOutputDir || ''}
+                      onChange={(e) => patch({ dobbleOutputDir: e.target.value })}
+                      placeholder="Ej: D:\Pedidos Dobble"
+                      className="w-full rounded border border-ink-700 bg-ink-800 px-3 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={chooseDobbleDir}
+                      className="shrink-0 rounded border border-ink-700 bg-ink-800 px-3 py-1.5 text-xs text-ink-100 hover:bg-ink-700"
+                    >
+                      Elegir…
+                    </button>
+                  </div>
+                  <span className="mt-1 block text-[10px] text-ink-500">
+                    El PDF se guarda como <b>PR-&lt;presupuesto&gt; - &lt;nombre del mazo&gt;.pdf</b>, sin abrir ni preguntar nada.
+                  </span>
+                </label>
               </div>
 
               <div className="mt-3 flex items-center gap-4">

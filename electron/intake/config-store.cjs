@@ -6,7 +6,7 @@
 // de configs locales).
 //
 // Forma: { supabaseUrl, serviceKey, pollSeconds, outputDir, activo, laRecta,
-//          modoEntrega }.
+//          modoEntrega, dobbleActive, dobbleComboTemplateId, dobbleOutputDir }.
 
 const { app } = require('electron');
 const fs = require('node:fs');
@@ -27,6 +27,14 @@ const DEFAULTS = {
   // revisar) o 'carpeta' (guarda un .pljob por hoja en <outputDir>/Pedidos sin
   // abrir pestañas). Default 'carpeta'.
   modoEntrega: 'carpeta',
+  // --- Pedidos Dobble (exportador TOTALMENTE automático) ---
+  // Toggle "Procesar pedidos Dobble". Independiente del intake de fotos: se
+  // pollea en el mismo ciclo pero sólo si está activo.
+  dobbleActive: false,
+  // Plantilla combo (pages=[A,A,B]) guardada sobre la que se posa SIEMPRE.
+  dobbleComboTemplateId: '',
+  // Carpeta donde se deja el PDF final (doble faz) de cada pedido Dobble.
+  dobbleOutputDir: '',
 };
 
 function getFilePath() {
@@ -47,6 +55,9 @@ function sanitize(cfg) {
     activo: !!c.activo,
     laRecta: !!c.laRecta,
     modoEntrega: c.modoEntrega === 'abrir' ? 'abrir' : 'carpeta',
+    dobbleActive: !!c.dobbleActive,
+    dobbleComboTemplateId: typeof c.dobbleComboTemplateId === 'string' ? c.dobbleComboTemplateId : '',
+    dobbleOutputDir: typeof c.dobbleOutputDir === 'string' ? c.dobbleOutputDir : '',
   };
 }
 

@@ -13,6 +13,7 @@ const workStatesStore = require('./work-states-store.cjs');
 const jobsStore = require('./jobs-store.cjs');
 const openTabsStore = require('./open-tabs-store.cjs');
 const intakeService = require('./intake/service.cjs');
+const { writePdfSilent, dobblePdfFileName } = require('./intake/save-pdf.cjs');
 
 autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
@@ -1072,6 +1073,20 @@ ipcMain.handle('intake:test-connection', () => intakeService.testConnection());
 ipcMain.handle('intake:poll-now', () => intakeService.pollNow());
 ipcMain.handle('intake:read-file', (_evt, localPath) => intakeService.readFile(localPath));
 ipcMain.handle('intake:order-built', (_evt, payload) => intakeService.orderBuilt(payload));
+ipcMain.handle('intake:dobble-order-built', (_evt, payload) => intakeService.dobbleOrderBuilt(payload));
+// Guardado SILENCIOSO del PDF Dobble (sin diálogo): el exportador automático lo
+// deja directo en la carpeta configurada, nombrado "PR-<presupuesto> - <mazo>.pdf".
+ipcMain.handle('dobble:save-pdf-silent', (_evt, { dir, numeroPresupuesto, nombreMazo, bytes }) => {
+  try {
+    if (!dir) return { ok: false, error: 'Falta la carpeta de salida.' };
+    const fileName = dobblePdfFileName(numeroPresupuesto, nombreMazo);
+    const filePath = path.join(dir, fileName);
+    writePdfSilent(filePath, bytes);
+    return { ok: true, path: filePath, fileName };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
 ipcMain.handle('intake:publish-catalog', (_evt, rows) => intakeService.publishCatalog(rows));
 ipcMain.handle('intake:publish-config', (_evt, { clave, valor }) => intakeService.publishConfig(clave, valor));
 

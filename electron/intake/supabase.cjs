@@ -106,6 +106,73 @@ async function removeObjects(cfg, paths) {
   return true;
 }
 
+// ---- Dobble: tabla `pedido_dobble` + bucket privado `dobble` ----
+// Mismas credenciales/criterios que fotos; sólo cambian la tabla y el bucket.
+// La receta es un ARCHIVO en Storage (imágenes inline, varios MB), NO una
+// columna jsonb: se baja como objeto igual que una foto.
+
+// Pedidos Dobble pendientes: no procesados Y con número de presupuesto asignado
+// (esperamos al CRM, igual que fotos). Orden por presupuesto (proxy cronológico).
+async function listPendingDobble(cfg, { limit } = {}) {
+  assertCfg(cfg);
+  const q = new URLSearchParams();
+  q.set('procesado_printlayout', 'is.false');
+  q.set('numero_presupuesto', 'not.is.null');
+  q.set('order', 'numero_presupuesto.asc');
+  q.set('select', '*');
+  if (limit) q.set('limit', String(limit));
+  const url = `${cfg.supabaseUrl}/rest/v1/pedido_dobble?${q.toString()}`;
+  const res = await net.fetch(url, {
+    method: 'GET',
+    headers: { ...authHeaders(cfg), Accept: 'application/json' },
+  });
+  if (!res.ok) throw await readErr(res, 'REST list dobble');
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
+}
+
+// Baja un objeto del bucket privado `dobble` (<id>/receta.json o <id>/caja.jpg).
+async function downloadDobbleObject(cfg, objectPath) {
+  assertCfg(cfg);
+  const url = `${cfg.supabaseUrl}/storage/v1/object/dobble/${encodeObjectPath(objectPath)}`;
+  const res = await net.fetch(url, { method: 'GET', headers: authHeaders(cfg) });
+  if (!res.ok) throw await readErr(res, `Storage GET dobble (${objectPath})`);
+  const ab = await res.arrayBuffer();
+  return Buffer.from(ab);
+}
+
+// Marca el pedido Dobble como procesado. Idempotente.
+async function markProcessedDobble(cfg, id) {
+  assertCfg(cfg);
+  const url = `${cfg.supabaseUrl}/rest/v1/pedido_dobble?id=eq.${encodeURIComponent(id)}`;
+  const res = await net.fetch(url, {
+    method: 'PATCH',
+    headers: {
+      ...authHeaders(cfg),
+      'Content-Type': 'application/json',
+      Prefer: 'return=minimal',
+    },
+    body: JSON.stringify({ procesado_printlayout: true }),
+  });
+  if (!res.ok) throw await readErr(res, 'REST patch dobble');
+  return true;
+}
+
+// Borra objetos del bucket `dobble` (bulk).
+async function removeDobbleObjects(cfg, paths) {
+  assertCfg(cfg);
+  const list = (paths || []).filter(Boolean);
+  if (list.length === 0) return true;
+  const url = `${cfg.supabaseUrl}/storage/v1/object/dobble`;
+  const res = await net.fetch(url, {
+    method: 'DELETE',
+    headers: { ...authHeaders(cfg), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prefixes: list }),
+  });
+  if (!res.ok) throw await readErr(res, 'Storage DELETE dobble');
+  return true;
+}
+
 // Upsert del catálogo de planchas (PrintLayout es la fuente de verdad). La tabla
 // `planchas_catalogo` tiene `id` como PK; merge-duplicates = insertar o pisar.
 // Cada row la arma `catalogRowForTemplate` (renderer) y va tal cual: además del
@@ -155,4 +222,9 @@ module.exports = {
   removeObjects,
   upsertCatalog,
   upsertConfig,
+  // Dobble
+  listPendingDobble,
+  downloadDobbleObject,
+  markProcessedDobble,
+  removeDobbleObjects,
 };

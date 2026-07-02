@@ -49,6 +49,10 @@ contextBridge.exposeInMainWorld('printlayout', {
   },
   dobble: {
     importRecipe: () => ipcRenderer.invoke('dobble:import-recipe'),
+    // Guardado silencioso del PDF final (sin diálogo) para el exportador
+    // automático. El main arma el nombre "PR-<presupuesto> - <mazo>.pdf".
+    saveSilent: (dir, numeroPresupuesto, nombreMazo, bytes) =>
+      ipcRenderer.invoke('dobble:save-pdf-silent', { dir, numeroPresupuesto, nombreMazo, bytes }),
   },
   contour: {
     tracePotrace: (arrayBuffer, opts) =>
@@ -101,6 +105,7 @@ contextBridge.exposeInMainWorld('printlayout', {
     pollNow: () => ipcRenderer.invoke('intake:poll-now'),
     readFile: (localPath) => ipcRenderer.invoke('intake:read-file', localPath),
     orderBuilt: (payload) => ipcRenderer.invoke('intake:order-built', payload),
+    dobbleOrderBuilt: (payload) => ipcRenderer.invoke('intake:dobble-order-built', payload),
     publishCatalog: (rows) => ipcRenderer.invoke('intake:publish-catalog', rows),
     publishConfig: (clave, valor) => ipcRenderer.invoke('intake:publish-config', { clave, valor }),
     // Eventos push del main:
@@ -108,6 +113,11 @@ contextBridge.exposeInMainWorld('printlayout', {
       const handler = (_evt, payload) => cb(payload);
       ipcRenderer.on('intake:order-ready', handler);
       return () => ipcRenderer.removeListener('intake:order-ready', handler);
+    },
+    onDobbleOrderReady: (cb) => {
+      const handler = (_evt, payload) => cb(payload);
+      ipcRenderer.on('intake:dobble-order-ready', handler);
+      return () => ipcRenderer.removeListener('intake:dobble-order-ready', handler);
     },
     onStatus: (cb) => {
       const handler = (_evt, payload) => cb(payload);

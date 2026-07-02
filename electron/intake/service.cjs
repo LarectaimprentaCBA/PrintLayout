@@ -20,10 +20,13 @@ const supabase = require('./supabase.cjs');
 let win = null;
 let timer = null;
 let busy = false;
+let busyDobble = false;
 // id → { sentAt, paths: [objectPath], tmpDir }. Evita reenviar un pedido que ya
 // mandamos al renderer y todavía no confirmó. Se auto-expira (STALE_MS) por si
 // el evento se perdió (p.ej. ventana recargada) para que se reintente.
 const inFlight = new Map();
+// Igual que inFlight pero para pedidos Dobble (tabla pedido_dobble).
+const inFlightDobble = new Map();
 
 const INITIAL_DELAY_MS = 4000; // dar tiempo a que el renderer monte y suscriba
 const STALE_MS = 5 * 60 * 1000;
@@ -129,6 +132,103 @@ async function processOrder(cfg, order) {
   log(`Pedido ${order.numero_presupuesto || order.id}: ${downloaded.size} foto(s) bajada(s), enviado a armar.`);
 }
 
+// ---- Pedidos Dobble (exportador TOTALMENTE automático) ----
+// Baja <id>/receta.json y —si hay— <id>/caja.jpg del bucket `dobble` a temp y
+// emite `intake:dobble-order-ready`. El renderer posa el combo, exporta el PDF
+// doble faz, lo guarda SOLO en la carpeta (sin diálogo) y confirma con
+// `intake:dobble-order-built` → recién ahí marcamos procesado y limpiamos.
+async function processDobbleOrder(cfg, order) {
+  const id = String(order.id);
+  // Bajo la misma raíz temporal que fotos (subcarpeta 'dobble') para que
+  // `readFile` (validación por prefijo) acepte estos paths.
+  const orderDir = path.join(tmpRoot(cfg), 'dobble', id);
+  fs.mkdirSync(orderDir, { recursive: true });
+  const paths = [];
+
+  const recetaObj = order.receta_path;
+  if (!recetaObj) throw new Error('El pedido no tiene receta_path.');
+  const recetaBuf = await supabase.downloadDobbleObject(cfg, recetaObj);
+  const recetaLocal = path.join(orderDir, 'receta.json');
+  fs.writeFileSync(recetaLocal, recetaBuf);
+  paths.push(recetaObj);
+
+  // caja.jpg es opcional. Si falla la bajada, seguimos sin caja (queda en blanco).
+  let cajaLocal = null;
+  if (order.caja_path) {
+    try {
+      const cajaBuf = await supabase.downloadDobbleObject(cfg, order.caja_path);
+      cajaLocal = path.join(orderDir, path.basename(order.caja_path));
+      fs.writeFileSync(cajaLocal, cajaBuf);
+      paths.push(order.caja_path);
+    } catch (err) {
+      log(`Pedido Dobble ${order.numero_presupuesto || id}: no se pudo bajar la caja (${err.message}); sigo sin caja.`, 'warn');
+      cajaLocal = null;
+    }
+  }
+
+  inFlightDobble.set(id, { sentAt: Date.now(), paths, tmpDir: orderDir });
+  emit('intake:dobble-order-ready', {
+    id: order.id,
+    numero_presupuesto: order.numero_presupuesto || null,
+    nombre_mazo: order.nombre_mazo || null,
+    // La caja de PrintLayout es doble faz por naturaleza; default true salvo
+    // que el pedido lo diga explícitamente false.
+    doble_faz: order.doble_faz !== false,
+    recetaPath: recetaLocal,
+    cajaPath: cajaLocal,
+  });
+  log(`Pedido Dobble ${order.numero_presupuesto || id}: receta${cajaLocal ? ' + caja' : ''} bajada, enviado a armar.`);
+}
+
+// Un ciclo de poll de pedidos Dobble. Igual que `tick` pero contra pedido_dobble
+// y gateado por `dobbleActive` (toggle propio). `manual` ignora el flag activo.
+async function tickDobble(manual = false) {
+  if (busyDobble) return { ok: false, error: 'Ya hay un ciclo Dobble en curso.' };
+  const cfg = getConfig();
+  if (!configStore.isLaRecta(cfg)) return { ok: false, error: 'Esta PC no está en modo La Recta.' };
+  if (!manual && !cfg.activo) return { ok: false, error: 'Servicio en pausa.' };
+  if (!cfg.dobbleActive) return { ok: false, skipped: true };
+  if (!cfg.supabaseUrl || !cfg.serviceKey) return { ok: false, error: 'Falta URL o service key.' };
+
+  busyDobble = true;
+  let found = 0;
+  try {
+    const orders = await supabase.listPendingDobble(cfg);
+    const now = Date.now();
+    for (const order of orders) {
+      const id = String(order.id);
+      const entry = inFlightDobble.get(id);
+      if (entry && now - entry.sentAt < STALE_MS) continue; // ya en vuelo
+      found += 1;
+      try {
+        await processDobbleOrder(cfg, order);
+      } catch (err) {
+        log(`Error bajando el pedido Dobble ${order.numero_presupuesto || id}: ${err.message}`, 'error');
+      }
+    }
+    if (orders.length > 0) log(`${orders.length} pedido(s) Dobble pendiente(s).`);
+    return { ok: true, found, pending: orders.length };
+  } catch (err) {
+    log(`Error consultando pedidos Dobble: ${err.message}`, 'error');
+    return { ok: false, error: err.message };
+  } finally {
+    busyDobble = false;
+  }
+}
+
+// Un ciclo completo: fotos + Dobble (cada uno gateado por su propio flag). Es lo
+// que dispara el timer y el botón "Buscar ahora".
+async function pollBoth(manual = false) {
+  const photos = await tick(manual).catch((e) => ({ ok: false, error: e.message }));
+  const dobble = await tickDobble(manual).catch((e) => ({ ok: false, error: e.message }));
+  return {
+    ok: photos.ok || dobble.ok,
+    found: (photos.found || 0) + (dobble.found || 0),
+    photos,
+    dobble,
+  };
+}
+
 // Un ciclo de poll. `manual` ignora el flag activo (botón "Buscar ahora").
 async function tick(manual = false) {
   if (busy) return { ok: false, error: 'Ya hay un ciclo en curso.' };
@@ -188,8 +288,8 @@ function reschedule(cfg) {
     return;
   }
   log(`Servicio activo (cada ${c.pollSeconds}s).`);
-  setTimeout(() => { tick(false).catch(() => {}); }, INITIAL_DELAY_MS);
-  timer = setInterval(() => { tick(false).catch(() => {}); }, c.pollSeconds * 1000);
+  setTimeout(() => { pollBoth(false).catch(() => {}); }, INITIAL_DELAY_MS);
+  timer = setInterval(() => { pollBoth(false).catch(() => {}); }, c.pollSeconds * 1000);
 }
 
 function start(browserWin) {
@@ -200,7 +300,7 @@ function start(browserWin) {
 }
 
 async function pollNow() {
-  return tick(true);
+  return pollBoth(true);
 }
 
 async function testConnection() {
@@ -273,6 +373,43 @@ async function orderBuilt(payload) {
   return { ok: true };
 }
 
+// El renderer confirma el resultado del armado del pedido Dobble:
+//   { id, ok: true }  → marcar procesado + borrar receta/caja del bucket + temp.
+//   { id, ok: false } → no marcar (se reintenta), liberar el in-flight.
+async function dobbleOrderBuilt(payload) {
+  const id = payload && payload.id != null ? String(payload.id) : null;
+  if (!id) return { ok: false, error: 'Falta id.' };
+  const entry = inFlightDobble.get(id);
+
+  if (payload.ok === false) {
+    inFlightDobble.delete(id);
+    log(`El armado del pedido Dobble ${id} falló: ${payload.error || 'sin detalle'}. Se reintentará.`, 'error');
+    return { ok: true };
+  }
+
+  const cfg = getConfig();
+  try {
+    await supabase.markProcessedDobble(cfg, id);
+  } catch (err) {
+    log(`No se pudo marcar procesado el pedido Dobble ${id}: ${err.message}`, 'error');
+    return { ok: false, error: err.message };
+  }
+  // Best-effort: borrar receta/caja del bucket + temp local.
+  try {
+    if (entry?.paths?.length) await supabase.removeDobbleObjects(cfg, entry.paths);
+  } catch (err) {
+    log(`No se pudieron borrar los archivos del bucket dobble (pedido ${id}): ${err.message}`, 'warn');
+  }
+  try {
+    if (entry?.tmpDir) fs.rmSync(entry.tmpDir, { recursive: true, force: true });
+  } catch (_) {
+    /* ignore */
+  }
+  inFlightDobble.delete(id);
+  log(`Pedido Dobble ${id} procesado y limpiado.`);
+  return { ok: true };
+}
+
 // Publica/quita el catálogo de planchas oficiales (solo modo La Recta).
 async function publishCatalog(rows) {
   const cfg = getConfig();
@@ -310,6 +447,7 @@ module.exports = {
   testConnection,
   readFile,
   orderBuilt,
+  dobbleOrderBuilt,
   publishCatalog,
   publishConfig,
 };
