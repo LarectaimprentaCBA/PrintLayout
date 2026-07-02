@@ -1,7 +1,7 @@
 {
   "schema": "recta-dobble-deck",
   "version": 1,
-  "engineVersion": "0.3.0",
+  "engineVersion": "0.4.0",
   "mazo": {
     "n": 3,
     "seed": 1,
@@ -17,6 +17,7 @@
     "registroToleranciaMM": 0.5,
     "radioBorde": 0.14,
     "fondo": "#ffffff",
+    "fondoImagen": null,
     "borde": {
       "color": "#1f2430",
       "grosorMM": 0.65

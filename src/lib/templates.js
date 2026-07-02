@@ -68,6 +68,22 @@ export function fixedPageCount(template) {
   return isMultiPage(template) ? template.pages.length : null;
 }
 
+// Fondo (pdfBase64) de la hoja `pageIndex`. En plantillas multi-hoja (combo
+// pages=[A,A,B]) cada hoja trae su propio pdfBase64; si esa hoja no trae uno,
+// cae al top-level (`template.pdfBase64`). Devuelve tambien una `bgKey` estable
+// para cachear POR HOJA: hojas con el mismo fondo la comparten (p.ej. A y A);
+// el top-level usa '__tpl__'. Es PURO (sin pdfjs/DOM) → lo usan el preview del
+// canvas (pdfPreview) y se puede testear en node. El export tiene su propia
+// resolucion equivalente (backgroundForPage en exportPdf).
+export function pageBackground(template, pageIndex = 0) {
+  if (!template) return { b64: null, bgKey: null };
+  const perPage = Array.isArray(template.pages) ? (template.pages[pageIndex] || null) : null;
+  const b64 = (perPage && perPage.pdfBase64) || template.pdfBase64 || null;
+  if (!b64) return { b64: null, bgKey: null };
+  const bgKey = (perPage && perPage.pdfBase64) ? (perPage.bgKey || `p${pageIndex}`) : '__tpl__';
+  return { b64, bgKey };
+}
+
 // Dado un indice flat en assignments, devuelve { page, localIdx, pageSize }.
 // Legacy: cellsPerPage es constante (celdas.length). Multi-page: cada hoja
 // puede tener distinta cantidad.

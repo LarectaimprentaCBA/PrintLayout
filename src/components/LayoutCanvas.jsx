@@ -102,13 +102,19 @@ export default function LayoutCanvas({
     return () => el.removeEventListener('wheel', onWheel);
   }, [template?.id]);
 
+  // Índice de hoja para el fondo del preview. En plantillas multi-hoja (combo
+  // pages=[A,A,B]) el fondo depende de la hoja actual (la 3 muestra el de B); en
+  // las demás es siempre el top-level, así que fijamos 0 para no re-renderizar (ni
+  // parpadear) al paginar.
+  const bgPageIndex = template && fixedPageCount(template) !== null ? (currentPage ?? 0) : 0;
+
   useEffect(() => {
     let cancelled = false;
     setPreviewUrl(null);
     if (!template) return;
     (async () => {
       try {
-        const url = await renderPdfPage1Preview(template, 110);
+        const url = await renderPdfPage1Preview(template, 110, bgPageIndex);
         if (!cancelled) setPreviewUrl(url);
       } catch (err) {
         console.error('No se pudo renderizar el preview:', err);
@@ -117,7 +123,7 @@ export default function LayoutCanvas({
     return () => {
       cancelled = true;
     };
-  }, [template?.id]);
+  }, [template?.id, bgPageIndex]);
 
 
   if (!template) {

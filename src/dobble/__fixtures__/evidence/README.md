@@ -2,7 +2,7 @@
 
 PDFs reales generados sin tocar diálogos nativos, con el **mismo renderer del motor
 (vendor)** y la **misma geometría que `buildDobbleJob`**. Posan el mazo fixture
-[`../mazo-n3.receta.json`](../mazo-n3.receta.json) (n=3, 13 cartas, engine 0.3.0)
+[`../mazo-n3.receta.json`](../mazo-n3.receta.json) (n=3, 13 cartas, engine 0.4.0)
 sobre una plantilla redonda A4 (celda ⌀ 71 mm, margen de corte 3 mm → **carta ⌀ 65 mm,
 sangrado 3 mm**), 6 por hoja → **3 hojas**.
 

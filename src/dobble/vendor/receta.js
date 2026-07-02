@@ -18,6 +18,9 @@ export function estiloDeReceta(carta) {
   return {
     forma: carta.forma,
     fondo: carta.fondo,
+    // Imagen de fondo opcional que viaja en la receta (dataUrl/URL) — la dibuja el
+    // renderer detrás de los símbolos. null = sin imagen (el dorso no la usa hoy).
+    fondoImagen: carta.fondoImagen ?? null,
     radioBorde: carta.radioBorde,
     borde: { color: carta.borde.color, grosor: carta.borde.grosorMM / (carta.diametroMM / 2) },
   };

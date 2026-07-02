@@ -228,12 +228,16 @@ export function buildComboTemplate(A, B, { name, categoria } = {}) {
 
 // Estilo de render de la carta: el de la receta + override de fondo (color) y la
 // imagen de fondo opcional, ambos definidos en PrintLayout (viajan en la plantilla).
-function estiloConFondo(carta, fondoColor, fondoImagen) {
+// Precedencia: el override MANUAL de PrintLayout (fondoColor/fondoImagen) gana; si
+// no se setea, cae al fondo que trae la RECETA (carta.fondo / carta.fondoImagen,
+// ya expuesto por estiloDeReceta tras re-vendorizar); último recurso, blanco/sin
+// imagen. El dorso no lleva imagen de fondo hoy → no se toca acá.
+export function estiloConFondo(carta, fondoColor, fondoImagen) {
   const base = estiloDeReceta(carta);
   return {
     ...base,
-    fondo: fondoColor || base.fondo || '#ffffff',
-    fondoImagen: fondoImagen || null,
+    fondo: fondoColor || base.fondo || carta?.fondo || '#ffffff',
+    fondoImagen: fondoImagen || base.fondoImagen || carta?.fondoImagen || null,
   };
 }
 

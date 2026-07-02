@@ -1,7 +1,8 @@
 // Renderiza la pagina 1 de un PDF (en base64) a un dataURL JPEG para
-// usar como fondo visual del canvas. Cachea por id de plantilla.
+// usar como fondo visual del canvas. Cachea por hoja (id + bgKey).
 import * as pdfjsLib from 'pdfjs-dist/build/pdf.mjs';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
+import { pageBackground } from './templates.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -197,12 +198,18 @@ export async function rasterizePdfPagesAt(bytes, opts = {}) {
   }
 }
 
-export async function renderPdfPage1Preview(template, dpi = 96) {
-  if (!template?.pdfBase64) return null;
-  const key = `${template.id}:${dpi}`;
+// Renderiza el fondo de la hoja `pageIndex` (pagina 1 de SU pdfBase64) a JPEG.
+// En plantillas multi-hoja (combo pages=[A,A,B]) cada hoja tiene su propio
+// fondo: la hoja 3 (B) muestra sus instrucciones/QR, no el de A. `pageBackground`
+// resuelve el pdfBase64 per-hoja (o el top-level) y da una bgKey estable para
+// cachear por hoja (A y A comparten; B es otra). Cachea por id:bgKey:dpi.
+export async function renderPdfPage1Preview(template, dpi = 96, pageIndex = 0) {
+  const { b64, bgKey } = pageBackground(template, pageIndex);
+  if (!b64) return null;
+  const key = `${template.id}:${bgKey}:${dpi}`;
   if (cache.has(key)) return cache.get(key);
 
-  const bytes = base64ToBytes(template.pdfBase64);
+  const bytes = base64ToBytes(b64);
   const doc = await pdfjsLib.getDocument({ data: bytes }).promise;
   try {
     const page = await doc.getPage(1);

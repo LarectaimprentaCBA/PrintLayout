@@ -1,5 +1,5 @@
 // Evidencia E2E reproducible del posado Dobble (sin tocar diálogos nativos).
-// Posa el mazo fixture (n=3, 13 cartas, engine 0.3.0) sobre una plantilla redonda
+// Posa el mazo fixture (n=3, 13 cartas, engine 0.4.0) sobre una plantilla redonda
 // y genera DOS PDF reales (vía Electron printToPDF) de la hoja imposicionada:
 //   - dobble-n3-color.pdf   (fondo de carta = color sólido)
 //   - dobble-n3-imagen.pdf  (fondo de carta = imagen, recortada al círculo + sangrado)

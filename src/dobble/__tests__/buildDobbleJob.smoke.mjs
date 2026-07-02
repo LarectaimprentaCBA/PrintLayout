@@ -2,7 +2,9 @@
 //   - dobbleGeometryFromTemplate (⌀ carta = ladoCelda − 2·margenCorte; sangrado = margen)
 //   - grilla (computeBestGrid) + cortes circulares (generateCuts)
 //   - assignments / paginación / multipágina que arma buildDobbleJob
-//   - validarReceta: el fixture (engine 0.3.0) coincide con el vendor → SIN aviso de mismatch
+//   - estiloConFondo: precedencia de fondo (override manual > receta > default)
+//   - pageBackground: fondo por hoja del preview (combo pages=[A,A,B] → A,A,B)
+//   - validarReceta: el fixture (engine 0.4.0) coincide con el vendor → SIN aviso de mismatch
 //
 // Corré:  npm run test:dobble     (o)   node src/dobble/__tests__/buildDobbleJob.smoke.mjs
 //
@@ -28,8 +30,9 @@ globalThis.document = {
   }),
 };
 
-const { buildDobbleJob, dobbleGeometryFromTemplate, buildComboTemplate, dobbleCardCapacity } = await import('../buildDobbleJob.js');
+const { buildDobbleJob, dobbleGeometryFromTemplate, buildComboTemplate, dobbleCardCapacity, estiloConFondo } = await import('../buildDobbleJob.js');
 const { computeBestGrid, generateCuts } = await import('../../lib/grid.js');
+const { pageBackground } = await import('../../lib/templates.js');
 const { validarReceta } = await import('../vendor/receta.js');
 
 const receta = JSON.parse(readFileSync(join(__dirname, '../__fixtures__/mazo-n3.receta.json'), 'utf-8'));
@@ -53,11 +56,63 @@ function circleTemplate({ paperW = 210, paperH = 297, side, cutMargin, markMargi
   };
 }
 
-// 0) Alineación de engineVersion: el fixture no debe disparar aviso de mismatch.
+// 0) Alineación de engineVersion: el fixture (0.4.0) coincide con el vendor
+//    re-vendorizado → sin aviso de mismatch.
 {
   const v = validarReceta(receta);
   ok(v.ok, 'validarReceta.ok');
   ok((v.avisos || []).every((a) => !/engineVersion/i.test(a)), `sin aviso de engineVersion (avisos: ${JSON.stringify(v.avisos)})`);
+}
+
+// 0b) Precedencia del fondo de carta (Orden 3): el override MANUAL de PrintLayout
+//     gana; si no se setea, cae al fondo que trae la RECETA; último recurso, blanco.
+{
+  console.log('# precedencia de fondo (receta vs override)');
+  const cartaBase = { forma: 'circulo', fondo: '#111111', diametroMM: 65, radioBorde: 0.14, borde: { color: '#000', grosorMM: 1 } };
+  const cartaConImg = { ...cartaBase, fondoImagen: 'data:image/png;base64,RECETA' };
+  // 1) Sin override → hereda el fondo (color + imagen) de la receta.
+  const e1 = estiloConFondo(cartaConImg, null, null);
+  ok(e1.fondoImagen === 'data:image/png;base64,RECETA', 'imagen: sin override usa la de la receta');
+  ok(e1.fondo === '#111111', 'color: sin override usa el de la receta');
+  // 2) Override manual gana sobre la receta (color + imagen).
+  const e2 = estiloConFondo(cartaConImg, '#ff0000', 'data:image/png;base64,OVERRIDE');
+  ok(e2.fondoImagen === 'data:image/png;base64,OVERRIDE', 'imagen: override manual gana');
+  ok(e2.fondo === '#ff0000', 'color: override manual gana');
+  // 3) Receta sin fondoImagen y sin override → null (no inventa imagen).
+  const e3 = estiloConFondo(cartaBase, null, null);
+  ok(e3.fondoImagen === null, 'imagen: receta sin fondoImagen → null');
+  ok(e3.fondo === '#111111', 'color: cae al de la receta');
+  // 4) Sin nada → blanco / sin imagen.
+  const e4 = estiloConFondo({ forma: 'circulo', diametroMM: 65, radioBorde: 0.14, borde: { color: '#000', grosorMM: 1 } }, null, null);
+  ok(e4.fondo === '#ffffff', 'color: default blanco');
+  ok(e4.fondoImagen === null, 'imagen: default null');
+}
+
+// 0c) Fondo por hoja del preview (Orden 3): en un combo pages=[A,A,B] cada hoja
+//     resuelve SU fondo. Hojas 1-2 comparten cache (bgKey A); la 3 usa B. Prueba
+//     la lógica pura del fix del preview (renderPdfPage1Preview usa pageBackground).
+{
+  console.log('# fondo por hoja del preview (combo A,A,B)');
+  const combo = {
+    id: 'tpl_bg', pageWidthMm: 210, pageHeightMm: 297,
+    pages: [
+      { pdfBase64: 'PDF_A', bgKey: 'A', celdas: [] },
+      { pdfBase64: 'PDF_A', bgKey: 'A', celdas: [] },
+      { pdfBase64: 'PDF_B', bgKey: 'B', celdas: [] },
+    ],
+  };
+  const b0 = pageBackground(combo, 0);
+  const b1 = pageBackground(combo, 1);
+  const b2 = pageBackground(combo, 2);
+  ok(b0.b64 === 'PDF_A' && b1.b64 === 'PDF_A', 'hojas 1-2 usan el fondo de A');
+  ok(b2.b64 === 'PDF_B', 'hoja 3 usa el fondo de B (su propio pdfBase64)');
+  ok(b0.bgKey === b1.bgKey && b0.bgKey !== b2.bgKey, 'cache: A y A comparten clave; B es otra (hoja 3 no muestra el de A)');
+  // Plantilla de 1 hoja (sin pages): siempre el top-level, clave estable.
+  const single = { id: 'tpl_s', pdfBase64: 'PDF_TOP', pageWidthMm: 210, pageHeightMm: 297 };
+  const s0 = pageBackground(single, 0), s2 = pageBackground(single, 2);
+  ok(s0.b64 === 'PDF_TOP' && s2.b64 === 'PDF_TOP' && s0.bgKey === '__tpl__', 'single-page: top-level en toda hoja');
+  // Sin ningún fondo → null (no rompe).
+  ok(pageBackground({ id: 'x', pages: [{ celdas: [] }] }, 0).b64 === null, 'sin fondo → null');
 }
 
 async function check(label, tpl, opts = {}) {
