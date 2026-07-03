@@ -1140,8 +1140,15 @@ export default function ImageEditorModal({
                       <option value="replicate">Edge replicate</option>
                       <option value="color">Color sólido</option>
                       <option value="nineSlice">9-slice (centro fijo)</option>
+                      <option value="edgeGrow">Ampliar bordes (forma libre)</option>
                     </select>
                   </label>
+                  {shrinkFillMode === 'edgeGrow' && (
+                    <p className="text-[10px] text-ink-500">
+                      Estira el borde real del diseño hacia afuera. Es el único que anda
+                      con recortes de <b>forma libre</b> / fondo transparente.
+                    </p>
+                  )}
                   {shrinkFillMode === 'color' && (
                     <div className="flex items-center gap-2">
                       <input
@@ -1257,7 +1264,11 @@ function methodConfig({ method, stripPx, color, shrinkPercent, shrinkFillMode, c
         method,
         shrinkPercent,
         fillMode: shrinkFillMode,
-        fillOptions: shrinkFillMode === 'color' ? { color } : { stripPx },
+        fillOptions: shrinkFillMode === 'color'
+          ? { color }
+          : shrinkFillMode === 'edgeGrow'
+            ? { fillMode: 'stretch' } // sub-estilo de edgeGrow (estirar el borde)
+            : { stripPx },
         offsetMm,
       };
     case 'crop':

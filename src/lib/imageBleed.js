@@ -364,6 +364,12 @@ export async function extendShrinkAndBleed(
       };
       return extendNineSlice(dataUrl, newSrcMm, targetSizeMm, { centerRectMm });
     }
+    case 'edgeGrow':
+      // "Ampliar bordes": estira el borde real (opaco más cercano) hacia afuera.
+      // Es el único relleno que anda con recortes de forma libre / transparencia,
+      // ahora también combinable con el encogido. fillOptions.fillMode define el
+      // sub-estilo (stretch/replicate/mirror/color).
+      return extendEdgeGrow(dataUrl, newSrcMm, targetSizeMm, fillOpts);
     case 'mirror':
     default:
       return extendMirror(dataUrl, newSrcMm, targetSizeMm, { offsetMm });
