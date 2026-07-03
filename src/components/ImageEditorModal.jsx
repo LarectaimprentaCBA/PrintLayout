@@ -978,16 +978,29 @@ export default function ImageEditorModal({
               {method === 'edgeGrow' && (
                 <div className="mt-2 space-y-2">
                   <label className="block text-[10px] text-ink-400">
-                    Relleno
+                    Estilo de borde
                     <select
                       value={edgeGrowStyle}
                       onChange={(e) => setEdgeGrowStyle(e.target.value)}
                       className="mt-0.5 w-full rounded border border-ink-700 bg-ink-800 px-2 py-1 text-xs text-ink-100 outline-none focus:border-accent-500"
                     >
-                      <option value="stretch">Estirar el borde hacia afuera</option>
+                      <option value="stretch">Estirar borde</option>
+                      <option value="replicate">Edge replicate (franja)</option>
+                      <option value="mirror">Espejo</option>
                       <option value="color">Color sólido</option>
                     </select>
                   </label>
+                  {edgeGrowStyle === 'replicate' && (
+                    <label className="block text-[10px] text-ink-400">
+                      Ancho de franja: {stripPx} px
+                      <input
+                        type="range" min="2" max="32" step="1"
+                        value={stripPx}
+                        onChange={(e) => setStripPx(parseInt(e.target.value, 10))}
+                        className="mt-0.5 w-full"
+                      />
+                    </label>
+                  )}
                   {edgeGrowStyle === 'color' && (
                     <div className="flex items-center gap-2">
                       <input
@@ -1252,7 +1265,7 @@ function methodConfig({ method, stripPx, color, shrinkPercent, shrinkFillMode, c
     case 'radial':
       return { method, radialStyle, stripPx, color, offsetMm };
     case 'edgeGrow':
-      return { method, fillMode: edgeGrowStyle, color, offsetMm };
+      return { method, fillMode: edgeGrowStyle, color, stripPx, offsetMm };
     case 'mirror':
     default:
       return { method: 'mirror', offsetMm };

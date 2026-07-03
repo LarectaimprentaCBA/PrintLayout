@@ -503,18 +503,17 @@ export async function extendRadial(
 }
 
 // Ampliar bordes de un recorte de FORMA LIBRE (o cualquier imagen con
-// transparencia): rellena TODO lo transparente con el color del pixel opaco mas
-// cercano ("estirar" el borde real hacia afuera) — o con un color solido. A
-// diferencia de 'radial' (que tira rayos desde el centro y solo sirve para
-// formas redondas/convexas), esto anda con contornos arbitrarios y concavos: el
-// borde del diseno se extiende perpendicular hacia afuera, asi el corte por
-// contorno cae sobre tinta aunque el plotter se desfase. NO mueve ni achica el
-// diseno.
-//   fillMode 'stretch' — color del opaco mas cercano (default).
-//   fillMode 'color'   — color solido elegido.
+// transparencia): rellena TODO lo transparente tomando como referencia el pixel
+// opaco MÁS CERCANO. A diferencia de 'radial' (que tira rayos desde el centro y
+// solo sirve para formas redondas/convexas), esto anda con contornos arbitrarios
+// y cóncavos. NO mueve ni achica el diseño. Mismos estilos que 'radial':
+//   'stretch'   — estira el color del borde hacia afuera (default).
+//   'replicate' — repite una franja de `stripPx` del borde hacia afuera (textura).
+//   'mirror'    — refleja el diseño a través del borde (espejo).
+//   'color'     — color sólido elegido.
 export async function extendEdgeGrow(
   dataUrl, srcSizeMm, targetSizeMm,
-  { offsetMm, fillMode = 'stretch', color = '#ffffff' } = {},
+  { offsetMm, fillMode = 'stretch', color = '#ffffff', stripPx = 8 } = {},
 ) {
   const img = await loadImage(dataUrl);
   const { canvasW, canvasH, drawW, drawH, drawX, drawY } =
@@ -525,7 +524,7 @@ export async function extendEdgeGrow(
   const W = canvasW, H = canvasH, N = W * H;
   const id = ctx.getImageData(0, 0, W, H);
   const d = id.data;
-  const OPAQUE = 200; // umbral alpha: >= es "diseno", el resto se rellena
+  const OPAQUE = 200; // umbral alpha: >= es "diseño", el resto se rellena
 
   if (fillMode === 'color') {
     const [cr, cg, cb] = hexToRgbTriplet(color);
@@ -537,19 +536,45 @@ export async function extendEdgeGrow(
     return output(canvas, targetSizeMm);
   }
 
-  // 'stretch': cada pixel transparente toma el color del opaco mas cercano.
-  growEdgesToTransparent(d, W, H, OPAQUE);
+  if (fillMode === 'stretch') {
+    // Cada pixel transparente toma el color del opaco más cercano.
+    growEdgesToTransparent(d, W, H, OPAQUE);
+    ctx.putImageData(id, 0, 0);
+    return output(canvas, targetSizeMm);
+  }
+
+  // 'replicate' | 'mirror': con el campo de "opaco más cercano" (seed) sabemos,
+  // para cada pixel transparente, hacia dónde está el borde y a qué distancia
+  // (`out`). Muestreamos HACIA ADENTRO desde el borde: replicate repite una
+  // franja de `strip`, mirror refleja el diseño a través del borde.
+  const { seedX, seedY } = nearestOpaqueSeeds(d, W, H, OPAQUE);
+  const strip = Math.max(1, Math.round(stripPx));
+  for (let i = 0; i < N; i++) {
+    if (d[i * 4 + 3] >= OPAQUE) continue;
+    const sx = seedX[i]; if (sx < 0) continue;
+    const sy = seedY[i];
+    const x = i % W, y = (i / W) | 0;
+    const vx = sx - x, vy = sy - y;        // pixel → borde (hacia adentro)
+    const out = Math.sqrt(vx * vx + vy * vy) || 1;
+    const nx = vx / out, ny = vy / out;     // unitario hacia adentro
+    const depth = fillMode === 'replicate' ? (out % strip) : out; // mirror = out
+    let px = Math.round(sx + nx * depth);
+    let py = Math.round(sy + ny * depth);
+    if (px < 0) px = 0; else if (px >= W) px = W - 1;
+    if (py < 0) py = 0; else if (py >= H) py = H - 1;
+    let si = (py * W + px) * 4;
+    if (d[si + 3] < OPAQUE) si = (sy * W + sx) * 4; // cayó en transparente → color del borde
+    d[i * 4] = d[si]; d[i * 4 + 1] = d[si + 1]; d[i * 4 + 2] = d[si + 2]; d[i * 4 + 3] = 255;
+  }
   ctx.putImageData(id, 0, 0);
   return output(canvas, targetSizeMm);
 }
 
-// PURO (sin canvas): rellena en su lugar cada pixel con alpha < `threshold` con
-// el RGB del pixel opaco mas cercano (y alpha 255). Transformada de distancia
-// por propagacion de "semilla" en dos pasadas (forward + backward) guardando la
-// coord del opaco mas cercano — O(N), aproximacion euclidiana suficiente para
-// estirar el color del borde de un recorte de forma libre hacia afuera. `data`
-// es el RGBA (Uint8ClampedArray/Uint8Array) de W×H. Devuelve `data`.
-export function growEdgesToTransparent(data, W, H, threshold = 200) {
+// PURO (sin canvas): campo de "opaco más cercano". Para cada pixel devuelve la
+// coord (seedX, seedY) del pixel con alpha >= `threshold` más cercano (-1 si no
+// hay ninguno). Transformada de distancia por propagación de semilla en dos
+// pasadas (forward + backward) — O(N), euclidiana aproximada. `data` = RGBA W×H.
+export function nearestOpaqueSeeds(data, W, H, threshold = 200) {
   const N = W * H;
   const seedX = new Int32Array(N).fill(-1);
   const seedY = new Int32Array(N).fill(-1);
@@ -583,7 +608,14 @@ export function growEdgesToTransparent(data, W, H, threshold = 200) {
       if (x > 0 && y < H - 1) consider(x, y, i, i + W - 1);
     }
   }
-  for (let i = 0; i < N; i++) {
+  return { seedX, seedY };
+}
+
+// PURO (sin canvas): rellena en su lugar cada pixel transparente con el RGB del
+// opaco más cercano (estira el borde) y alpha 255. Devuelve `data`.
+export function growEdgesToTransparent(data, W, H, threshold = 200) {
+  const { seedX, seedY } = nearestOpaqueSeeds(data, W, H, threshold);
+  for (let i = 0; i < W * H; i++) {
     if (data[i * 4 + 3] >= threshold) continue;
     const sx = seedX[i]; if (sx < 0) continue;
     const si = seedY[i] * W + sx;
