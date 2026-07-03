@@ -1033,6 +1033,31 @@ export default function App() {
     );
   };
 
+  // Agregar / quitar doble faz a la plantilla en curso (la de la tab). Al
+  // activarlo, el dorso se deriva espejando el frente (backMirror). Deja el
+  // espejo tipo "libro" (izq-der = 'x', lo validado por el usuario) si la
+  // plantilla no traía uno; se puede cambiar arriba con "Cara: Dorso ↔/↕".
+  // No toca la plantilla guardada hasta que se use "Guardar plantilla".
+  const handleToggleDoubleSided = () => {
+    const t = activeTab?.template;
+    if (!t) return;
+    const enabling = !t.doubleSided;
+    handlePatchActiveTemplate({
+      doubleSided: enabling,
+      ...(enabling
+        ? {
+            backMirror: t.backMirror || 'x',
+            backRotate180: typeof t.backRotate180 === 'boolean' ? t.backRotate180 : false,
+          }
+        : {}),
+    });
+    setToast(
+      enabling
+        ? { kind: 'success', text: 'Doble faz activado: elegí “Cara: Dorso” arriba para editar el reverso.' }
+        : { kind: 'info', text: 'Doble faz quitado.' },
+    );
+  };
+
   // Renombrar el template = renombrar localmente la copia de la tab. No toca
   // la plantilla original guardada (que vive en templatesStore con su id
   // real). Para renombrar la guardada, hay que editarla desde el sidebar.
@@ -2768,6 +2793,7 @@ export default function App() {
             onChangeDobbleColor={handleDobbleColor}
             onSetDobbleImage={handleDobbleImage}
             onClearDobbleImage={handleDobbleClearImage}
+            onToggleDoubleSided={handleToggleDoubleSided}
             onChangeWhiteBorder={(v) => handlePatchActiveTemplate({ cellWhiteBorderMm: v })}
             onChangeBorderLine={(v) => handlePatchActiveTemplate({ cellBorderLineMm: v })}
             onChangeBorderColor={(v) => handlePatchActiveTemplate({ cellBorderColor: v })}

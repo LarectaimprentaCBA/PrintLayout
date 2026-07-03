@@ -102,6 +102,7 @@ export default function PropertiesSidebar({
   onChangeWhiteBorder,
   onChangeBorderLine,
   onChangeBorderColor,
+  onToggleDoubleSided,
   onUpdateTemporal,
   onApplyContour,
   contourDirty = false,
@@ -716,8 +717,22 @@ export default function PropertiesSidebar({
             )}
             <div className="flex items-center justify-between">
               <dt className="text-ink-400">Doble faz</dt>
-              <dd className={template.doubleSided ? 'text-accent-400' : 'text-ink-500'}>
-                {template.doubleSided ? 'Sí' : 'No'}
+              <dd className="flex items-center gap-2">
+                <span className={template.doubleSided ? 'text-accent-400' : 'text-ink-500'}>
+                  {template.doubleSided ? 'Sí' : 'No'}
+                </span>
+                {onToggleDoubleSided && !template.pages && !template.dobble && (
+                  <button
+                    type="button"
+                    onClick={onToggleDoubleSided}
+                    title={template.doubleSided
+                      ? 'Quitar el dorso de esta plantilla'
+                      : 'Agregar un dorso (reverso) a esta plantilla'}
+                    className="rounded border border-ink-700 bg-ink-800 px-2 py-0.5 text-[10px] text-ink-100 hover:bg-ink-700"
+                  >
+                    {template.doubleSided ? 'Quitar' : 'Agregar'}
+                  </button>
+                )}
               </dd>
             </div>
             {(!template.temporal || template.sourceTemplateId) && (
