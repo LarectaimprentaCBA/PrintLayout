@@ -34,6 +34,7 @@ const { buildDobbleJob, dobbleGeometryFromTemplate, buildComboTemplate, dobbleCa
 const { computeBestGrid, generateCuts } = await import('../../lib/grid.js');
 const { pageBackground } = await import('../../lib/templates.js');
 const { validarReceta } = await import('../vendor/receta.js');
+const { renderDorsoSVG } = await import('../vendor/render.js');
 
 const receta = JSON.parse(readFileSync(join(__dirname, '../__fixtures__/mazo-n3.receta.json'), 'utf-8'));
 
@@ -113,6 +114,24 @@ function circleTemplate({ paperW = 210, paperH = 297, side, cutMargin, markMargi
   ok(s0.b64 === 'PDF_TOP' && s2.b64 === 'PDF_TOP' && s0.bgKey === '__tpl__', 'single-page: top-level en toda hoja');
   // Sin ningún fondo → null (no rompe).
   ok(pageBackground({ id: 'x', pages: [{ celdas: [] }] }, 0).b64 === null, 'sin fondo → null');
+}
+
+// 0d) Dorso: honra la imagen de fondo que trae la receta (motor 0.5.0). El
+//     spread que arma buildDobbleJob NO debe perder dorso.fondoImagen, y el
+//     motor la dibuja recortada a la forma + sangrado.
+{
+  console.log('# dorso con fondoImagen (motor 0.5.0)');
+  const IMG = 'data:image/png;base64,ZZZdorso';
+  const recetaDorso = { fondo: '#123456', tinta: '#ffffff', simbolo: '★', texto: 'DOBBLE', fondoImagen: IMG };
+  // Igual que buildDobbleJob: spread de receta.dorso + override SOLO del color.
+  const dorso = { ...recetaDorso, fondo: recetaDorso.fondo ?? '#2f6df6' };
+  ok(dorso.fondoImagen === IMG, 'el spread NO pierde dorso.fondoImagen');
+  const svg = renderDorsoSVG(dorso, {}, { bleedNorm: 0.1 });
+  ok(svg.includes('<image') && svg.includes(IMG), 'el SVG del dorso incluye la imagen de la receta');
+  ok(/clippath/i.test(svg), 'la imagen del dorso va recortada a la forma (clipPath)');
+  // Sin fondoImagen → solo color, sin <image> (comportamiento previo, sin regresión).
+  const svgSolo = renderDorsoSVG({ fondo: '#123456' }, {}, { bleedNorm: 0.1 });
+  ok(!svgSolo.includes('<image'), 'sin fondoImagen el dorso queda en color sólido (sin imagen)');
 }
 
 async function check(label, tpl, opts = {}) {

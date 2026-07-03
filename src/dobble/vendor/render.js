@@ -178,24 +178,42 @@ export function renderCartaSVG({ placements, simbolos, estilo, bleedNorm = 0, id
 
 /**
  * Renderiza el dorso de la carta a SVG (string), con la misma forma/viewBox.
- * @param {object} dorso  {fondo, tinta, simbolo, texto}
+ * @param {object} dorso  {fondo, tinta, simbolo, texto, fondoImagen}
+ *                        `fondoImagen` (dataUrl, opcional): imagen recortada a la
+ *                        forma de la carta cubriendo corte + sangrado, DETRÁS del
+ *                        anillo/símbolo/texto. null = solo color (igual que antes).
  * @param {object} estilo {forma, borde:{color,grosor}, radioBorde}
- * @param {object} [opc]  {bleedNorm, }
+ * @param {object} [opc]  {bleedNorm, idPrefijo}
  */
-export function renderDorsoSVG(dorso = {}, estilo, { bleedNorm = 0 } = {}) {
+export function renderDorsoSVG(dorso = {}, estilo, { bleedNorm = 0, idPrefijo = 'dorso' } = {}) {
   const e = normalizarEstilo(estilo);
   const borde = Math.max(0, e.bordeGrosor);
   const fondo = dorso.fondo ?? '#2f6df6';
   const tinta = dorso.tinta ?? '#ffffff';
   const simbolo = dorso.simbolo ?? '';
   const txt = dorso.texto ?? '';
+  // Imagen del DORSO: viene de `dorso`, no de `estilo` (e.fondoImagen es la cara).
+  const fondoImagen = dorso.fondoImagen ?? null;
   const ext = 1 + Math.max(0, bleedNorm);
   const vb = `${num(-ext)} ${num(-ext)} ${num(2 * ext)} ${num(2 * ext)}`;
 
+  const xlink = fondoImagen ? ' xmlns:xlink="http://www.w3.org/1999/xlink"' : '';
   const partes = [
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}" preserveAspectRatio="xMidYMid meet">`,
+    `<svg xmlns="http://www.w3.org/2000/svg"${xlink} viewBox="${vb}" preserveAspectRatio="xMidYMid meet">`,
     forma(e.forma, ext, e.radioBorde, ` fill="${attr(fondo)}"`),
   ];
+  // Imagen de fondo del dorso: cubre carta + sangrado (slice = cover), recortada
+  // a la forma exterior, sobre el color y detrás de anillo/símbolo/texto.
+  if (fondoImagen) {
+    const idClipBg = `${idPrefijo}-clipbg`;
+    partes.push(`<defs><clipPath id="${idClipBg}">${forma(e.forma, ext, e.radioBorde)}</clipPath></defs>`);
+    partes.push(
+      `<g clip-path="url(#${idClipBg})">` +
+        `<image href="${attr(fondoImagen)}" xlink:href="${attr(fondoImagen)}" ` +
+        `x="${num(-ext)}" y="${num(-ext)}" width="${num(2 * ext)}" height="${num(2 * ext)}" ` +
+        `preserveAspectRatio="xMidYMid slice"/></g>`
+    );
+  }
   if (borde > 0) {
     partes.push(
       forma(e.forma, 1 - borde / 2, e.radioBorde,

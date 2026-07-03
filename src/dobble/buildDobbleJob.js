@@ -310,6 +310,8 @@ export async function buildDobbleJob(receta, opts = {}) {
   let assignmentsBack = [];
   if (doubleSided) {
     const dorsoFondo = receta.dorso?.fondo ?? '#2f6df6'; // = default de renderDorsoSVG
+    // El spread conserva dorso.fondoImagen (solo pisamos el color de fondo): el
+    // motor 0.5.0 dibuja esa imagen en el dorso, recortada a la forma + sangrado.
     const dorso = { ...(receta.dorso || {}), fondo: dorsoFondo };
     const dorsoSvg = renderDorsoSVG(dorso, estiloDeReceta(carta), { bleedNorm });
     const dorsoData = await rasterizarSVG(dorsoSvg, pxCell, pxCell, dorsoFondo);
@@ -461,6 +463,8 @@ async function buildDobbleComboSpec(receta, opts = {}) {
   let assignmentsBack = [];
   if (doubleSided) {
     const dorsoFondo = receta.dorso?.fondo ?? '#2f6df6'; // = default de renderDorsoSVG
+    // El spread conserva dorso.fondoImagen (solo pisamos el color de fondo): el
+    // motor 0.5.0 la dibuja en el dorso, recortada a la forma + sangrado.
     const dorso = { ...(receta.dorso || {}), fondo: dorsoFondo };
     const dorsoSvg = renderDorsoSVG(dorso, estiloDeReceta(carta), { bleedNorm });
     const dorsoData = await rasterizarSVG(dorsoSvg, pxCell, pxCell, dorsoFondo);
