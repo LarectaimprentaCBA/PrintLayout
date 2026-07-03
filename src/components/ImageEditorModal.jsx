@@ -1144,10 +1144,63 @@ export default function ImageEditorModal({
                     </select>
                   </label>
                   {shrinkFillMode === 'edgeGrow' && (
-                    <p className="text-[10px] text-ink-500">
-                      Estira el borde real del diseño hacia afuera. Es el único que anda
-                      con recortes de <b>forma libre</b> / fondo transparente.
-                    </p>
+                    <div className="space-y-2 rounded border border-ink-800 bg-ink-950/40 p-2">
+                      <label className="block text-[10px] text-ink-400">
+                        Estilo de borde
+                        <select
+                          value={edgeGrowStyle}
+                          onChange={(e) => setEdgeGrowStyle(e.target.value)}
+                          className="mt-0.5 w-full rounded border border-ink-700 bg-ink-800 px-2 py-1 text-xs text-ink-100 outline-none focus:border-accent-500"
+                        >
+                          <option value="stretch">Estirar borde</option>
+                          <option value="replicate">Edge replicate (franja)</option>
+                          <option value="mirror">Espejo</option>
+                          <option value="color">Color sólido</option>
+                        </select>
+                      </label>
+                      {edgeGrowStyle === 'replicate' && (
+                        <label className="block text-[10px] text-ink-400">
+                          Franja: {stripPx} px
+                          <input
+                            type="range" min="2" max="32" step="1"
+                            value={stripPx}
+                            onChange={(e) => setStripPx(parseInt(e.target.value, 10))}
+                            className="mt-0.5 w-full"
+                          />
+                        </label>
+                      )}
+                      {edgeGrowStyle === 'color' && (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="color"
+                            value={color}
+                            onChange={(e) => setColor(e.target.value)}
+                            className="h-7 w-12 cursor-pointer rounded border border-ink-700 bg-ink-800"
+                          />
+                          <input
+                            type="text"
+                            value={color}
+                            onChange={(e) => setColor(e.target.value)}
+                            className="flex-1 rounded border border-ink-700 bg-ink-800 px-2 py-1 text-xs text-ink-100"
+                          />
+                          <button
+                            onClick={() => setPickingColor(!pickingColor)}
+                            className={`rounded border px-2 py-1 text-[10px] ${
+                              pickingColor
+                                ? 'border-accent-500 bg-accent-500/20 text-accent-300'
+                                : 'border-ink-700 text-ink-200 hover:bg-ink-800'
+                            }`}
+                            title="Pipeta: click sobre el preview para samplear color"
+                          >
+                            Pipeta
+                          </button>
+                        </div>
+                      )}
+                      <p className="text-[10px] text-ink-500">
+                        Estas versiones (estirar/franja/espejo/color) siguen el borde real del
+                        diseño, así andan con recortes de <b>forma libre</b> / fondo transparente.
+                      </p>
+                    </div>
                   )}
                   {shrinkFillMode === 'color' && (
                     <div className="flex items-center gap-2">
@@ -1267,7 +1320,7 @@ function methodConfig({ method, stripPx, color, shrinkPercent, shrinkFillMode, c
         fillOptions: shrinkFillMode === 'color'
           ? { color }
           : shrinkFillMode === 'edgeGrow'
-            ? { fillMode: 'stretch' } // sub-estilo de edgeGrow (estirar el borde)
+            ? { fillMode: edgeGrowStyle, color, stripPx } // sub-estilo de edgeGrow
             : { stripPx },
         offsetMm,
       };
