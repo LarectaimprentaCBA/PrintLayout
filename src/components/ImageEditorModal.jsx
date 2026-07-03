@@ -35,6 +35,8 @@ export default function ImageEditorModal({
   const [cropPercent, setCropPercent] = useState(0);
   // Estilo de relleno del modo 'radial' (sticker redondo).
   const [radialStyle, setRadialStyle] = useState('stretch'); // 'stretch'|'replicate'|'mirror'|'color'
+  // Estilo de relleno del modo 'edgeGrow' (recorte de forma libre).
+  const [edgeGrowStyle, setEdgeGrowStyle] = useState('stretch'); // 'stretch'|'color'
 
   // Estado de UI.
   const [previewUrl, setPreviewUrl] = useState(null);
@@ -214,7 +216,7 @@ export default function ImageEditorModal({
       const usedOffset = { x: imageOffsetMm.x, y: imageOffsetMm.y };
       try {
         const cfg = methodConfig({
-          method, stripPx, color, shrinkPercent, shrinkFillMode, centerRectMm, cropPercent, radialStyle,
+          method, stripPx, color, shrinkPercent, shrinkFillMode, centerRectMm, cropPercent, radialStyle, edgeGrowStyle,
           offsetMm: usedOffset,
         });
         const out = await extendWithMethod(
@@ -235,7 +237,7 @@ export default function ImageEditorModal({
       }
     }, 450);
     return () => debounceRef.current && clearTimeout(debounceRef.current);
-  }, [open, image, aw, ah, tw, th, method, stripPx, color, shrinkPercent, shrinkFillMode, centerRectMm, cropPercent, radialStyle, imageOffsetMm]);
+  }, [open, image, aw, ah, tw, th, method, stripPx, color, shrinkPercent, shrinkFillMode, centerRectMm, cropPercent, radialStyle, edgeGrowStyle, imageOffsetMm]);
 
   if (!open || !image) return null;
 
@@ -244,7 +246,7 @@ export default function ImageEditorModal({
     setBusy(true);
     try {
       const cfg = methodConfig({
-        method, stripPx, color, shrinkPercent, shrinkFillMode, centerRectMm, cropPercent,
+        method, stripPx, color, shrinkPercent, shrinkFillMode, centerRectMm, cropPercent, radialStyle, edgeGrowStyle,
         offsetMm: imageOffsetMm,
       });
       const out = await extendWithMethod(
@@ -909,6 +911,7 @@ export default function ImageEditorModal({
                 <option value="shrinkBleed">Encoger + bleed</option>
                 <option value="crop">Recortar bordes (zoom)</option>
                 <option value="radial">Radial (sticker redondo)</option>
+                <option value="edgeGrow">Ampliar bordes (recorte libre)</option>
               </select>
 
               {method === 'radial' && (
@@ -968,6 +971,55 @@ export default function ImageEditorModal({
                     Rellena lo transparente de afuera del círculo sin mover ni
                     achicar el diseño. Así el corte puede ir justo en el borde y
                     el desfase no deja blanco.
+                  </p>
+                </div>
+              )}
+
+              {method === 'edgeGrow' && (
+                <div className="mt-2 space-y-2">
+                  <label className="block text-[10px] text-ink-400">
+                    Relleno
+                    <select
+                      value={edgeGrowStyle}
+                      onChange={(e) => setEdgeGrowStyle(e.target.value)}
+                      className="mt-0.5 w-full rounded border border-ink-700 bg-ink-800 px-2 py-1 text-xs text-ink-100 outline-none focus:border-accent-500"
+                    >
+                      <option value="stretch">Estirar el borde hacia afuera</option>
+                      <option value="color">Color sólido</option>
+                    </select>
+                  </label>
+                  {edgeGrowStyle === 'color' && (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={color}
+                        onChange={(e) => setColor(e.target.value)}
+                        className="h-7 w-12 cursor-pointer rounded border border-ink-700 bg-ink-800"
+                      />
+                      <input
+                        type="text"
+                        value={color}
+                        onChange={(e) => setColor(e.target.value)}
+                        className="flex-1 rounded border border-ink-700 bg-ink-800 px-2 py-1 text-xs text-ink-100"
+                      />
+                      <button
+                        onClick={() => setPickingColor(!pickingColor)}
+                        className={`rounded border px-2 py-1 text-[10px] ${
+                          pickingColor
+                            ? 'border-accent-500 bg-accent-500/20 text-accent-300'
+                            : 'border-ink-700 text-ink-200 hover:bg-ink-800'
+                        }`}
+                        title="Pipeta: click sobre el preview para samplear color"
+                      >
+                        Pipeta
+                      </button>
+                    </div>
+                  )}
+                  <p className="text-[10px] text-ink-500">
+                    Para recortes de <b>forma libre</b> (o cualquier imagen con fondo
+                    transparente): estira el borde real del diseño hacia afuera —
+                    aunque el contorno sea irregular— sin mover ni achicar nada. Así
+                    el corte cae sobre tinta y el desfase no deja blanco.
                   </p>
                 </div>
               )}
@@ -1179,7 +1231,7 @@ export default function ImageEditorModal({
   );
 }
 
-function methodConfig({ method, stripPx, color, shrinkPercent, shrinkFillMode, centerRectMm, cropPercent, radialStyle, offsetMm }) {
+function methodConfig({ method, stripPx, color, shrinkPercent, shrinkFillMode, centerRectMm, cropPercent, radialStyle, edgeGrowStyle, offsetMm }) {
   switch (method) {
     case 'replicate':
       return { method, stripPx, offsetMm };
@@ -1199,6 +1251,8 @@ function methodConfig({ method, stripPx, color, shrinkPercent, shrinkFillMode, c
       return { method, cropPercent, offsetMm };
     case 'radial':
       return { method, radialStyle, stripPx, color, offsetMm };
+    case 'edgeGrow':
+      return { method, fillMode: edgeGrowStyle, color, offsetMm };
     case 'mirror':
     default:
       return { method: 'mirror', offsetMm };

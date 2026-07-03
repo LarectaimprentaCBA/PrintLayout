@@ -502,6 +502,97 @@ export async function extendRadial(
   return output(canvas, targetSizeMm);
 }
 
+// Ampliar bordes de un recorte de FORMA LIBRE (o cualquier imagen con
+// transparencia): rellena TODO lo transparente con el color del pixel opaco mas
+// cercano ("estirar" el borde real hacia afuera) — o con un color solido. A
+// diferencia de 'radial' (que tira rayos desde el centro y solo sirve para
+// formas redondas/convexas), esto anda con contornos arbitrarios y concavos: el
+// borde del diseno se extiende perpendicular hacia afuera, asi el corte por
+// contorno cae sobre tinta aunque el plotter se desfase. NO mueve ni achica el
+// diseno.
+//   fillMode 'stretch' — color del opaco mas cercano (default).
+//   fillMode 'color'   — color solido elegido.
+export async function extendEdgeGrow(
+  dataUrl, srcSizeMm, targetSizeMm,
+  { offsetMm, fillMode = 'stretch', color = '#ffffff' } = {},
+) {
+  const img = await loadImage(dataUrl);
+  const { canvasW, canvasH, drawW, drawH, drawX, drawY } =
+    computeLayout(img, srcSizeMm, targetSizeMm, offsetMm);
+  const { canvas, ctx } = makeCanvas(canvasW, canvasH);
+  ctx.drawImage(img, drawX, drawY, drawW, drawH);
+
+  const W = canvasW, H = canvasH, N = W * H;
+  const id = ctx.getImageData(0, 0, W, H);
+  const d = id.data;
+  const OPAQUE = 200; // umbral alpha: >= es "diseno", el resto se rellena
+
+  if (fillMode === 'color') {
+    const [cr, cg, cb] = hexToRgbTriplet(color);
+    for (let i = 0; i < N; i++) {
+      if (d[i * 4 + 3] >= OPAQUE) continue;
+      d[i * 4] = cr; d[i * 4 + 1] = cg; d[i * 4 + 2] = cb; d[i * 4 + 3] = 255;
+    }
+    ctx.putImageData(id, 0, 0);
+    return output(canvas, targetSizeMm);
+  }
+
+  // 'stretch': cada pixel transparente toma el color del opaco mas cercano.
+  growEdgesToTransparent(d, W, H, OPAQUE);
+  ctx.putImageData(id, 0, 0);
+  return output(canvas, targetSizeMm);
+}
+
+// PURO (sin canvas): rellena en su lugar cada pixel con alpha < `threshold` con
+// el RGB del pixel opaco mas cercano (y alpha 255). Transformada de distancia
+// por propagacion de "semilla" en dos pasadas (forward + backward) guardando la
+// coord del opaco mas cercano — O(N), aproximacion euclidiana suficiente para
+// estirar el color del borde de un recorte de forma libre hacia afuera. `data`
+// es el RGBA (Uint8ClampedArray/Uint8Array) de W×H. Devuelve `data`.
+export function growEdgesToTransparent(data, W, H, threshold = 200) {
+  const N = W * H;
+  const seedX = new Int32Array(N).fill(-1);
+  const seedY = new Int32Array(N).fill(-1);
+  for (let i = 0; i < N; i++) {
+    if (data[i * 4 + 3] >= threshold) { seedX[i] = i % W; seedY[i] = (i / W) | 0; }
+  }
+  const dist2 = (x, y, i) => {
+    const sx = seedX[i]; if (sx < 0) return Infinity;
+    const dx = x - sx, dy = y - seedY[i]; return dx * dx + dy * dy;
+  };
+  const consider = (x, y, i, ni) => {
+    const sx = seedX[ni]; if (sx < 0) return;
+    const dx = x - sx, dy = y - seedY[ni];
+    if (dx * dx + dy * dy < dist2(x, y, i)) { seedX[i] = sx; seedY[i] = seedY[ni]; }
+  };
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      if (x > 0) consider(x, y, i, i - 1);
+      if (y > 0) consider(x, y, i, i - W);
+      if (x > 0 && y > 0) consider(x, y, i, i - W - 1);
+      if (x < W - 1 && y > 0) consider(x, y, i, i - W + 1);
+    }
+  }
+  for (let y = H - 1; y >= 0; y--) {
+    for (let x = W - 1; x >= 0; x--) {
+      const i = y * W + x;
+      if (x < W - 1) consider(x, y, i, i + 1);
+      if (y < H - 1) consider(x, y, i, i + W);
+      if (x < W - 1 && y < H - 1) consider(x, y, i, i + W + 1);
+      if (x > 0 && y < H - 1) consider(x, y, i, i + W - 1);
+    }
+  }
+  for (let i = 0; i < N; i++) {
+    if (data[i * 4 + 3] >= threshold) continue;
+    const sx = seedX[i]; if (sx < 0) continue;
+    const si = seedY[i] * W + sx;
+    data[i * 4] = data[si * 4]; data[i * 4 + 1] = data[si * 4 + 1];
+    data[i * 4 + 2] = data[si * 4 + 2]; data[i * 4 + 3] = 255;
+  }
+  return data;
+}
+
 // ----------------------------------------------------------------------------
 // Dispatcher convenientecome — recibe { method, ...options } y aplica.
 // ----------------------------------------------------------------------------
@@ -517,6 +608,7 @@ export async function extendWithMethod(
     case 'shrinkBleed': return extendShrinkAndBleed(dataUrl, srcSizeMm, targetSizeMm, opts);
     case 'crop': return extendCrop(dataUrl, srcSizeMm, targetSizeMm, opts);
     case 'radial': return extendRadial(dataUrl, srcSizeMm, targetSizeMm, opts);
+    case 'edgeGrow': return extendEdgeGrow(dataUrl, srcSizeMm, targetSizeMm, opts);
     default:
       // Default = mirror (es el mas seguro para fotos reales).
       return extendMirror(dataUrl, srcSizeMm, targetSizeMm, opts);
