@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 
 const EMPTY = {
   supabaseUrl: '', serviceKey: '', pollSeconds: 60, outputDir: '', activo: false, modoEntrega: 'carpeta',
-  dobbleActive: false, dobbleComboTemplateId: '', dobbleOutputDir: '',
+  dobbleActive: false, dobbleComboTemplateId: '', dobbleOutputDir: '', dobbleMazoPdfMap: {},
 };
 
 export default function IntakePanelModal({ open, onClose, onPublishCatalog }) {
@@ -21,6 +21,7 @@ export default function IntakePanelModal({ open, onClose, onPublishCatalog }) {
   const [status, setStatus] = useState(null); // { activo, busy, pollSeconds, lastRun }
   const [logs, setLogs] = useState([]);
   const [comboTemplates, setComboTemplates] = useState([]); // combos (pages=[A,A,B])
+  const [mazoRows, setMazoRows] = useState([]); // catálogo: [{ mazoId, pdfPath }]
   const logBoxRef = useRef(null);
 
   const api = typeof window !== 'undefined' ? window.printlayout?.intake : null;
@@ -32,6 +33,7 @@ export default function IntakePanelModal({ open, onClose, onPublishCatalog }) {
     setFeedback(null);
     api.getConfig().then((c) => {
       setCfg({ ...EMPTY, ...(c || {}) });
+      setMazoRows(Object.entries((c && c.dobbleMazoPdfMap) || {}).map(([mazoId, pdfPath]) => ({ mazoId, pdfPath })));
       setStatus({ activo: !!c?.activo, pollSeconds: c?.pollSeconds ?? 60, busy: false });
       setLoaded(true);
     });
@@ -67,13 +69,30 @@ export default function IntakePanelModal({ open, onClose, onPublishCatalog }) {
 
   const patch = (p) => setCfg((c) => ({ ...c, ...p }));
 
+  // Filas del mapa mazo_id → PDF (catálogo).
+  const rowsToMap = (rows) => Object.fromEntries(
+    rows
+      .map((r) => [String(r.mazoId || '').trim(), String(r.pdfPath || '').trim()])
+      .filter(([k, v]) => k && v),
+  );
+  // Config que se persiste: incluye el mapa armado desde las filas.
+  const buildCfg = () => ({ ...cfg, dobbleMazoPdfMap: rowsToMap(mazoRows) });
+  const setMazoRow = (i, p) => setMazoRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...p } : r)));
+  const addMazoRow = () => setMazoRows((rows) => [...rows, { mazoId: '', pdfPath: '' }]);
+  const removeMazoRow = (i) => setMazoRows((rows) => rows.filter((_, idx) => idx !== i));
+  const chooseMazoPdf = async (i) => {
+    const r = await window.printlayout?.dobble?.choosePdf?.();
+    if (r?.ok && r.path) setMazoRow(i, { pdfPath: r.path });
+  };
+
   const save = async () => {
     setSaving(true);
     setFeedback(null);
     try {
-      const r = await api.setConfig(cfg);
+      const r = await api.setConfig(buildCfg());
       if (r?.ok) {
         setCfg({ ...EMPTY, ...r.config });
+        setMazoRows(Object.entries(r.config?.dobbleMazoPdfMap || {}).map(([mazoId, pdfPath]) => ({ mazoId, pdfPath })));
         setFeedback({ kind: 'ok', text: 'Configuración guardada.' });
       } else {
         setFeedback({ kind: 'err', text: r?.error || 'No se pudo guardar.' });
@@ -98,7 +117,7 @@ export default function IntakePanelModal({ open, onClose, onPublishCatalog }) {
     setFeedback(null);
     try {
       // Guardamos primero para probar con lo que está en pantalla.
-      await api.setConfig(cfg);
+      await api.setConfig(buildCfg());
       const r = await api.testConnection();
       setFeedback(
         r?.ok
@@ -114,7 +133,7 @@ export default function IntakePanelModal({ open, onClose, onPublishCatalog }) {
     setPolling(true);
     setFeedback(null);
     try {
-      await api.setConfig(cfg);
+      await api.setConfig(buildCfg());
       const r = await api.pollNow();
       setFeedback(
         r?.ok
@@ -248,7 +267,7 @@ export default function IntakePanelModal({ open, onClose, onPublishCatalog }) {
                 </span>
               </div>
 
-              {/* Pedidos Dobble (exportador TOTALMENTE automático) */}
+              {/* Pedidos busca2 (exportador TOTALMENTE automático) */}
               <div className="mt-3 rounded border border-accent-500/30 bg-accent-500/5 px-3 py-2 text-xs text-ink-300">
                 <label className="flex cursor-pointer items-center gap-2">
                   <input
@@ -258,15 +277,15 @@ export default function IntakePanelModal({ open, onClose, onPublishCatalog }) {
                     className="h-4 w-4 accent-accent-500"
                   />
                   <span>
-                    <span className="font-medium text-ink-100">Procesar pedidos Dobble</span>
+                    <span className="font-medium text-ink-100">Procesar pedidos busca2</span>
                     <span className="block text-[11px] text-ink-400">
-                      Baja la receta, posa el combo de 3 hojas, exporta el PDF doble faz a la carpeta y marca el pedido como procesado. Sin intervención.
+                      De los mazos del cliente arma el combo de 3 hojas y exporta el PDF; de los mazos del catálogo copia el PDF ya hecho. Todo a la carpeta y marca procesado, sin intervención.
                     </span>
                   </span>
                 </label>
 
                 <label className="mt-3 block">
-                  <span className="mb-1 block text-ink-300">Plantilla combo por defecto (3 hojas)</span>
+                  <span className="mb-1 block text-ink-300">Plantilla combo por defecto (mazos del cliente)</span>
                   <select
                     value={cfg.dobbleComboTemplateId || ''}
                     onChange={(e) => patch({ dobbleComboTemplateId: e.target.value })}
@@ -281,18 +300,18 @@ export default function IntakePanelModal({ open, onClose, onPublishCatalog }) {
                   </select>
                   {comboTemplates.length === 0 && (
                     <span className="mt-1 block text-[10px] text-amber-300">
-                      No hay combos guardados. Creá uno con "Importar mazo Dobble → + Combo 3 hojas…".
+                      No hay combos de 3 hojas guardados todavía.
                     </span>
                   )}
                 </label>
 
                 <label className="mt-3 block">
-                  <span className="mb-1 block text-ink-300">Carpeta de salida de los PDF Dobble</span>
+                  <span className="mb-1 block text-ink-300">Carpeta de salida de los PDF busca2</span>
                   <div className="flex gap-2">
                     <input
                       value={cfg.dobbleOutputDir || ''}
                       onChange={(e) => patch({ dobbleOutputDir: e.target.value })}
-                      placeholder="Ej: D:\Pedidos Dobble"
+                      placeholder="Ej: D:\Pedidos busca2"
                       className="w-full rounded border border-ink-700 bg-ink-800 px-3 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
                     />
                     <button
@@ -307,6 +326,52 @@ export default function IntakePanelModal({ open, onClose, onPublishCatalog }) {
                     El PDF se guarda como <b>PR-&lt;presupuesto&gt; - &lt;nombre del mazo&gt;.pdf</b>, sin abrir ni preguntar nada.
                   </span>
                 </label>
+
+                {/* Mazos del catálogo (PDF ya armado) → mapa mazo_id → PDF */}
+                <div className="mt-3 border-t border-ink-700/60 pt-3">
+                  <span className="mb-1 block font-medium text-ink-200">Mazos del catálogo (PDF ya armado)</span>
+                  <span className="mb-2 block text-[10px] text-ink-500">
+                    Para los mazos nuestros (ej. el mundialista): en vez de generar, se copia este PDF a la carpeta. Asociá cada <b>mazo_id</b> con su archivo PDF.
+                  </span>
+                  {mazoRows.map((row, i) => (
+                    <div key={i} className="mb-1.5 flex items-center gap-2">
+                      <input
+                        value={row.mazoId}
+                        onChange={(e) => setMazoRow(i, { mazoId: e.target.value })}
+                        placeholder="mazo_id"
+                        className="w-28 shrink-0 rounded border border-ink-700 bg-ink-800 px-2 py-1 text-xs text-ink-100 outline-none focus:border-accent-500"
+                      />
+                      <input
+                        value={row.pdfPath}
+                        onChange={(e) => setMazoRow(i, { pdfPath: e.target.value })}
+                        placeholder="Ruta del PDF…"
+                        className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1 text-xs text-ink-100 outline-none focus:border-accent-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => chooseMazoPdf(i)}
+                        className="shrink-0 rounded border border-ink-700 bg-ink-800 px-2 py-1 text-xs text-ink-100 hover:bg-ink-700"
+                      >
+                        PDF…
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeMazoRow(i)}
+                        title="Quitar"
+                        className="shrink-0 rounded border border-ink-700 px-2 py-1 text-xs text-ink-300 hover:bg-ink-700"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={addMazoRow}
+                    className="mt-1 rounded border border-ink-700 bg-ink-800 px-2 py-1 text-[11px] text-ink-200 hover:bg-ink-700"
+                  >
+                    + Agregar mazo
+                  </button>
+                </div>
               </div>
 
               <div className="mt-3 flex items-center gap-4">

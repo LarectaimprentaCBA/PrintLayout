@@ -1074,6 +1074,21 @@ ipcMain.handle('intake:poll-now', () => intakeService.pollNow());
 ipcMain.handle('intake:read-file', (_evt, localPath) => intakeService.readFile(localPath));
 ipcMain.handle('intake:order-built', (_evt, payload) => intakeService.orderBuilt(payload));
 ipcMain.handle('intake:dobble-order-built', (_evt, payload) => intakeService.dobbleOrderBuilt(payload));
+// Elegir el PDF ya armado de un mazo de catálogo (mapa mazo_id → PDF).
+ipcMain.handle('dobble:choose-pdf', async () => {
+  try {
+    const win = BrowserWindow.getFocusedWindow();
+    const r = await dialog.showOpenDialog(win, {
+      title: 'Elegí el PDF ya armado del mazo',
+      properties: ['openFile'],
+      filters: [{ name: 'PDF', extensions: ['pdf'] }],
+    });
+    if (r.canceled || !r.filePaths?.[0]) return { canceled: true };
+    return { ok: true, path: r.filePaths[0] };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
 // Guardado SILENCIOSO del PDF Dobble (sin diálogo): el exportador automático lo
 // deja directo en la carpeta configurada, nombrado "PR-<presupuesto> - <mazo>.pdf".
 ipcMain.handle('dobble:save-pdf-silent', (_evt, { dir, numeroPresupuesto, nombreMazo, bytes }) => {

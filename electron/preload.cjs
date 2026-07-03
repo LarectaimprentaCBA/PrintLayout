@@ -53,6 +53,8 @@ contextBridge.exposeInMainWorld('printlayout', {
     // automático. El main arma el nombre "PR-<presupuesto> - <mazo>.pdf".
     saveSilent: (dir, numeroPresupuesto, nombreMazo, bytes) =>
       ipcRenderer.invoke('dobble:save-pdf-silent', { dir, numeroPresupuesto, nombreMazo, bytes }),
+    // Elegir el PDF ya armado de un mazo de catálogo (mapa mazo_id → PDF).
+    choosePdf: () => ipcRenderer.invoke('dobble:choose-pdf'),
   },
   contour: {
     tracePotrace: (arrayBuffer, opts) =>

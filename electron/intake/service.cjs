@@ -16,6 +16,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const configStore = require('./config-store.cjs');
 const supabase = require('./supabase.cjs');
+const savePdf = require('./save-pdf.cjs');
 
 let win = null;
 let timer = null;
@@ -180,6 +181,27 @@ async function processDobbleOrder(cfg, order) {
   log(`Pedido Dobble ${order.numero_presupuesto || id}: receta${cajaLocal ? ' + caja' : ''} bajada, enviado a armar.`);
 }
 
+// Pedido de CATÁLOGO (mazo NUESTRO, ej. el mundialista): el PDF ya está armado.
+// NO baja receta/caja ni pasa por el renderer: copia el PDF local mapeado
+// (mazo_id → archivo) a la carpeta de salida con el nombre
+// "PR-<presupuesto> - <mazo>.pdf" y marca procesado en el acto. El mapa lo
+// configura Mariano en el panel de Pedidos (dobbleMazoPdfMap).
+async function processCatalogoOrder(cfg, order) {
+  const id = String(order.id);
+  const outDir = (cfg.dobbleOutputDir || '').trim();
+  if (!outDir) throw new Error('No hay carpeta de salida configurada.');
+  const map = (cfg.dobbleMazoPdfMap && typeof cfg.dobbleMazoPdfMap === 'object') ? cfg.dobbleMazoPdfMap : {};
+  const src = order.mazo_id != null ? map[String(order.mazo_id)] : null;
+  if (!src) throw new Error(`No hay PDF configurado para el mazo "${order.mazo_id}" (mapá mazo→PDF en Pedidos).`);
+  if (!fs.existsSync(src)) throw new Error(`El PDF configurado no existe: ${src}`);
+
+  const dest = path.join(outDir, savePdf.dobblePdfFileName(order.numero_presupuesto, order.nombre_mazo));
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.copyFileSync(src, dest);
+  await supabase.markProcessedDobble(cfg, id);
+  log(`Pedido de catálogo ${order.numero_presupuesto || id}: copiado "${path.basename(dest)}" y marcado procesado.`);
+}
+
 // Un ciclo de poll de pedidos Dobble. Igual que `tick` pero contra pedido_dobble
 // y gateado por `dobbleActive` (toggle propio). `manual` ignora el flag activo.
 async function tickDobble(manual = false) {
@@ -197,6 +219,19 @@ async function tickDobble(manual = false) {
     const now = Date.now();
     for (const order of orders) {
       const id = String(order.id);
+      // Mazo NUESTRO (origen 'catalogo'): copiar el PDF ya armado, sin bajar nada
+      // ni renderizar. Se resuelve entero acá y se marca procesado en el acto.
+      if (order.origen === 'catalogo') {
+        found += 1;
+        try {
+          await processCatalogoOrder(cfg, order);
+        } catch (err) {
+          log(`Error copiando el pedido de catálogo ${order.numero_presupuesto || id}: ${err.message}`, 'error');
+        }
+        continue;
+      }
+      // Mazo del cliente (origen 'propio' u otro): generar sobre la plantilla
+      // combo (baja receta/caja → renderer posa/exporta → confirma).
       const entry = inFlightDobble.get(id);
       if (entry && now - entry.sentAt < STALE_MS) continue; // ya en vuelo
       found += 1;

@@ -1789,7 +1789,7 @@ export default function App() {
       return 'image/jpeg';
     };
     try {
-      setToast({ kind: 'info', text: `Procesando pedido Dobble ${label}…` });
+      setToast({ kind: 'info', text: `Procesando pedido busca2 ${label}…` });
       const cfg = await window.printlayout.intake.getConfig().catch(() => null);
       const comboId = cfg?.dobbleComboTemplateId || '';
       const outDir = (cfg?.dobbleOutputDir || '').replace(/[\\/]+$/, '');
@@ -1797,8 +1797,8 @@ export default function App() {
 
       // Sin combo o sin carpeta configurados no podemos exportar: NO marcamos
       // procesado (se reintenta cuando Mariano configure), avisamos.
-      if (!combo) throw new Error('No hay plantilla combo Dobble configurada (elegila en Pedidos).');
-      if (!outDir) throw new Error('No hay carpeta de salida Dobble configurada (elegila en Pedidos).');
+      if (!combo) throw new Error('No hay plantilla combo busca2 configurada (elegila en Pedidos).');
+      if (!outDir) throw new Error('No hay carpeta de salida busca2 configurada (elegila en Pedidos).');
 
       // 1) Leer receta.json (+ caja) desde temp (el main las bajó).
       const recetaBytes = await window.printlayout.intake.readFile(order.recetaPath);
@@ -1838,17 +1838,17 @@ export default function App() {
       await window.printlayout.intake.dobbleOrderBuilt({ id, ok: true });
       try {
         // eslint-disable-next-line no-new
-        new Notification('Pedido Dobble procesado', {
+        new Notification('Pedido busca2 procesado', {
           body: `${label}: ${spec.minPages} hoja(s) guardadas en la carpeta.${warning ? ' (aviso: ' + warning + ')' : ''}`,
         });
       } catch (_) { /* sin permiso de notificaciones */ }
-      setToast({ kind: 'success', text: `${label}: PDF Dobble guardado (${fileName})${warning ? ' · ' + warning : ''}.` });
+      setToast({ kind: 'success', text: `${label}: PDF busca2 guardado (${fileName})${warning ? ' · ' + warning : ''}.` });
     } catch (err) {
       console.error('[intake-dobble] armado falló:', err);
       try {
         await window.printlayout.intake.dobbleOrderBuilt({ id, ok: false, error: err.message });
       } catch (_) { /* ignore */ }
-      setToast({ kind: 'error', text: `Error procesando el pedido Dobble ${label}: ${err.message}` });
+      setToast({ kind: 'error', text: `Error procesando el pedido busca2 ${label}: ${err.message}` });
     }
   }, [templates]);
 

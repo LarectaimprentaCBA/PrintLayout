@@ -35,6 +35,9 @@ const DEFAULTS = {
   dobbleComboTemplateId: '',
   // Carpeta donde se deja el PDF final (doble faz) de cada pedido Dobble.
   dobbleOutputDir: '',
+  // Mazos NUESTROS (origen 'catalogo'): mapa mazo_id → ruta del PDF ya armado.
+  // En vez de generar, se copia ese PDF a la carpeta de salida.
+  dobbleMazoPdfMap: {},
 };
 
 function getFilePath() {
@@ -58,6 +61,13 @@ function sanitize(cfg) {
     dobbleActive: !!c.dobbleActive,
     dobbleComboTemplateId: typeof c.dobbleComboTemplateId === 'string' ? c.dobbleComboTemplateId : '',
     dobbleOutputDir: typeof c.dobbleOutputDir === 'string' ? c.dobbleOutputDir : '',
+    dobbleMazoPdfMap: (c.dobbleMazoPdfMap && typeof c.dobbleMazoPdfMap === 'object' && !Array.isArray(c.dobbleMazoPdfMap))
+      ? Object.fromEntries(
+        Object.entries(c.dobbleMazoPdfMap)
+          .filter(([, v]) => typeof v === 'string' && v.trim())
+          .map(([k, v]) => [String(k), v]),
+      )
+      : {},
   };
 }
 
