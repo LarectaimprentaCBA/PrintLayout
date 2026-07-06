@@ -203,6 +203,29 @@ async function main() {
   ok(savedBad.dobbleBackMirror === 'x', "saneo: espejo inválido → 'x'");
   ok(savedBad.dobbleBackRotate180 === false, 'saneo: rotar 0 → false');
 
+  // ============ FASE D: límite de reintentos (OPS-02) ============
+  // Un pedido que falla el armado repetidamente NO debe reintentarse en loop:
+  // tras MAX_ATTEMPTS (=5) queda "en error" (poisoned) y se publica en el panel
+  // vía status.errored. "Buscar ahora" (pollNow) limpia ese estado y reintenta.
+  console.log('# D) límite de reintentos: pedido que falla queda "en error"');
+  const badId = 'uuid-bad-1';
+  const statusHasErrored = () => [...events.filter((e) => e.ch === 'intake:status')]
+    .reverse().find((e) => Array.isArray(e.payload?.errored));
+  for (let i = 0; i < 5; i++) {
+    // El renderer confirma que el armado falló → cuenta como 1 fallo.
+    // eslint-disable-next-line no-await-in-loop
+    await service.dobbleOrderBuilt({ id: badId, ok: false, error: 'armado roto' });
+  }
+  const lastErrored = statusHasErrored();
+  ok(lastErrored && lastErrored.payload.errored.some((x) => x.id === badId),
+    'tras 5 fallos el pedido aparece "en error" (status.errored)');
+  // "Buscar ahora" limpia el estado de error (reintento manual).
+  pending = [];
+  await service.pollNow();
+  const afterReset = statusHasErrored();
+  ok(afterReset && afterReset.payload.errored.length === 0,
+    '"Buscar ahora" limpia los pedidos en error');
+
   finish();
 }
 

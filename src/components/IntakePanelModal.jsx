@@ -438,6 +438,12 @@ export default function IntakePanelModal({ open, onClose, onPublishCatalog }) {
                     último: {new Date(status.lastRun).toLocaleTimeString()}
                   </span>
                 )}
+                {Array.isArray(status?.errored) && status.errored.length > 0 && (
+                  <div className="mt-1 text-amber-300">
+                    ⚠ {status.errored.length} pedido(s) con error — pausados para no reintentar en loop.
+                    Corregí la config (p. ej. mapeá el mazo→PDF que falte) y apretá “Buscar ahora”.
+                  </div>
+                )}
               </div>
 
               {/* Log */}

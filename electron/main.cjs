@@ -560,12 +560,15 @@ ipcMain.handle('pdf:read-extracted-image', async (_evt, payload) => {
   try {
     const filePath = payload?.path;
     if (!filePath) return { ok: false, error: 'path requerido' };
-    const normalized = path.normalize(filePath);
-    const tmpRoot = path.normalize(os.tmpdir());
-    if (!normalized.startsWith(tmpRoot)) {
+    // Exigir separador: startsWith(root) a secas dejaría pasar una carpeta
+    // hermana como "<tmp>-otra". Aceptar solo el root o algo dentro de él
+    // (mismo patrón que intake/service.cjs readFile).
+    const root = path.resolve(os.tmpdir());
+    const resolved = path.resolve(filePath);
+    if (resolved !== root && !resolved.startsWith(root + path.sep)) {
       return { ok: false, error: 'path fuera de tmpdir' };
     }
-    const buf = fs.readFileSync(normalized);
+    const buf = fs.readFileSync(resolved);
     return { ok: true, bytes: buf };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -576,10 +579,10 @@ ipcMain.handle('pdf:cleanup-extracted', async (_evt, payload) => {
   try {
     const dir = payload?.tmpDir;
     if (!dir) return { ok: false };
-    const normalized = path.normalize(dir);
-    const tmpRoot = path.normalize(os.tmpdir());
-    if (!normalized.startsWith(tmpRoot)) return { ok: false };
-    fs.rmSync(normalized, { recursive: true, force: true });
+    const root = path.resolve(os.tmpdir());
+    const resolved = path.resolve(dir);
+    if (resolved !== root && !resolved.startsWith(root + path.sep)) return { ok: false };
+    fs.rmSync(resolved, { recursive: true, force: true });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err.message };

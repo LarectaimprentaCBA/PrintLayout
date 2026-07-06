@@ -32,6 +32,73 @@ const inFlightDobble = new Map();
 const INITIAL_DELAY_MS = 4000; // dar tiempo a que el renderer monte y suscriba
 const STALE_MS = 5 * 60 * 1000;
 
+// --- Reintentos con backoff (evita el loop de re-descarga infinita) ---
+// Un pedido que falla siempre (foto corrupta, mazo sin PDF mapeado, etc.) no se
+// marca procesado, así que sin control se reintentaría —y en fotos/dobble se
+// RE-BAJARÍA todo— en cada ciclo para siempre. Llevamos un contador por id:
+// tras cada fallo esperamos un backoff exponencial antes de reintentar, y tras
+// MAX_ATTEMPTS el pedido queda "en error" y NO se reintenta hasta que el
+// operador reconfigure (setConfig) o apriete "Buscar ahora" (pollNow).
+const MAX_ATTEMPTS = 5;
+const RETRY_BASE_MS = 60 * 1000;      // 1 min tras el 1er fallo
+const RETRY_MAX_MS = 30 * 60 * 1000;  // techo del backoff
+// id → { count, nextAt, lastError, poisoned, numero }
+const attempts = new Map();
+
+// ¿Saltear este pedido en este ciclo? true si está "en error" (poisoned) o si
+// todavía no venció su backoff.
+function shouldSkip(id, now) {
+  const a = attempts.get(id);
+  if (!a) return false;
+  if (a.poisoned) return true;
+  return now < a.nextAt;
+}
+
+// Registra un fallo del pedido: sube el contador, programa el próximo intento
+// (backoff) o lo marca "en error" tras MAX_ATTEMPTS (log una sola vez).
+function recordFailure(id, numero, error) {
+  const a = attempts.get(id) || { count: 0, nextAt: 0, poisoned: false, numero: null };
+  a.count += 1;
+  a.lastError = error;
+  if (numero != null) a.numero = numero;
+  if (a.count >= MAX_ATTEMPTS) {
+    if (!a.poisoned) {
+      a.poisoned = true;
+      log(`Pedido ${a.numero || id} quedó EN ERROR tras ${a.count} intentos: ${error}. `
+        + 'No se reintenta hasta reconfigurar o apretar "Buscar ahora".', 'error');
+    }
+  } else {
+    const backoff = Math.min(RETRY_BASE_MS * (2 ** (a.count - 1)), RETRY_MAX_MS);
+    a.nextAt = Date.now() + backoff;
+    log(`Pedido ${a.numero || id}: intento ${a.count}/${MAX_ATTEMPTS} falló (${error}). `
+      + `Reintenta en ${Math.round(backoff / 1000)}s.`, 'warn');
+  }
+  attempts.set(id, a);
+  emitErrored();
+}
+
+// Un pedido salió bien: se olvida su historial de fallos.
+function recordSuccess(id) {
+  if (attempts.delete(id)) emitErrored();
+}
+
+// Da una chance limpia a TODOS los pedidos (reconfiguración o "Buscar ahora").
+function resetAttempts() {
+  if (attempts.size) {
+    attempts.clear();
+    emitErrored();
+  }
+}
+
+// Publica al panel la lista de pedidos "en error" (para mostrarlos, no en el log).
+function emitErrored() {
+  const errored = [];
+  for (const [id, a] of attempts) {
+    if (a.poisoned) errored.push({ id, numero: a.numero, error: a.lastError });
+  }
+  status({ errored });
+}
+
 function emit(channel, payload) {
   try {
     if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
@@ -54,6 +121,9 @@ function getConfig() {
 
 function setConfig(patch) {
   const cfg = configStore.save(patch);
+  // El operador cambió algo (p.ej. mapeó un mazo→PDF que faltaba): dale una
+  // chance limpia a los pedidos que estaban en backoff o en error.
+  resetAttempts();
   reschedule(cfg);
   return cfg;
 }
@@ -123,7 +193,7 @@ async function processOrder(cfg, order) {
     outItems.push({ tamano: item?.tamano || null, fotos: outFotos });
   }
 
-  inFlight.set(String(order.id), { sentAt: Date.now(), paths: allPaths, tmpDir: orderDir });
+  inFlight.set(String(order.id), { sentAt: Date.now(), paths: allPaths, tmpDir: orderDir, numero: order.numero_presupuesto || null });
   emit('intake:order-ready', {
     id: order.id,
     numero_presupuesto: order.numero_presupuesto || null,
@@ -167,7 +237,7 @@ async function processDobbleOrder(cfg, order) {
     }
   }
 
-  inFlightDobble.set(id, { sentAt: Date.now(), paths, tmpDir: orderDir });
+  inFlightDobble.set(id, { sentAt: Date.now(), paths, tmpDir: orderDir, numero: order.numero_presupuesto || null });
   emit('intake:dobble-order-ready', {
     id: order.id,
     numero_presupuesto: order.numero_presupuesto || null,
@@ -226,22 +296,27 @@ async function tickDobble(manual = false) {
       // Mazo NUESTRO (origen 'catalogo'): copiar el PDF ya armado, sin bajar nada
       // ni renderizar. Se resuelve entero acá y se marca procesado en el acto.
       if (order.origen === 'catalogo') {
+        if (shouldSkip(id, now)) continue; // en error o esperando backoff
         found += 1;
         try {
           await processCatalogoOrder(cfg, order);
+          recordSuccess(id);
         } catch (err) {
+          recordFailure(id, order.numero_presupuesto, err.message);
           log(`Error copiando el pedido de catálogo ${order.numero_presupuesto || id}: ${err.message}`, 'error');
         }
         continue;
       }
       // Mazo del cliente (origen 'propio' u otro): generar sobre la plantilla
       // combo (baja receta/caja → renderer posa/exporta → confirma).
+      if (shouldSkip(id, now)) continue; // en error o esperando backoff
       const entry = inFlightDobble.get(id);
       if (entry && now - entry.sentAt < STALE_MS) continue; // ya en vuelo
       found += 1;
       try {
         await processDobbleOrder(cfg, order);
       } catch (err) {
+        recordFailure(id, order.numero_presupuesto, err.message);
         log(`Error bajando el pedido Dobble ${order.numero_presupuesto || id}: ${err.message}`, 'error');
       }
     }
@@ -290,12 +365,14 @@ async function tick(manual = false) {
     const now = Date.now();
     for (const order of orders) {
       const id = String(order.id);
+      if (shouldSkip(id, now)) continue; // en error o esperando backoff
       const entry = inFlight.get(id);
       if (entry && now - entry.sentAt < STALE_MS) continue; // ya en vuelo
       found += 1;
       try {
         await processOrder(cfg, order);
       } catch (err) {
+        recordFailure(id, order.numero_presupuesto, err.message);
         log(`Error bajando el pedido ${order.numero_presupuesto || id}: ${err.message}`, 'error');
       }
     }
@@ -339,6 +416,9 @@ function start(browserWin) {
 }
 
 async function pollNow() {
+  // "Buscar ahora" = reintento manual: limpia backoff/errores para que los
+  // pedidos que estaban esperando o "en error" se reintenten en el acto.
+  resetAttempts();
   return pollBoth(true);
 }
 
@@ -385,7 +465,8 @@ async function orderBuilt(payload) {
 
   if (payload.ok === false) {
     inFlight.delete(id);
-    log(`El armado del pedido ${id} falló: ${payload.error || 'sin detalle'}. Se reintentará.`, 'error');
+    recordFailure(id, entry?.numero, payload.error || 'sin detalle');
+    log(`El armado del pedido ${id} falló: ${payload.error || 'sin detalle'}.`, 'error');
     return { ok: true };
   }
 
@@ -408,6 +489,7 @@ async function orderBuilt(payload) {
     /* ignore */
   }
   inFlight.delete(id);
+  recordSuccess(id);
   log(`Pedido ${id} procesado y limpiado.`);
   return { ok: true };
 }
@@ -422,7 +504,8 @@ async function dobbleOrderBuilt(payload) {
 
   if (payload.ok === false) {
     inFlightDobble.delete(id);
-    log(`El armado del pedido Dobble ${id} falló: ${payload.error || 'sin detalle'}. Se reintentará.`, 'error');
+    recordFailure(id, entry?.numero, payload.error || 'sin detalle');
+    log(`El armado del pedido Dobble ${id} falló: ${payload.error || 'sin detalle'}.`, 'error');
     return { ok: true };
   }
 
@@ -445,6 +528,7 @@ async function dobbleOrderBuilt(payload) {
     /* ignore */
   }
   inFlightDobble.delete(id);
+  recordSuccess(id);
   log(`Pedido Dobble ${id} procesado y limpiado.`);
   return { ok: true };
 }
