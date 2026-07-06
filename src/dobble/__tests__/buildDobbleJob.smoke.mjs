@@ -32,7 +32,7 @@ globalThis.document = {
 
 const { buildDobbleJob, dobbleGeometryFromTemplate, buildComboTemplate, dobbleCardCapacity, estiloConFondo } = await import('../buildDobbleJob.js');
 const { computeBestGrid, generateCuts } = await import('../../lib/grid.js');
-const { pageBackground } = await import('../../lib/templates.js');
+const { pageBackground, mirrorCellsForBack } = await import('../../lib/templates.js');
 const { validarReceta } = await import('../vendor/receta.js');
 const { renderDorsoSVG } = await import('../vendor/render.js');
 
@@ -134,6 +134,29 @@ function circleTemplate({ paperW = 210, paperH = 297, side, cutMargin, markMargi
   ok(!svgSolo.includes('<image'), 'sin fondoImagen el dorso queda en color sólido (sin imagen)');
 }
 
+// 0e) Ubicación del dorso: mirrorCellsForBack con eje 'x' (izquierda-derecha).
+//     El dorso de cada carta cae en la posición espejada en X, MISMA fila (Y),
+//     así queda detrás de su frente al voltear la hoja por el lado largo. Es la
+//     geometría del fix del combo automático de busca2.
+{
+  console.log('# mirrorCellsForBack eje x (dorso detrás del frente)');
+  const W = 210, H = 297;
+  const cells = [
+    { id: 1, x: 10, y: 20, w: 65, h: 65 },
+    { id: 2, x: 120, y: 20, w: 65, h: 65 },
+    { id: 3, x: 10, y: 150, w: 65, h: 65 },
+  ];
+  const back = mirrorCellsForBack(cells, W, H, 'x');
+  ok(back.length === cells.length && back.every((c, i) => c.id === cells[i].id), 'eje x conserva orden e ids (empareja frente↔dorso)');
+  ok(back[0].x === W - 10 - 65 && back[0].y === 20, 'eje x: (x,y)→(W-x-w, y) — misma fila (celda 1)');
+  ok(back[1].x === W - 120 - 65 && back[1].y === 20, 'eje x: espeja X, conserva Y (celda 2)');
+  ok(back[2].x === W - 10 - 65 && back[2].y === 150, 'eje x: no toca Y aunque cambie de fila (celda 3)');
+  ok(back.every((c, i) => c.w === cells[i].w && c.h === cells[i].h), 'eje x conserva tamaño (w,h)');
+  // Contraste: eje 'y' espejaría la Y (arriba-abajo) y dejaría la X — el bug.
+  const backY = mirrorCellsForBack(cells, W, H, 'y');
+  ok(backY[0].x === 10 && backY[0].y === H - 20 - 65, 'eje y (contraste): espeja Y, conserva X');
+}
+
 async function check(label, tpl, opts = {}) {
   const cartas = receta.cartas.length;
   const geo = dobbleGeometryFromTemplate(tpl);
@@ -221,6 +244,14 @@ async function checkComboBuild() {
   if (!combo) return;
   ok(combo.pages.length === 3, 'pages.length=3');
   ok(combo.doubleSided === true, 'combo doubleSided');
+  // Ubicación del dorso: default "libro" (espejo izquierda-derecha, sin rotar).
+  // Sin esto, backMirrorAxis() caería al default 'y' y el dorso quedaría mal
+  // ubicado en el PDF automático (no detrás de su frente).
+  ok(combo.backMirror === 'x', 'combo backMirror=x (dorso izquierda-derecha por default)');
+  ok(combo.backRotate180 === false, 'combo backRotate180=false por default');
+  // Se puede forzar 'y' + rotar por opción (el otro volteo válido, lado corto).
+  const { template: comboY } = buildComboTemplate(A, B, { name: 'Y', backMirror: 'y', backRotate180: true });
+  ok(comboY.backMirror === 'y' && comboY.backRotate180 === true, 'buildComboTemplate acepta backMirror/backRotate180 por opción');
   ok(combo.pages[0].bgKey === 'A' && combo.pages[1].bgKey === 'A' && combo.pages[2].bgKey === 'B', 'bgKey A,A,B');
   ok(combo.pages[0].pdfBase64 === 'PDF_A' && combo.pages[2].pdfBase64 === 'PDF_B', 'pdfBase64 per-hoja A/B');
   ok(combo.pages[0].celdas.every((c) => c.role === 'card'), 'A: todas card');

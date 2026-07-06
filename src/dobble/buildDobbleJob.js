@@ -194,7 +194,7 @@ export function dobbleCardCapacity(template) {
 // por definición, la hoja de cartas): las celdas del tamaño de la carta → 'card';
 // las de otro tamaño (la caja) → 'caja' (en blanco en el MVP). Es dato explícito
 // horneado en `cell.role`, no una heurística en tiempo de posado.
-export function buildComboTemplate(A, B, { name, categoria } = {}) {
+export function buildComboTemplate(A, B, { name, categoria, backMirror = 'x', backRotate180 = false } = {}) {
   if (!A || !B) return { error: 'Faltan las dos plantillas (A = cartas, B = cartas+caja).' };
   const cardRef = firstCardCell(A);
   if (!cardRef) return { error: 'La plantilla A (hoja de cartas) no tiene celdas de carta.' };
@@ -221,6 +221,12 @@ export function buildComboTemplate(A, B, { name, categoria } = {}) {
     pageCount: 3,
     pages: [pageOf(A, 'A'), pageOf(A, 'A'), pageOf(B, 'B')],
     doubleSided: true,
+    // Espejo/rotación del DORSO (independientes). Default "libro": izquierda-
+    // derecha ('x') y sin rotar, que es lo validado por el usuario. Sin fijarlos,
+    // backMirrorAxis() caía al default 'y' (arriba-abajo) y el dorso del combo
+    // automático quedaba mal ubicado (no detrás de su frente).
+    backMirror: backMirror === 'y' ? 'y' : 'x',
+    backRotate180: !!backRotate180,
     comboDobble: { aName: A.name, bName: B.name },
   };
   return { template };

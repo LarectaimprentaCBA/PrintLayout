@@ -62,10 +62,13 @@ const electronStub = {
   net: { fetch: async () => { throw new Error('sin red en el test'); } },
 };
 
+// Con bypassConfigMock=true, config-store.cjs se carga REAL (para probar sus
+// DEFAULTS/saneo); en el resto del test va mockeado (configStub).
+let bypassConfigMock = false;
 const origLoad = Module._load;
 Module._load = function (request, parent, isMain) {
   if (request === 'electron') return electronStub;
-  if (request.endsWith('config-store.cjs')) return configStub;
+  if (!bypassConfigMock && request.endsWith('config-store.cjs')) return configStub;
   if (request.endsWith('supabase.cjs')) return supaStub;
   return origLoad.apply(this, arguments);
 };
@@ -182,6 +185,23 @@ async function main() {
   await service.pollNow();
   ok(!fs.existsSync(path.join(OUT, 'PR-778 - Mundialista.pdf')), 'sin PDF mapeado no copia nada');
   ok(calls.mark.length === markBefore3, 'sin PDF mapeado NO marca procesado (se reintenta)');
+
+  // ============ FASE C: config del ESPEJO/ROTACIÓN del dorso ============
+  // La ubicación del dorso del combo automático es self-service: la config trae
+  // dobbleBackMirror ('x' = "libro", default) y dobbleBackRotate180 (false), y
+  // los sanea. Probamos el config-store REAL (bypass del mock).
+  console.log('# C) config del espejo/rotación del dorso (config-store real)');
+  bypassConfigMock = true;
+  const realCfg = require('../config-store.cjs');
+  bypassConfigMock = false;
+  ok(realCfg.DEFAULTS.dobbleBackMirror === 'x', "default dobbleBackMirror = 'x' (libro / lado largo)");
+  ok(realCfg.DEFAULTS.dobbleBackRotate180 === false, 'default dobbleBackRotate180 = false');
+  const savedY = realCfg.save({ dobbleBackMirror: 'y', dobbleBackRotate180: true });
+  ok(savedY.dobbleBackMirror === 'y' && savedY.dobbleBackRotate180 === true, "guarda 'y' + rotar=true (volteo por lado corto)");
+  ok(realCfg.load().dobbleBackMirror === 'y', 'persiste el espejo elegido');
+  const savedBad = realCfg.save({ dobbleBackMirror: 'zzz', dobbleBackRotate180: 0 });
+  ok(savedBad.dobbleBackMirror === 'x', "saneo: espejo inválido → 'x'");
+  ok(savedBad.dobbleBackRotate180 === false, 'saneo: rotar 0 → false');
 
   finish();
 }

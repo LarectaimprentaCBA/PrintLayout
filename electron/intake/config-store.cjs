@@ -6,7 +6,8 @@
 // de configs locales).
 //
 // Forma: { supabaseUrl, serviceKey, pollSeconds, outputDir, activo, laRecta,
-//          modoEntrega, dobbleActive, dobbleComboTemplateId, dobbleOutputDir }.
+//          modoEntrega, dobbleActive, dobbleComboTemplateId, dobbleOutputDir,
+//          dobbleBackMirror, dobbleBackRotate180 }.
 
 const { app } = require('electron');
 const fs = require('node:fs');
@@ -38,6 +39,12 @@ const DEFAULTS = {
   // Mazos NUESTROS (origen 'catalogo'): mapa mazo_id → ruta del PDF ya armado.
   // En vez de generar, se copia ese PDF a la carpeta de salida.
   dobbleMazoPdfMap: {},
+  // Ubicación del DORSO en el doble faz del combo automático (mazos del cliente).
+  // Espejo: 'x' = izquierda-derecha ("libro", voltea por el lado largo, default);
+  // 'y' = arriba-abajo (voltea por el lado corto). Rotar 180° es independiente.
+  // El combo guardado puede no traer estos campos → se estampan al posar.
+  dobbleBackMirror: 'x',
+  dobbleBackRotate180: false,
 };
 
 function getFilePath() {
@@ -68,6 +75,8 @@ function sanitize(cfg) {
           .map(([k, v]) => [String(k), v]),
       )
       : {},
+    dobbleBackMirror: c.dobbleBackMirror === 'y' ? 'y' : 'x',
+    dobbleBackRotate180: !!c.dobbleBackRotate180,
   };
 }
 

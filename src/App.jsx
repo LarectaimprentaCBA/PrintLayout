@@ -1140,7 +1140,9 @@ export default function App() {
     // Doble faz: NO horneamos las celdas del dorso. Se derivan al vuelo desde
     // `celdas` espejando segun backMirror (cellPositions/mirrorCellsForBack).
     // Posicion (backMirror) y rotacion (backRotate180) son INDEPENDIENTES y se
-    // ajustan con dos toggles en la UI. Default: espejo arriba-abajo, sin rotar.
+    // ajustan con dos toggles en la UI. Default: espejo izquierda-derecha
+    // ("libro", lo validado por el usuario), sin rotar. Mismo default que el
+    // toggle de doble faz y que el combo automático.
     const tpl = {
       name: doubleSided ? 'Grilla rápida doble faz' : 'Grilla rápida',
       pdfBase64: null,
@@ -1154,7 +1156,7 @@ export default function App() {
       markMarginMm,
       cutShape,
       doubleSided,
-      backMirror: doubleSided ? 'y' : undefined,
+      backMirror: doubleSided ? 'x' : undefined,
       backRotate180: doubleSided ? false : undefined,
       singlePage: true,
       // Guardamos los parámetros crudos para poder re-editar medidas exacto.
@@ -1818,12 +1820,22 @@ export default function App() {
       const cfg = await window.printlayout.intake.getConfig().catch(() => null);
       const comboId = cfg?.dobbleComboTemplateId || '';
       const outDir = (cfg?.dobbleOutputDir || '').replace(/[\\/]+$/, '');
-      const combo = templates.find((t) => t.id === comboId) || null;
+      const comboBase = templates.find((t) => t.id === comboId) || null;
 
       // Sin combo o sin carpeta configurados no podemos exportar: NO marcamos
       // procesado (se reintenta cuando Mariano configure), avisamos.
-      if (!combo) throw new Error('No hay plantilla combo busca2 configurada (elegila en Pedidos).');
+      if (!comboBase) throw new Error('No hay plantilla combo busca2 configurada (elegila en Pedidos).');
       if (!outDir) throw new Error('No hay carpeta de salida busca2 configurada (elegila en Pedidos).');
+
+      // Estampar el espejo/rotación del DORSO desde la config (default 'x' =
+      // "libro", sin rotar). El combo guardado puede haberse creado antes de este
+      // fix y NO traer backMirror → backMirrorAxis() caería al default 'y' y el
+      // dorso quedaría mal ubicado. Los forzamos SIEMPRE con lo configurado.
+      const combo = {
+        ...comboBase,
+        backMirror: cfg?.dobbleBackMirror === 'y' ? 'y' : 'x',
+        backRotate180: !!cfg?.dobbleBackRotate180,
+      };
 
       // 1) Leer receta.json (+ caja) desde temp (el main las bajó).
       const recetaBytes = await window.printlayout.intake.readFile(order.recetaPath);
@@ -2165,7 +2177,7 @@ export default function App() {
         markMarginMm,
         cutShape,
         doubleSided,
-        backMirror: doubleSided ? (base.backMirror || 'y') : undefined,
+        backMirror: doubleSided ? (base.backMirror || 'x') : undefined,
         backRotate180: doubleSided ? !!base.backRotate180 : undefined,
         backFlip: undefined,
         singlePage: true,

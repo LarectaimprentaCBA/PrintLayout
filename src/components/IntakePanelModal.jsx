@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from 'react';
 const EMPTY = {
   supabaseUrl: '', serviceKey: '', pollSeconds: 60, outputDir: '', activo: false, modoEntrega: 'carpeta',
   dobbleActive: false, dobbleComboTemplateId: '', dobbleOutputDir: '', dobbleMazoPdfMap: {},
+  dobbleBackMirror: 'x', dobbleBackRotate180: false,
 };
 
 export default function IntakePanelModal({ open, onClose, onPublishCatalog }) {
@@ -304,6 +305,34 @@ export default function IntakePanelModal({ open, onClose, onPublishCatalog }) {
                     </span>
                   )}
                 </label>
+
+                {/* Ubicación del dorso (doble faz) — cómo se voltea la hoja */}
+                <div className="mt-3 rounded border border-ink-700/60 bg-ink-950/30 px-3 py-2">
+                  <span className="mb-1 block font-medium text-ink-200">Ubicación del dorso (doble faz)</span>
+                  <span className="mb-2 block text-[10px] text-ink-500">
+                    Cómo se voltea la hoja para imprimir el reverso. Si el dorso no cae detrás de su carta, cambiá al otro espejo.
+                  </span>
+                  <label className="block text-ink-300">
+                    <span className="mb-1 block">Espejo del dorso</span>
+                    <select
+                      value={cfg.dobbleBackMirror === 'y' ? 'y' : 'x'}
+                      onChange={(e) => patch({ dobbleBackMirror: e.target.value })}
+                      className="w-full rounded border border-ink-700 bg-ink-800 px-3 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
+                    >
+                      <option value="x">Izquierda ↔ derecha (voltea por el lado largo · recomendado)</option>
+                      <option value="y">Arriba ↕ abajo (voltea por el lado corto)</option>
+                    </select>
+                  </label>
+                  <label className="mt-2 flex cursor-pointer items-center gap-2 text-ink-200">
+                    <input
+                      type="checkbox"
+                      checked={!!cfg.dobbleBackRotate180}
+                      onChange={(e) => patch({ dobbleBackRotate180: e.target.checked })}
+                      className="h-4 w-4 accent-accent-500"
+                    />
+                    <span>Rotar el dorso 180°</span>
+                  </label>
+                </div>
 
                 <label className="mt-3 block">
                   <span className="mb-1 block text-ink-300">Carpeta de salida de los PDF busca2</span>
