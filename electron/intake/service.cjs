@@ -198,6 +198,10 @@ async function processCatalogoOrder(cfg, order) {
   const dest = path.join(outDir, savePdf.dobblePdfFileName(order.numero_presupuesto, order.nombre_mazo));
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.copyFileSync(src, dest);
+  // copyFileSync hereda la fecha del PDF original: la piso con "ahora" para que
+  // el archivo generado aparezca como nuevo (sino, ordenado por fecha, queda
+  // mezclado con los viejos y parece que no se generó).
+  try { const stamp = new Date(); fs.utimesSync(dest, stamp, stamp); } catch (_) { /* best-effort */ }
   await supabase.markProcessedDobble(cfg, id);
   log(`Pedido de catálogo ${order.numero_presupuesto || id}: copiado "${path.basename(dest)}" y marcado procesado.`);
 }

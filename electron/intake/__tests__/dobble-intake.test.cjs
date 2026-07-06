@@ -146,6 +146,9 @@ async function main() {
   fs.mkdirSync(srcDir, { recursive: true });
   const srcPdf = path.join(srcDir, 'mundialista.pdf');
   fs.writeFileSync(srcPdf, Buffer.from('%PDF-1.7\n% mundialista ya armado\n%%EOF\n', 'utf-8'));
+  // Fuente con fecha vieja: la copia debe quedar con "ahora", no heredar esta.
+  const oldDate = new Date(Date.now() - 5 * 864e5);
+  fs.utimesSync(srcPdf, oldDate, oldDate);
   cfg.dobbleMazoPdfMap = { 10: srcPdf };
 
   const CATALOGO = {
@@ -164,6 +167,7 @@ async function main() {
   const dest = path.join(OUT, 'PR-777 - Mundialista.pdf');
   ok(fs.existsSync(dest), 'copió el PDF del catálogo a la carpeta con el nombre correcto');
   ok(fs.readFileSync(dest).toString().includes('mundialista ya armado'), 'el PDF copiado es el del catálogo (contenido)');
+  ok(Date.now() - fs.statSync(dest).mtimeMs < 60000, 'la copia queda con fecha ACTUAL (no la vieja del fuente)');
   ok(calls.mark.includes('uuid-cat-1'), 'marcó procesado el pedido de catálogo');
   ok(calls.downloads.length === downloadsBefore, 'NO bajó nada del bucket para el catálogo');
   ok(calls.remove.length === removeBefore, 'NO tocó el bucket (no hay nada que borrar)');
