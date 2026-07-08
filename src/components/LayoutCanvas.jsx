@@ -5,12 +5,70 @@ import {
   pageStartOffset,
   fixedPageCount,
 } from '../lib/templates.js';
-import { coverObjectPosition } from '../lib/faceDetection.js';
+import { coverObjectPosition, coverCropRect, focalPoint } from '../lib/faceDetection.js';
 import { renderPdfPage1Preview } from '../lib/pdfPreview.js';
 import CellSlot from './CellSlot.jsx';
 import ContourTolerancePreview from './ContourTolerancePreview.jsx';
 
 const PX_PER_MM_AT_100 = 3.78;
+
+// Overlay para RE-ENCUADRAR la foto arrastrándola dentro de su celda (modo
+// cover). Actualiza image.focalPoint (normalizado 0..1). Paneo natural: arrastrar
+// la foto hacia abajo revela más de arriba. El rango se clampa a lo que hay para
+// mostrar (no se pasa del borde). Vive como overlay sobre la celda seleccionada
+// para no chocar con el drag&drop de dnd-kit (que mueve la foto entre celdas).
+function FocalPanOverlay({ image, innerWmm, innerHmm, pxPerMm, style, onChange }) {
+  const dragRef = useRef(null);
+
+  const onPointerDown = (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ }
+    dragRef.current = { x: e.clientX, y: e.clientY, startFocalPx: focalPoint(image) };
+  };
+
+  const onPointerMove = (e) => {
+    const d = dragRef.current;
+    if (!d || !image?.width || !image?.height) return;
+    const crop = coverCropRect(image, innerWmm, innerHmm);
+    if (!crop) return;
+    const iw = image.width;
+    const ih = image.height;
+    const cellScreenW = innerWmm * pxPerMm;
+    const cellScreenH = innerHmm * pxPerMm;
+    if (cellScreenW <= 0 || cellScreenH <= 0) return;
+    // pantalla -> px de imagen (el crop mapea al alto/ancho de la celda en px).
+    const imgDx = (e.clientX - d.x) * (crop.w / cellScreenW);
+    const imgDy = (e.clientY - d.y) * (crop.h / cellScreenH);
+    // Paneo: arrastrar la foto mueve el contenido; el centro del recorte va al
+    // revés (arrastrar abajo = revelar arriba = foco sube).
+    let fx = d.startFocalPx.x - imgDx;
+    let fy = d.startFocalPx.y - imgDy;
+    // Clamp al rango del centro del recorte (no pasarse del borde de la imagen).
+    fx = Math.max(crop.w / 2, Math.min(iw - crop.w / 2, fx));
+    fy = Math.max(crop.h / 2, Math.min(ih - crop.h / 2, fy));
+    onChange({ x: fx / iw, y: fy / ih });
+  };
+
+  const endDrag = (e) => {
+    dragRef.current = null;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
+  };
+
+  return (
+    <div
+      className="absolute z-10 cursor-grab active:cursor-grabbing"
+      style={style}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      onClick={(e) => e.stopPropagation()}
+      title="Arrastrá para reencuadrar la foto dentro de la celda"
+      aria-hidden
+    />
+  );
+}
 
 export default function LayoutCanvas({
   template,
@@ -24,6 +82,7 @@ export default function LayoutCanvas({
   onPageChange,
   onCellClick,
   onCellContextMenu,
+  onSetFocalPoint,
   showBackground = true,
   showCuts = false,
   face = 'front',
@@ -274,6 +333,25 @@ export default function LayoutCanvas({
                       }}
                     />
                   )}
+                  {selectedCell === globalIdx
+                    && img
+                    && fitMode === 'cover'
+                    && typeof onSetFocalPoint === 'function'
+                    && (
+                      <FocalPanOverlay
+                        image={img}
+                        innerWmm={innerWmm}
+                        innerHmm={innerHmm}
+                        pxPerMm={pxPerMm}
+                        style={{
+                          left: x + bPx,
+                          top: y + bPx,
+                          width: innerWmm * pxPerMm,
+                          height: innerHmm * pxPerMm,
+                        }}
+                        onChange={(fp) => onSetFocalPoint(img.id, fp)}
+                      />
+                    )}
                 </Fragment>
               );
             })}

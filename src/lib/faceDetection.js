@@ -53,6 +53,15 @@ export async function detectFaces(dataUrl) {
 }
 
 export function focalPoint(image) {
+  // Override manual (reposición fina de la foto en la celda, modo cover). Se
+  // guarda NORMALIZADO (x,y en 0..1) para sobrevivir el reescalado interno de la
+  // imagen y para mapear directo desde el editor web del cliente (Etapa 3). Acá
+  // se devuelve en PX de la imagen, que es el espacio que esperan coverCropRect
+  // y coverObjectPosition. Si no hay override, cae al automático (caras/centro).
+  const fp = image?.focalPoint;
+  if (fp && Number.isFinite(fp.x) && Number.isFinite(fp.y)) {
+    return { x: fp.x * (image?.width ?? 1), y: fp.y * (image?.height ?? 1) };
+  }
   const bbox = facesBoundingBox(image?.faces, 0);
   if (bbox) {
     return { x: bbox.x + bbox.width / 2, y: bbox.y + bbox.height / 2 };

@@ -2781,6 +2781,7 @@ export default function App() {
             onCellContextMenu={(_cellIdx, img) => {
               if (img?.id) setEditingImageId(img.id);
             }}
+            onSetFocalPoint={(imageId, fp) => layout.updateImage(imageId, { focalPoint: fp })}
             onUploadPdfClick={() => blankPdfInputRef.current?.click()}
             onCreateGridClick={() => setGridModalOpen(true)}
           />
@@ -2857,6 +2858,8 @@ export default function App() {
             }}
             onResetWork={layout.resetCurrentTemplateWork}
             hasPersistedWork={selected ? layout.templatesWithWork.has(selected.id) : false}
+            layoutFitMode={layoutFitMode}
+            onResetFocalPoint={(imageId) => layout.updateImage(imageId, { focalPoint: null })}
           />
         </div>
 

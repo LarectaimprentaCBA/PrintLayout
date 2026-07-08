@@ -127,6 +127,8 @@ export default function PropertiesSidebar({
   onSelectImage,
   onResetWork,
   hasPersistedWork,
+  layoutFitMode = 'contain',
+  onResetFocalPoint,
 }) {
   // Mostrar control "Hojas" solo en plantillas legacy con celdas homogeneas:
   // ahi tiene sentido pedir N hojas iguales para posar a mano.
@@ -385,6 +387,31 @@ export default function PropertiesSidebar({
                     Quitar
                   </button>
                 </div>
+                {(selectedImg.fitOverride ?? layoutFitMode) === 'cover'
+                  && typeof onResetFocalPoint === 'function' && (
+                  <div className="rounded border border-ink-700 bg-ink-800/40 px-2 py-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] text-ink-300">
+                        Encuadre
+                        <span className="ml-1 text-[10px] text-ink-500">
+                          {selectedImg.focalPoint ? '(manual)' : '(auto)'}
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => onResetFocalPoint(selectedImg.id)}
+                        disabled={!selectedImg.focalPoint}
+                        title="Volver al encuadre automático (caras o centro)"
+                        className="rounded border border-ink-700 px-2 py-0.5 text-[11px] text-ink-200 hover:bg-ink-800 disabled:opacity-40 disabled:hover:bg-transparent"
+                      >
+                        Centrar / Auto
+                      </button>
+                    </div>
+                    <p className="mt-1 text-[10px] leading-snug text-ink-500">
+                      Arrastrá la foto en la hoja para subirla/bajarla dentro de la celda.
+                    </p>
+                  </div>
+                )}
                 {template.cutShape === 'contour' && onUpdateTemporal && (
                   <ContourImageOverride
                     template={template}
