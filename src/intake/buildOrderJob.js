@@ -10,6 +10,7 @@
 
 import { computeGrid, generateCuts, centerCellsInSheet } from '../lib/grid.js';
 import { readAnyFileToImage } from '../lib/images.js';
+import { rotateImageDataUrl90CW, rotateFaces90CW } from '../lib/imageRotate.js';
 import { resolvePresetTemplate } from './presets.js';
 import { CUSTOM_SHEET } from './sheetCriteria.js';
 
@@ -58,7 +59,8 @@ function buildCustomGridTemplate(wmm, hmm, label) {
   };
 }
 
-// order: { id, numero_presupuesto, items: [{ tamano, fotos: [{path, localPath, nombre, copias}] }] }
+// order: { id, numero_presupuesto, items: [{ tamano, fotos: [{path, localPath, nombre, copias, encuadre?}] }] }
+//   encuadre?: { fit: 'cover'|'contain', focalPoint?: {x,y} en 0..1, rotation?: 0|90|180|270 }
 // deps: { templates, readFileBytes(localPath) -> Promise<Uint8Array|null> }
 // → { specs: [{ name, sizeLabel, template, images, assignmentsFront, assignmentsBack, minPages }], skipped: [{label, reason}] }
 export async function buildOrderJobs(order, { templates, readFileBytes }) {
@@ -130,8 +132,31 @@ export async function buildOrderJobs(order, { templates, readFileBytes }) {
         skipped.push({ label: sizeLabel, reason: `error procesando ${foto.nombre}: ${err.message}` });
         continue;
       }
-      // Encuadre por caras al imprimir (la celda se rellena recortando).
-      image.fitOverride = 'cover';
+      // Encuadre del cliente (viene de la web). La foto base ya está derecha por
+      // EXIF; esto aplica la rotación/fit/foco que eligió en el editor. Orden:
+      // primero rotar, después fit y foco (el focalPoint 0..1 se interpreta sobre
+      // la orientación que vio el cliente). Sin encuadre (pedidos viejos o foto no
+      // tocada) → cover, sin rotación, foco automático = comportamiento de hoy.
+      const enc = foto.encuadre || {};
+      // a) Rotación deliberada (múltiplos de 90). Remapea las caras en cada giro
+      //    ANTES de pisar width/height (rotateFaces90CW necesita las dims viejas).
+      let turns = Math.round((Number(enc.rotation) || 0) / 90) % 4;
+      if (turns < 0) turns += 4;
+      for (let t = 0; t < turns; t++) {
+        image.faces = rotateFaces90CW(image.faces, image.width, image.height);
+        const r = await rotateImageDataUrl90CW(image.dataUrl);
+        image.dataUrl = r.dataUrl;
+        image.width = r.width;
+        image.height = r.height;
+      }
+      // b) Rellenar (cover, recorta) o entrar entera (contain).
+      image.fitOverride = enc.fit === 'contain' ? 'contain' : 'cover';
+      // c) Punto focal manual (0..1) para "mover"; si no viene, foco automático.
+      //    Clamp defensivo [0,1] (la web valida, pero acá leemos de Supabase).
+      const fp = enc.focalPoint;
+      image.focalPoint = (fp && Number.isFinite(fp.x) && Number.isFinite(fp.y))
+        ? { x: Math.min(1, Math.max(0, fp.x)), y: Math.min(1, Math.max(0, fp.y)) }
+        : null;
       loaded.push({ image, copias: Math.max(1, Math.floor(Number(foto.copias) || 1)) });
     }
     if (loaded.length === 0) {

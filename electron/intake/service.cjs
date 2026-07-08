@@ -188,6 +188,9 @@ async function processOrder(cfg, order) {
         localPath,
         nombre: foto?.nombre || path.basename(objectPath),
         copias: Math.max(1, Math.floor(Number(foto?.copias) || 1)),
+        // Encuadre elegido por el cliente en el editor web (fit/focalPoint/
+        // rotación). null si el pedido no lo trae; buildOrderJob lo aplica.
+        encuadre: foto?.encuadre ?? null,
       });
     }
     outItems.push({ tamano: item?.tamano || null, fotos: outFotos });
