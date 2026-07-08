@@ -251,21 +251,22 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
       });
     }
 
-    // Borde blanco uniforme alrededor de cada foto. El corte/celda NO cambia de
-    // tamaño: la foto se dibuja dentro de un rectángulo interior y el gap queda
-    // blanco. 0 (o ausente) = comportamiento de siempre.
-    const borderMm = Math.max(0, Number(template.cellWhiteBorderMm) || 0);
-    // Línea de marco: filete de color dibujado sobre el borde EXTERIOR de la
-    // celda (el borde de la tarjeta). 0 = sin línea.
-    const lineMm = Math.max(0, Number(template.cellBorderLineMm) || 0);
-    const lineRgb = hexToRgb(template.cellBorderColor);
-
+    // El marco (borde blanco + línea de filete) se resuelve POR-IMAGEN adentro
+    // del loop: image.frame pisa el valor de plantilla campo por campo; si no hay
+    // override, hereda el de la plantilla (comportamiento de siempre).
     for (let i = 0; i < cells.length; i++) {
       const cell = cells[i];
       const imgId = assignments?.[offset + i];
       if (!imgId) continue;
       const image = imageMap.get(imgId);
       if (!image) continue;
+
+      // Borde blanco ("passe-partout"): encoge la foto a un rect interior y pinta
+      // el resto de blanco. 0 (o ausente) = sin borde.
+      const borderMm = Math.max(0, Number(image.frame?.whiteBorderMm ?? template.cellWhiteBorderMm) || 0);
+      // Línea de filete: marco de color fino sobre el borde EXTERIOR de la celda.
+      const lineMm = Math.max(0, Number(image.frame?.lineMm ?? template.cellBorderLineMm) || 0);
+      const lineRgb = hexToRgb(image.frame?.color ?? template.cellBorderColor);
 
       const cellWpt = cell.w * MM_TO_PT;
       const cellHpt = cell.h * MM_TO_PT;

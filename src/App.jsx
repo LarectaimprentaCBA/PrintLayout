@@ -2860,6 +2860,7 @@ export default function App() {
             hasPersistedWork={selected ? layout.templatesWithWork.has(selected.id) : false}
             layoutFitMode={layoutFitMode}
             onResetFocalPoint={(imageId) => layout.updateImage(imageId, { focalPoint: null })}
+            onSetImageFrame={(imageId, frame) => layout.updateImage(imageId, { frame })}
           />
         </div>
 

@@ -129,6 +129,7 @@ export default function PropertiesSidebar({
   hasPersistedWork,
   layoutFitMode = 'contain',
   onResetFocalPoint,
+  onSetImageFrame,
 }) {
   // Mostrar control "Hojas" solo en plantillas legacy con celdas homogeneas:
   // ahi tiene sentido pedir N hojas iguales para posar a mano.
@@ -410,6 +411,52 @@ export default function PropertiesSidebar({
                     <p className="mt-1 text-[10px] leading-snug text-ink-500">
                       Arrastrá la foto en la hoja para subirla/bajarla dentro de la celda.
                     </p>
+                  </div>
+                )}
+                {typeof onSetImageFrame === 'function' && !template.dobble && (
+                  <div className="rounded border border-ink-700 bg-ink-800/40 px-2 py-1.5">
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <span className="text-[11px] text-ink-300">
+                        Marco de esta foto
+                        <span className="ml-1 text-[10px] text-ink-500">
+                          {selectedImg.frame ? '(propio)' : '(hoja)'}
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => onSetImageFrame(selectedImg.id, null)}
+                        disabled={!selectedImg.frame}
+                        title="Volver al marco de la hoja (heredar)"
+                        className="rounded border border-ink-700 px-2 py-0.5 text-[11px] text-ink-200 hover:bg-ink-800 disabled:opacity-40 disabled:hover:bg-transparent"
+                      >
+                        Usar el de la hoja
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] text-ink-400">Borde blanco</span>
+                      <NumberMmInput
+                        value={selectedImg.frame?.whiteBorderMm ?? template.cellWhiteBorderMm ?? 0}
+                        onChange={(v) => onSetImageFrame(selectedImg.id, { ...selectedImg.frame, whiteBorderMm: v })}
+                        title="Marco blanco solo para ESTA foto. El corte no cambia; la foto se achica hacia adentro. 0 = sin borde."
+                      />
+                    </div>
+                    <div className="mt-1 flex items-center justify-between gap-2">
+                      <span className="text-[11px] text-ink-400">Línea de marco</span>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="color"
+                          value={selectedImg.frame?.color ?? template.cellBorderColor ?? '#000000'}
+                          onChange={(e) => onSetImageFrame(selectedImg.id, { ...selectedImg.frame, color: e.target.value })}
+                          title="Color de la línea del marco (solo esta foto)"
+                          className="h-5 w-6 cursor-pointer rounded border border-ink-700 bg-ink-800 p-0"
+                        />
+                        <NumberMmInput
+                          value={selectedImg.frame?.lineMm ?? template.cellBorderLineMm ?? 0}
+                          onChange={(v) => onSetImageFrame(selectedImg.id, { ...selectedImg.frame, lineMm: v })}
+                          title="Grosor de la línea (mm) solo para esta foto. 0 = sin línea."
+                        />
+                      </div>
+                    </div>
                   </div>
                 )}
                 {template.cutShape === 'contour' && onUpdateTemporal && (

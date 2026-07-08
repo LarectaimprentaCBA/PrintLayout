@@ -272,8 +272,10 @@ export default function LayoutCanvas({
               const img = imgId ? imageMap?.get(imgId) : null;
               const fitMode = img?.fitOverride ?? layoutFitMode;
               // Borde blanco: la foto entra en un rect interior; el encuadre por
-              // caras se calcula con esas medidas interiores.
-              const borderMm = Math.max(0, Number(template.cellWhiteBorderMm) || 0);
+              // caras se calcula con esas medidas interiores. Marco POR-IMAGEN:
+              // img.frame pisa el de la plantilla campo por campo (mismo criterio
+              // que el export), si no hereda el de la hoja.
+              const borderMm = Math.max(0, Number(img?.frame?.whiteBorderMm ?? template.cellWhiteBorderMm) || 0);
               const bMm = borderMm > 0
                 ? Math.min(borderMm, Math.max(0, Math.min(cell.w, cell.h) / 2 - 0.2))
                 : 0;
@@ -309,8 +311,8 @@ export default function LayoutCanvas({
                     fitMode={fitMode}
                     objectPosition={objectPosition}
                     whiteBorderPx={bMm * pxPerMm}
-                    borderLinePx={Math.max(0, Number(template.cellBorderLineMm) || 0) * pxPerMm}
-                    borderLineColor={template.cellBorderColor || '#000000'}
+                    borderLinePx={Math.max(0, Number(img?.frame?.lineMm ?? template.cellBorderLineMm) || 0) * pxPerMm}
+                    borderLineColor={img?.frame?.color ?? template.cellBorderColor ?? '#000000'}
                     onClick={onCellClick}
                     onContextMenu={onCellContextMenu}
                     style={{ left: x, top: y, width: w, height: h }}
