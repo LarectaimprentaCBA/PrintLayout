@@ -79,9 +79,17 @@ export async function readImageFile(file, opts = {}) {
   // createImageBitmap con colorSpaceConversion:'none' impide que Chromium
   // aplique la conversion ICC (Adobe RGB -> sRGB) que correria los blancos
   // (255,255,254) a (252,254,255). Asi los bytes del JPG entran intactos.
+  // imageOrientation:'from-image' aplica el tag EXIF Orientation (0x0112): sin
+  // esto Chromium entrega los pixeles CRUDOS del sensor y las fotos verticales
+  // de celular entran acostadas/al reves (el resto del pipeline lee
+  // bitmap.width/height y arrastra la mala orientacion). Con esto los pixeles ya
+  // salen derechos y width/height pasan a ser las dimensiones ORIENTADAS.
   let bitmap;
   try {
-    bitmap = await createImageBitmap(file, { colorSpaceConversion: 'none' });
+    bitmap = await createImageBitmap(file, {
+      colorSpaceConversion: 'none',
+      imageOrientation: 'from-image',
+    });
   } catch (err) {
     throw new Error(`Imagen inválida: ${file.name}`);
   }
