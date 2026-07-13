@@ -25,6 +25,7 @@ import ImageCountPackModal from './components/ImageCountPackModal.jsx';
 import ImageQuantitiesModal from './components/ImageQuantitiesModal.jsx';
 import ImageFrontBackPoseModal from './components/ImageFrontBackPoseModal.jsx';
 import IntakePanelModal from './components/IntakePanelModal.jsx';
+import QrCutPanelModal from './components/QrCutPanelModal.jsx';
 import ImageEditorModal from './components/ImageEditorModal.jsx';
 import ImageCropModal from './components/ImageCropModal.jsx';
 import SaveTemplateModal from './components/SaveTemplateModal.jsx';
@@ -129,6 +130,7 @@ export default function App() {
   const [presetsModalOpen, setPresetsModalOpen] = useState(false);
   const [pdfToImageOpen, setPdfToImageOpen] = useState(false);
   const [intakePanelOpen, setIntakePanelOpen] = useState(false);
+  const [qrCutPanelOpen, setQrCutPanelOpen] = useState(false);
   // Modo La Recta: esta PC administra (baja pedidos, edita/publica oficiales).
   // En las demás PCs el panel "Pedidos" se oculta y las oficiales son read-only.
   const [isLaRecta, setIsLaRecta] = useState(false);
@@ -2732,6 +2734,7 @@ export default function App() {
           onOpenTemplates={() => setTemplatesManagerOpen(true)}
           onOpenPdfToImage={() => setPdfToImageOpen(true)}
           onOpenIntake={isLaRecta ? () => setIntakePanelOpen(true) : undefined}
+          onOpenQrCut={() => setQrCutPanelOpen(true)}
         />
         <TabsBar
           tabs={tabs}
@@ -3010,6 +3013,11 @@ export default function App() {
           open={intakePanelOpen}
           onClose={() => { setIntakePanelOpen(false); refreshLaRecta(); }}
           onPublishCatalog={handlePublishCatalog}
+        />
+
+        <QrCutPanelModal
+          open={qrCutPanelOpen}
+          onClose={() => setQrCutPanelOpen(false)}
         />
 
         <ConfirmModal

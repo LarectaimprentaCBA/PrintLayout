@@ -132,4 +132,23 @@ contextBridge.exposeInMainWorld('printlayout', {
       return () => ipcRenderer.removeListener('intake:log', handler);
     },
   },
+  // Servidor de corte QR (nuestra File Center, reemplazo de QRFileCut.exe).
+  qrcut: {
+    getConfig: () => ipcRenderer.invoke('qrcut:get-config'),
+    getStatus: () => ipcRenderer.invoke('qrcut:get-status'),
+    setConfig: (patch) => ipcRenderer.invoke('qrcut:set-config', patch),
+    reconnect: () => ipcRenderer.invoke('qrcut:reconnect'),
+    chooseDir: () => ipcRenderer.invoke('qrcut:choose-dir'),
+    // Eventos push del main:
+    onStatus: (cb) => {
+      const handler = (_evt, payload) => cb(payload);
+      ipcRenderer.on('qrcut:status', handler);
+      return () => ipcRenderer.removeListener('qrcut:status', handler);
+    },
+    onLog: (cb) => {
+      const handler = (_evt, payload) => cb(payload);
+      ipcRenderer.on('qrcut:log', handler);
+      return () => ipcRenderer.removeListener('qrcut:log', handler);
+    },
+  },
 });

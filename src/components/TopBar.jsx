@@ -289,6 +289,7 @@ export default function TopBar({
   onSaveJobAs,
   onOpenJob,
   onOpenIntake,
+  onOpenQrCut,
   // Utilidades globales
   onOpenTemplates,
   onOpenPdfToImage,
@@ -418,6 +419,16 @@ export default function TopBar({
                 className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:bg-ink-700"
               >
                 Pedidos
+              </button>
+            )}
+            {onOpenQrCut && (
+              <button
+                type="button"
+                onClick={onOpenQrCut}
+                title="Servidor de corte QR: esta PC atiende el corte por QR del plotter"
+                className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:bg-ink-700"
+              >
+                Corte QR
               </button>
             )}
           </div>

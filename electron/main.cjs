@@ -13,6 +13,7 @@ const workStatesStore = require('./work-states-store.cjs');
 const jobsStore = require('./jobs-store.cjs');
 const openTabsStore = require('./open-tabs-store.cjs');
 const intakeService = require('./intake/service.cjs');
+const qrCutServer = require('./qrcut/server.cjs');
 const { writePdfSilent, dobblePdfFileName } = require('./intake/save-pdf.cjs');
 
 autoUpdater.autoDownload = true;
@@ -590,8 +591,23 @@ ipcMain.handle('pdf:cleanup-extracted', async (_evt, payload) => {
 });
 
 ipcMain.handle('plotter:send-cut', async (_evt, payload) => {
+  // La IP/puerto del plotter salen de la config del Servidor QR (única fuente de
+  // verdad), salvo que el payload los traiga explícitos. Así el envío directo y
+  // el corte por QR apuntan siempre al mismo lugar.
+  const qrCfg = qrCutServer.getConfig();
+  const merged = {
+    ...payload,
+    ip: payload?.ip || qrCfg.plotterIP,
+    puerto: payload?.puerto || qrCfg.plotterPort,
+  };
+  // Coexistencia: soltamos la conexión persistente del Servidor QR mientras dura
+  // el envío directo (así no compiten por el :8080) y la reconectamos después.
+  let pausedQr = false;
+  if (!merged.dryRun) {
+    try { qrCutServer.pauseForDirectSend(); pausedQr = true; } catch (_) { /* best-effort */ }
+  }
   try {
-    const stdin = JSON.stringify(payload);
+    const stdin = JSON.stringify(merged);
     const { stdout } = await runPython('send_to_plotter.py', { stdin });
     let result;
     try {
@@ -602,6 +618,10 @@ ipcMain.handle('plotter:send-cut', async (_evt, payload) => {
     return result;
   } catch (err) {
     return { ok: false, error: err.message };
+  } finally {
+    if (pausedQr) {
+      try { qrCutServer.resumeAfterDirectSend(); } catch (_) { /* best-effort */ }
+    }
   }
 });
 
@@ -1108,11 +1128,43 @@ ipcMain.handle('dobble:save-pdf-silent', (_evt, { dir, numeroPresupuesto, nombre
 ipcMain.handle('intake:publish-catalog', (_evt, rows) => intakeService.publishCatalog(rows));
 ipcMain.handle('intake:publish-config', (_evt, { clave, valor }) => intakeService.publishConfig(clave, valor));
 
+// Servidor de corte QR (nuestra File Center). La config vive SOLO en userData.
+ipcMain.handle('qrcut:get-config', () => qrCutServer.getConfig());
+ipcMain.handle('qrcut:get-status', () => qrCutServer.getStatus());
+ipcMain.handle('qrcut:set-config', (_evt, patch) => {
+  try {
+    return { ok: true, config: qrCutServer.setConfig(patch) };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+ipcMain.handle('qrcut:reconnect', () => {
+  try {
+    return qrCutServer.reconnectNow();
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+ipcMain.handle('qrcut:choose-dir', async () => {
+  try {
+    const win = BrowserWindow.getFocusedWindow();
+    const r = await dialog.showOpenDialog(win, {
+      title: 'Carpeta de cortes (.plt) del corte por QR',
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (r.canceled || !r.filePaths || !r.filePaths[0]) return { canceled: true };
+    return { ok: true, path: r.filePaths[0] };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 app.whenReady().then(() => {
   createWindow();
   const win = BrowserWindow.getAllWindows()[0];
   setupAutoUpdate(win);
   intakeService.start(win);
+  qrCutServer.start(win);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
