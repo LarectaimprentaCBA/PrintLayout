@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, Fragment } from 'react';
+import { useEffect, useMemo, useRef, useState, Fragment } from 'react';
 import {
   cellPositions,
   cellsForPage,
@@ -7,6 +7,7 @@ import {
 } from '../lib/templates.js';
 import { coverObjectPosition, coverCropRect, focalPoint } from '../lib/faceDetection.js';
 import { renderPdfPage1Preview } from '../lib/pdfPreview.js';
+import { qrMatrix, qrPlacementMm } from '../lib/exportPdf.js';
 import CellSlot from './CellSlot.jsx';
 import ContourTolerancePreview from './ContourTolerancePreview.jsx';
 
@@ -86,9 +87,27 @@ export default function LayoutCanvas({
   showBackground = true,
   showCuts = false,
   face = 'front',
+  qr = null,
   onUploadPdfClick,
   onCreateGridClick,
 }) {
+  // QR de corte para la vista previa (SVG). Mismo texto/posición que la
+  // impresión (qrMatrix + qrPlacementMm compartidos con exportPdf). Solo en el
+  // frente. En SVG la Y va hacia abajo, así que convertimos el borde inferior
+  // (desde abajo) a un borde superior (desde arriba).
+  const qrPreview = useMemo(() => {
+    if (!qr?.text || face === 'back') return null;
+    const { n, cells } = qrMatrix(qr.text);
+    const { xLeftMm, yBottomMm, sizeMm } = qrPlacementMm({
+      pageWmm: template.pageWidthMm,
+      sizeMm: qr.sizeMm,
+      bottomMm: qr.bottomMm,
+      centered: qr.centered,
+    });
+    const moduleMm = sizeMm / n;
+    const yTopMm = template.pageHeightMm - (yBottomMm + sizeMm);
+    return { cells, xLeftMm, yTopMm, sizeMm, moduleMm };
+  }, [qr?.text, qr?.sizeMm, qr?.bottomMm, qr?.centered, face, template.pageWidthMm, template.pageHeightMm]);
   const scrollRef = useRef(null);
   const [fitScale, setFitScale] = useState(1);
   const [zoomLevel, setZoomLevel] = useState(1);
@@ -371,6 +390,32 @@ export default function LayoutCanvas({
                     stroke="#ef4444"
                     strokeWidth={1.2}
                     vectorEffect="non-scaling-stroke"
+                  />
+                ))}
+              </svg>
+            )}
+            {qrPreview && (
+              <svg
+                viewBox={`0 0 ${template.pageWidthMm} ${template.pageHeightMm}`}
+                preserveAspectRatio="none"
+                className="pointer-events-none absolute inset-0 z-20 h-full w-full"
+              >
+                {/* Quiet zone blanca ~1mm (contraste) */}
+                <rect
+                  x={qrPreview.xLeftMm - 1}
+                  y={qrPreview.yTopMm - 1}
+                  width={qrPreview.sizeMm + 2}
+                  height={qrPreview.sizeMm + 2}
+                  fill="#ffffff"
+                />
+                {qrPreview.cells.map(([r, c], i) => (
+                  <rect
+                    key={i}
+                    x={qrPreview.xLeftMm + c * qrPreview.moduleMm}
+                    y={qrPreview.yTopMm + r * qrPreview.moduleMm}
+                    width={qrPreview.moduleMm}
+                    height={qrPreview.moduleMm}
+                    fill="#000000"
                   />
                 ))}
               </svg>

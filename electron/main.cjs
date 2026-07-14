@@ -1181,49 +1181,6 @@ ipcMain.handle('qrcut:choose-dir', async () => {
     return { ok: false, error: err.message };
   }
 });
-// Reserva un nombre de corte ÚNICO en la carpeta QR (anticolisión -2/-3…). El
-// nombre se sanea a caracteres QR/filesystem-safe. Devuelve las rutas del .plt y
-// el .pdf (mismo cutId) para que el renderer escriba ambos sincronizados.
-ipcMain.handle('qrcut:reserve-cut-name', (_evt, { baseName } = {}) => {
-  try {
-    const cfg = qrCutServer.getConfig();
-    const dir = (cfg.cortesDir || '').trim();
-    if (!dir) return { ok: false, error: 'No hay carpeta de cortes configurada.' };
-    const base = String(baseName || '').trim().replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64);
-    if (!base) return { ok: false, error: 'El nombre quedó vacío tras sanitizar.' };
-    const taken = (name) =>
-      fs.existsSync(path.join(dir, `${name}.plt`)) || fs.existsSync(path.join(dir, `${name}.pdf`));
-    let cutId = base;
-    let i = 2;
-    while (taken(cutId)) { cutId = `${base}-${i}`; i += 1; }
-    return {
-      ok: true,
-      cutId,
-      dir,
-      pltPath: path.join(dir, `${cutId}.plt`),
-      pdfPath: path.join(dir, `${cutId}.pdf`),
-    };
-  } catch (err) {
-    return { ok: false, error: err.message };
-  }
-});
-// Guarda un PDF (bytes) en la carpeta QR, validando que el path quede DENTRO de
-// cortesDir (no escribir fuera de la carpeta desde el renderer).
-ipcMain.handle('qrcut:save-pdf', (_evt, { path: filePath, bytes } = {}) => {
-  try {
-    if (!filePath) return { ok: false, error: 'Falta la ruta del PDF.' };
-    const cfg = qrCutServer.getConfig();
-    const dir = path.resolve((cfg.cortesDir || '').trim());
-    const resolved = path.resolve(filePath);
-    if (resolved !== dir && !resolved.startsWith(dir + path.sep)) {
-      return { ok: false, error: 'La ruta del PDF está fuera de la carpeta de cortes.' };
-    }
-    writePdfSilent(resolved, bytes);
-    return { ok: true, path: resolved };
-  } catch (err) {
-    return { ok: false, error: err.message };
-  }
-});
 
 app.whenReady().then(() => {
   createWindow();

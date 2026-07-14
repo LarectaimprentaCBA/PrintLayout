@@ -94,6 +94,7 @@ export default function PropertiesSidebar({
   onChangeMinPages,
   onShare,
   onEditMargin,
+  onSetCutId,
   dobbleBusy = false,
   onReposeDobble,
   onChangeDobbleColor,
@@ -701,6 +702,20 @@ export default function PropertiesSidebar({
                 )}
               </dd>
             </div>
+            {hasCuts(template) && onSetCutId && (
+              <div className="flex items-center justify-between">
+                <dt className="text-ink-400">Nombre del corte (QR)</dt>
+                <dd>
+                  <input
+                    value={template.cutId ?? ''}
+                    onChange={(e) => onSetCutId(e.target.value.replace(/[^A-Za-z0-9_-]/g, ''))}
+                    placeholder="autom."
+                    title="Texto del QR que se dibuja en la hoja y nombre del .plt. Sólo letras, números, guión y guión bajo."
+                    className="w-36 rounded border border-ink-700 bg-ink-800 px-2 py-0.5 text-right text-xs text-ink-100 outline-none focus:border-accent-500"
+                  />
+                </dd>
+              </div>
+            )}
             <div className="flex items-center justify-between">
               <dt className="text-ink-400">Margen marcas</dt>
               <dd className="flex items-center gap-2">

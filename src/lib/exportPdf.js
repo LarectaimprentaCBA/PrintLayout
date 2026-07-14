@@ -98,16 +98,30 @@ function drawCornerMarks(page, {
   line(right, bottom, right - arm, bottom);
   line(right, bottom, right, bottom + arm);
 
-  // Punto guia centrado entre las 2 L de arriba. Indica al operador cual es
-  // el "frente" de la hoja al ponerla en el plotter. Esta sobre la misma
-  // linea horizontal que las L y bien adentro de la ventana, asi el plotter
-  // no lo confunde con una marca de registro (esas las espera en esquinas).
-  page.drawCircle({
-    x: (left + right) / 2,
-    y: top,
-    size: 1 * MM_TO_PT,
-    color,
-  });
+  // (El punto guía se quitó: el QR de la hoja pasa a ser la referencia de
+  // orientación al cargar la hoja en el plotter.)
+}
+
+// Posición del QR en la HOJA física, en mm. ÚNICA fuente de la fórmula: la usan
+// tanto el PDF (drawQr) como la vista previa del canvas, así coinciden.
+// Devuelve el borde IZQUIERDO (xLeftMm) y el borde INFERIOR del QR medido desde
+// el borde inferior de la hoja (yBottomMm). Centro vertical del QR = `bottomMm`.
+export function qrPlacementMm({ pageWmm, sizeMm = 8, bottomMm = 9.5, centered = true }) {
+  const xLeftMm = centered ? (pageWmm - sizeMm) / 2 : 10;
+  const yBottomMm = bottomMm - sizeMm / 2;
+  return { xLeftMm, yBottomMm, sizeMm };
+}
+
+// Matriz del QR para `text` (qrcode-generator, corrección 'M'). Compartida por
+// el PDF y el canvas para que dibujen exactamente el mismo QR.
+export function qrMatrix(text) {
+  const qr = qrcode(0, 'M'); // typeNumber 0 = auto
+  qr.addData(String(text));
+  qr.make();
+  const n = qr.getModuleCount();
+  const cells = [];
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.isDark(r, c)) cells.push([r, c]);
+  return { n, cells };
 }
 
 // Dibuja un QR VECTORIAL (nítido a cualquier DPI) en la HOJA física. El QR
@@ -119,17 +133,10 @@ function drawQr(page, {
   text, pageWmm, sizeMm = 8, bottomMm = 9.5, centered = true, showText = false, font = null,
 }) {
   if (!text) return;
-  const qr = qrcode(0, 'M'); // typeNumber 0 = auto; corrección 'M'
-  qr.addData(String(text));
-  qr.make();
-  const n = qr.getModuleCount();
+  const { n, cells } = qrMatrix(text);
+  const { xLeftMm, yBottomMm } = qrPlacementMm({ pageWmm, sizeMm, bottomMm, centered });
   const sizePt = sizeMm * MM_TO_PT;
   const moduleSz = sizePt / n;
-  // Horizontal: centrado en la hoja si `centered`; si no, un inset a la izquierda.
-  const xLeftMm = centered ? (pageWmm - sizeMm) / 2 : 10;
-  // Vertical: el CENTRO del QR queda a `bottomMm` del borde INFERIOR de la hoja
-  // → el borde de abajo del QR va en (bottomMm - sizeMm/2). Y crece hacia arriba.
-  const yBottomMm = bottomMm - sizeMm / 2;
   const xLeftPt = xLeftMm * MM_TO_PT;
   const yBottomPt = yBottomMm * MM_TO_PT;
 
@@ -146,17 +153,14 @@ function drawQr(page, {
 
   // Módulos oscuros. La matriz tiene la fila 0 ARRIBA; en PDF la Y crece hacia
   // arriba, así que invertimos la fila al mapear.
-  for (let r = 0; r < n; r++) {
-    for (let c = 0; c < n; c++) {
-      if (!qr.isDark(r, c)) continue;
-      page.drawRectangle({
-        x: xLeftPt + c * moduleSz,
-        y: yBottomPt + (n - 1 - r) * moduleSz,
-        width: moduleSz,
-        height: moduleSz,
-        color: rgb(0, 0, 0),
-      });
-    }
+  for (const [r, c] of cells) {
+    page.drawRectangle({
+      x: xLeftPt + c * moduleSz,
+      y: yBottomPt + (n - 1 - r) * moduleSz,
+      width: moduleSz,
+      height: moduleSz,
+      color: rgb(0, 0, 0),
+    });
   }
 
   // Texto opcional a la DERECHA del QR, centrado vertical (como el print de Corel).

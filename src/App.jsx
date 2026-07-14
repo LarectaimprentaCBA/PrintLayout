@@ -26,7 +26,6 @@ import ImageQuantitiesModal from './components/ImageQuantitiesModal.jsx';
 import ImageFrontBackPoseModal from './components/ImageFrontBackPoseModal.jsx';
 import IntakePanelModal from './components/IntakePanelModal.jsx';
 import QrCutPanelModal from './components/QrCutPanelModal.jsx';
-import QrExportNameModal from './components/QrExportNameModal.jsx';
 import ImageEditorModal from './components/ImageEditorModal.jsx';
 import ImageCropModal from './components/ImageCropModal.jsx';
 import SaveTemplateModal from './components/SaveTemplateModal.jsx';
@@ -132,8 +131,10 @@ export default function App() {
   const [pdfToImageOpen, setPdfToImageOpen] = useState(false);
   const [intakePanelOpen, setIntakePanelOpen] = useState(false);
   const [qrCutPanelOpen, setQrCutPanelOpen] = useState(false);
-  // Nombre propuesto para el corte QR mientras el mini-modal está abierto (null = cerrado).
-  const [qrExportName, setQrExportName] = useState(null);
+  // Config del server QR (posición del QR + prefijo del nombre). Se usa para
+  // dibujar el QR en la vista previa y en la impresión directa. Se refresca al
+  // abrir la app y al cerrar el panel "Corte QR".
+  const [qrConfig, setQrConfig] = useState(null);
   // Modo La Recta: esta PC administra (baja pedidos, edita/publica oficiales).
   // En las demás PCs el panel "Pedidos" se oculta y las oficiales son read-only.
   const [isLaRecta, setIsLaRecta] = useState(false);
@@ -1031,6 +1032,30 @@ export default function App() {
   // Parchea la plantilla de la tab activa SIN regenerar cortes. Para ajustes que
   // no afectan el corte (ej. el borde blanco de las fotos). Sirve para cualquier
   // plantilla de la tab (grilla temporal, trabajo abierto, etc.).
+  // Config del server QR: se lee al montar (y al cerrar el panel) para dibujar
+  // el QR en la vista previa y en la impresión con la misma posición.
+  useEffect(() => {
+    window.printlayout?.qrcut?.getConfig?.()
+      .then((c) => setQrConfig(c || null))
+      .catch(() => {});
+  }, []);
+
+  // Nombre de corte por defecto (<prefijo><timestamp>) UNA vez, cuando la hoja
+  // tiene cortes y todavía no tiene nombre. Queda estable y se persiste con la
+  // hoja (viaja en el template del .pljob). Editable en las propiedades.
+  useEffect(() => {
+    if (!qrConfig || !selected || !hasCuts(selected) || selected.cutId) return;
+    const prefix = qrConfig.cutPrefix || '';
+    const d = new Date();
+    const p2 = (n) => String(n).padStart(2, '0');
+    const stamp = `${String(d.getFullYear()).slice(2)}${p2(d.getMonth() + 1)}${p2(d.getDate())}`
+      + `${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
+    const def = `${prefix}${stamp}`.replace(/[^A-Za-z0-9_-]/g, '');
+    updateActiveTab((tab) => (tab.template && hasCuts(tab.template) && !tab.template.cutId
+      ? { template: { ...tab.template, cutId: def } }
+      : {}));
+  }, [qrConfig, selected, updateActiveTab]);
+
   const handlePatchActiveTemplate = (updates) => {
     if (!activeTab?.template) return;
     updateActiveTab((tab) =>
@@ -2493,6 +2518,16 @@ export default function App() {
         faceLabel: selected.doubleSided ? (isBack ? 'dorso' : 'frente') : undefined,
         paperWidthMm: customPaper?.widthMm,
         paperHeightMm: customPaper?.heightMm,
+        // El QR es parte de la hoja con corte: se imprime SOLO en el frente, en
+        // la misma posición que la vista previa. Solo si la hoja tiene cortes,
+        // nombre y config cargada.
+        qr: (!isBack && hasCuts(selected) && selected.cutId && qrConfig) ? {
+          text: selected.cutId,
+          sizeMm: qrConfig.qrSizeMm,
+          bottomMm: qrConfig.qrBottomMm,
+          centered: qrConfig.qrCentered,
+          showText: true,
+        } : undefined,
         deviceName,
         copies,
         pages,
@@ -2553,12 +2588,21 @@ export default function App() {
     }
   };
 
-  // Guardar el corte en la carpeta del server QR: genera <cutId>.plt (mismo
-  // payload que va por socket) + <cutId>.pdf (la hoja del frente CON el QR
-  // impreso, para imprimir y después escanear). Paso 1: proponer el nombre
-  // (<prefijo><timestamp>) y abrir el mini-modal para que Mariano lo edite.
+  // Guardar el corte: escribe SOLO <cutId>.plt en la carpeta del server QR
+  // (mismo payload TB26 que va por socket). El cutId es el nombre editable de la
+  // hoja, el MISMO que dibuja el QR → el .plt matchea el QR impreso. Sobrescribe
+  // si ya existe (misma hoja): NO se renombra, así el QR sigue apuntando bien.
+  // Imprimir es una acción separada; la impresión ya lleva el QR por ser parte
+  // de la hoja.
   const handleExportCutToQr = async () => {
     if (!selected || !hasCuts(selected) || cutting) return;
+    const cutId = selected.cutId;
+    if (!cutId) {
+      setToast({ kind: 'error', text: 'La hoja todavía no tiene nombre de corte.' });
+      return;
+    }
+    setCutting(true);
+    setToast(null);
     try {
       const cfg = await window.printlayout.qrcut.getConfig();
       const dir = (cfg?.cortesDir || '').trim();
@@ -2566,73 +2610,25 @@ export default function App() {
         setToast({ kind: 'error', text: 'No hay carpeta de cortes configurada. Abrí el panel "Corte QR" y elegí una.' });
         return;
       }
-      const d = new Date();
-      const p2 = (n) => String(n).padStart(2, '0');
-      const stamp = `${String(d.getFullYear()).slice(2)}${p2(d.getMonth() + 1)}${p2(d.getDate())}`
-        + `${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
-      const proposed = `${cfg.cutPrefix || ''}${stamp}`.replace(/[^A-Za-z0-9_-]/g, '');
-      setQrExportName(proposed);
-    } catch (err) {
-      setToast({ kind: 'error', text: `No se pudo preparar el corte: ${err.message}` });
-    }
-  };
-
-  // Paso 2 (al confirmar el nombre en el modal): reserva un nombre único
-  // (anticolisión), escribe el .plt y el .pdf con el QR, ambos con el mismo cutId.
-  const doExportCutToQr = async (cutName) => {
-    setQrExportName(null);
-    if (!selected || !hasCuts(selected)) return;
-    setCutting(true);
-    setToast(null);
-    try {
-      const cfg = await window.printlayout.qrcut.getConfig();
-      const reserved = await window.printlayout.qrcut.reserveCutName(cutName);
-      if (!reserved?.ok) {
-        setToast({ kind: 'error', text: `No se pudo reservar el nombre: ${reserved?.error ?? 'desconocido'}` });
-        return;
-      }
-      const { cutId, pltPath, pdfPath } = reserved;
-
-      // 1) .plt — mismo payload TB26 que va por socket (verificado byte a byte).
-      const pltRes = await window.printlayout.plotter.exportCut({
+      // Respetar el separador propio de la carpeta (Windows/UNC vs POSIX).
+      const sep = dir.includes('\\') || !dir.includes('/') ? '\\' : '/';
+      const outPath = `${dir.replace(/[\\/]+$/, '')}${sep}${cutId}.plt`;
+      const result = await window.printlayout.plotter.exportCut({
         cortes: selected.cortes,
         pageWidthMm: selected.pageWidthMm,
         pageHeightMm: selected.pageHeightMm,
         markMarginMm: selected.markMarginMm ?? 10,
         bladeOffsetMm,
-        outPath: pltPath,
+        outPath,
       });
-      if (!pltRes?.ok) {
-        setToast({ kind: 'error', text: `No se pudo guardar el .plt: ${pltRes?.error ?? 'desconocido'}` });
-        return;
+      if (result?.ok) {
+        setToast({
+          kind: 'success',
+          text: `Corte "${cutId}.plt" guardado en la carpeta QR (${result.bytes} bytes). El QR de la hoja apunta a ese nombre — imprimí y escaneá.`,
+        });
+      } else {
+        setToast({ kind: 'error', text: `No se pudo guardar: ${result?.error ?? 'desconocido'}` });
       }
-
-      // 2) PDF de la hoja (frente) CON el QR impreso, mismo cutId. Es el que se
-      //    imprime para después escanear.
-      const bytes = await buildPdf(selected, layout.assignmentsFront, layout.imageMap, {
-        layoutFitMode,
-        embedBackground: !selected.singlePage,
-        face: 'front',
-        paperWidthMm: customPaper?.widthMm,
-        paperHeightMm: customPaper?.heightMm,
-        qr: {
-          text: cutId,
-          sizeMm: cfg.qrSizeMm,
-          bottomMm: cfg.qrBottomMm,
-          centered: cfg.qrCentered,
-          showText: true,
-        },
-      });
-      const pdfRes = await window.printlayout.qrcut.savePdf(pdfPath, bytes);
-      if (!pdfRes?.ok) {
-        setToast({ kind: 'error', text: `.plt guardado, pero el PDF falló: ${pdfRes?.error ?? 'desconocido'}` });
-        return;
-      }
-
-      setToast({
-        kind: 'success',
-        text: `Corte "${cutId}" guardado: ${cutId}.pdf (con QR) + ${cutId}.plt. Imprimí el PDF, ponelo en el plotter y escaneá el QR.`,
-      });
     } catch (err) {
       console.error(err);
       setToast({ kind: 'error', text: `Error guardando el corte: ${err.message}` });
@@ -2868,6 +2864,12 @@ export default function App() {
             face={viewingFace}
             showBackground={viewingFace !== 'back'}
             showCuts={showCuts}
+            qr={hasCuts(selected) && selected.cutId && qrConfig ? {
+              text: selected.cutId,
+              sizeMm: qrConfig.qrSizeMm,
+              bottomMm: qrConfig.qrBottomMm,
+              centered: qrConfig.qrCentered,
+            } : null}
             onPageChange={(p) => {
               setCurrentPage(p);
               layout.setSelectedCell(null);
@@ -2896,6 +2898,9 @@ export default function App() {
             onSetCategoria={handleSetCategoria}
             categoriasList={categoriasList}
             onEditMargin={handleEditMargin}
+            onSetCutId={(v) => updateActiveTab((tab) => (tab.template
+              ? { template: { ...tab.template, cutId: v }, isDirty: true }
+              : {}))}
             dobbleBusy={dobbleBusy}
             onReposeDobble={handleReposeDobble}
             onChangeDobbleColor={handleDobbleColor}
@@ -3109,14 +3114,11 @@ export default function App() {
 
         <QrCutPanelModal
           open={qrCutPanelOpen}
-          onClose={() => setQrCutPanelOpen(false)}
-        />
-
-        <QrExportNameModal
-          open={qrExportName !== null}
-          proposedName={qrExportName || ''}
-          onConfirm={doExportCutToQr}
-          onCancel={() => setQrExportName(null)}
+          onClose={() => {
+            setQrCutPanelOpen(false);
+            // La posición del QR / prefijo pudo cambiar: refrescar para el preview.
+            window.printlayout?.qrcut?.getConfig?.().then((c) => setQrConfig(c || null)).catch(() => {});
+          }}
         />
 
         <ConfirmModal
