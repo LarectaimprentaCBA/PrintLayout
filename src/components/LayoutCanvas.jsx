@@ -96,7 +96,9 @@ export default function LayoutCanvas({
   // frente. En SVG la Y va hacia abajo, así que convertimos el borde inferior
   // (desde abajo) a un borde superior (desde arriba).
   const qrPreview = useMemo(() => {
-    if (!qr?.text || face === 'back') return null;
+    // OJO: este hook corre SIEMPRE (antes del early-return por template null),
+    // así que hay que tolerar template ausente sin tocar sus propiedades.
+    if (!qr?.text || face === 'back' || !template) return null;
     const { n, cells } = qrMatrix(qr.text);
     const { xLeftMm, yBottomMm, sizeMm } = qrPlacementMm({
       pageWmm: template.pageWidthMm,
@@ -107,7 +109,7 @@ export default function LayoutCanvas({
     const moduleMm = sizeMm / n;
     const yTopMm = template.pageHeightMm - (yBottomMm + sizeMm);
     return { cells, xLeftMm, yTopMm, sizeMm, moduleMm };
-  }, [qr?.text, qr?.sizeMm, qr?.bottomMm, qr?.centered, face, template.pageWidthMm, template.pageHeightMm]);
+  }, [qr?.text, qr?.sizeMm, qr?.bottomMm, qr?.centered, face, template?.pageWidthMm, template?.pageHeightMm]);
   const scrollRef = useRef(null);
   const [fitScale, setFitScale] = useState(1);
   const [zoomLevel, setZoomLevel] = useState(1);
