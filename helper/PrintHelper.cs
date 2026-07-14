@@ -353,7 +353,23 @@ namespace PrintLayoutHelper {
                         g.PixelOffsetMode = PixelOffsetMode.HighQuality;
                         g.CompositingQuality = CompositingQuality.HighQuality;
 
-                        var pageRect = new Rectangle(-offX, -offY, physW, physH);
+                        // NO estirar el diseno a toda la hoja: dibujarlo a su
+                        // tamano REAL en mm (respetando el corte) y CENTRARLO en la
+                        // hoja fisica. Si la hoja es mas grande, el resto queda en
+                        // blanco; si es mas chica, se recorta (solo lo que entra).
+                        // LOGPIXELSX/Y = DPI del dispositivo → mm a pixeles reales.
+                        int dpiX = GetDeviceCaps(hDC, LOGPIXELSX);
+                        int dpiY = GetDeviceCaps(hDC, LOGPIXELSY);
+                        if (dpiX <= 0) dpiX = 300;
+                        if (dpiY <= 0) dpiY = 300;
+                        float targetW = _widthMm / 25.4f * dpiX;
+                        float targetH = _heightMm / 25.4f * dpiY;
+                        // El DC tiene origen en el area imprimible; -offX/-offY es
+                        // la esquina fisica de la hoja. Centramos ahi el diseno.
+                        float drawX = (physW - targetW) / 2f - offX;
+                        float drawY = (physH - targetH) / 2f - offY;
+                        Log("design(px)=" + targetW + "x" + targetH + " dpi=" + dpiX + "x" + dpiY
+                            + " at=" + drawX + "," + drawY + " (mm=" + _widthMm + "x" + _heightMm + ")");
 
                         foreach (string pagePath in PagePaths) {
                             if (StartPage(hDC) <= 0) {
@@ -364,7 +380,7 @@ namespace PrintLayoutHelper {
                                 byte[] bytes = File.ReadAllBytes(pagePath);
                                 using (var ms = new MemoryStream(bytes))
                                 using (var img = Image.FromStream(ms)) {
-                                    g.DrawImage(img, pageRect);
+                                    g.DrawImage(img, drawX, drawY, targetW, targetH);
                                 }
                             } catch (Exception drawEx) {
                                 Log("draw fallo: " + drawEx.Message);
@@ -411,6 +427,8 @@ namespace PrintLayoutHelper {
         [DllImport("gdi32.dll")]
         static extern int GetDeviceCaps(IntPtr hdc, int nIndex);
 
+        const int LOGPIXELSX = 88;
+        const int LOGPIXELSY = 90;
         const int PHYSICALWIDTH = 110;
         const int PHYSICALHEIGHT = 111;
         const int PHYSICALOFFSETX = 112;
@@ -629,7 +647,14 @@ namespace PrintLayoutHelper {
                 e.Graphics.SmoothingMode = SmoothingMode.HighQuality;
                 e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
                 e.Graphics.CompositingQuality = CompositingQuality.HighQuality;
-                e.Graphics.DrawImage(img, e.PageBounds);
+                // Igual criterio que el camino CreateDC: NO estirar a la hoja.
+                // Dibujar el diseno a su tamano REAL en mm y centrarlo. PageUnit
+                // default = Display (1/100 pulgada), por eso mm→1/100" = /25.4*100.
+                float targetW = _widthMm / 25.4f * 100f;
+                float targetH = _heightMm / 25.4f * 100f;
+                float drawX = e.PageBounds.Left + (e.PageBounds.Width - targetW) / 2f;
+                float drawY = e.PageBounds.Top + (e.PageBounds.Height - targetH) / 2f;
+                e.Graphics.DrawImage(img, drawX, drawY, targetW, targetH);
             }
             _pageIdx++;
             e.HasMorePages = _pageIdx < PagePaths.Count;
