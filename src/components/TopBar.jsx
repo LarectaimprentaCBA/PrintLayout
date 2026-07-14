@@ -259,6 +259,7 @@ export default function TopBar({
   onPrintFront,
   onPrintBack,
   onCut,
+  onExportCutToQr,
   layoutFitMode,
   onLayoutFitChange,
   showCuts,
@@ -696,6 +697,16 @@ export default function TopBar({
           >
             {cutting ? 'Enviando…' : 'Cortar'}
           </button>
+          {canCut && onExportCutToQr && (
+            <button
+              onClick={onExportCutToQr}
+              disabled={cutting}
+              title="Guardar el corte como .plt en la carpeta del server QR, para cortarlo después escaneando un QR"
+              className="rounded-md border border-accent-500/50 px-3 py-1.5 text-sm font-medium text-accent-200 hover:bg-accent-500/10 disabled:opacity-40"
+            >
+              Guardar corte QR
+            </button>
+          )}
         </div>
       </header>
       <ConfirmModal

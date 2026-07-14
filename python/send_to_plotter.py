@@ -55,6 +55,9 @@ def main():
     ip = data.get("ip", enviar.IP_DEFAULT)
     puerto = int(data.get("puerto", enviar.PUERTO_DEFAULT))
     dry_run = bool(data.get("dryRun", False))
+    # Modo "escribir a archivo": si viene outPath, en vez de enviar por socket
+    # guardamos el MISMO payload TB26 como .plt (para cortarlo despues por QR).
+    out_path = data.get("outPath")
 
     if not cortes:
         print(json.dumps({"ok": False, "error": "No hay cortes para enviar."}))
@@ -125,6 +128,23 @@ def main():
         "puerto": puerto,
         "dryRun": dry_run,
     }
+
+    # Modo escribir-a-archivo (.plt en la carpeta del server QR). NO abre TCP:
+    # es el MISMO payload que va por socket, guardado tal cual para cortarlo por
+    # QR mas tarde. Tiene prioridad sobre socket/dryRun.
+    if out_path:
+        try:
+            out_dir = os.path.dirname(out_path)
+            if out_dir:
+                os.makedirs(out_dir, exist_ok=True)
+            with open(out_path, "wb") as f:
+                f.write(payload)
+        except Exception as e:
+            print(json.dumps({"ok": False, "error": f"Escribiendo {out_path}: {e}"}))
+            sys.exit(1)
+        result["outPath"] = out_path
+        print(json.dumps(result))
+        return
 
     if dry_run:
         # Guardar el payload en un .bin temporal para inspeccion.

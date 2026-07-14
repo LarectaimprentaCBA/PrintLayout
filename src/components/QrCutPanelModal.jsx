@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 const EMPTY = {
   plotterIP: '192.168.100.250', plotterPort: 8080,
   cortesDir: '', activo: true,
+  qrSizeMm: 8, qrBottomMm: 9.5, qrCentered: true, cutPrefix: '',
 };
 
 export default function QrCutPanelModal({ open, onClose }) {
@@ -201,6 +202,36 @@ export default function QrCutPanelModal({ open, onClose }) {
                   El QR trae el nombre del archivo; se sirve <b>&lt;nombre&gt;.plt</b> desde esta carpeta.
                 </span>
               </label>
+
+              {/* Posición del QR en la hoja (para matchear la cámara del cabezal) */}
+              <div className="mt-3 rounded border border-ink-700 bg-ink-950/40 px-3 py-2">
+                <span className="mb-1 block text-xs font-medium text-ink-200">QR en la hoja</span>
+                <span className="mb-2 block text-[10px] text-ink-500">
+                  Dónde se dibuja el QR de corte. Valores de Corel: 8mm, centro a 9,5mm del borde de abajo, centrado. Ajustalos si la cámara no lee.
+                </span>
+                <div className="grid grid-cols-3 gap-2 text-xs text-ink-300">
+                  <label><span className="mb-1 block">Tamaño (mm)</span>
+                    <input value={cfg.qrSizeMm} onChange={(e) => patch({ qrSizeMm: e.target.value })}
+                      className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500" /></label>
+                  <label><span className="mb-1 block">Centro desde abajo (mm)</span>
+                    <input value={cfg.qrBottomMm} onChange={(e) => patch({ qrBottomMm: e.target.value })}
+                      className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500" /></label>
+                  <label className="flex items-end pb-1">
+                    <span className="flex cursor-pointer items-center gap-1.5 text-ink-200">
+                      <input type="checkbox" checked={!!cfg.qrCentered}
+                        onChange={(e) => patch({ qrCentered: e.target.checked })}
+                        className="h-4 w-4 accent-accent-500" />
+                      Centrado
+                    </span>
+                  </label>
+                </div>
+                <label className="mt-2 block text-xs text-ink-300">
+                  <span className="mb-1 block">Prefijo del nombre (opcional)</span>
+                  <input value={cfg.cutPrefix} onChange={(e) => patch({ cutPrefix: e.target.value })}
+                    placeholder="ej: PC1  (se antepone al timestamp)"
+                    className="w-full rounded border border-ink-700 bg-ink-800 px-3 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500" />
+                </label>
+              </div>
 
               {/* Log */}
               <div

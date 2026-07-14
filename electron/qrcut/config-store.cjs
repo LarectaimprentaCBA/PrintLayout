@@ -22,6 +22,15 @@ const DEFAULTS = {
   // Arranca solo al abrir PrintLayout (esta PC es el servidor). En una PC que NO
   // esté conectada al plotter, destildar para que no intente conectarse.
   activo: true,
+  // --- Dibujo del QR en la hoja (para el corte por QR) ---
+  // Valores que usa Corel (verificados): QR de 8mm, centro a 9,5mm del borde
+  // inferior, centrado horizontal. Se ajustan si la cámara del cabezal no lee.
+  qrSizeMm: 8,
+  qrBottomMm: 9.5,
+  qrCentered: true,
+  // Prefijo opcional para el nombre del corte (por PC/turno). Vacío = solo el
+  // timestamp. Se sanea igual que el nombre (QR/filesystem-safe).
+  cutPrefix: '',
 };
 
 function getFilePath() {
@@ -35,11 +44,25 @@ function sanitize(cfg) {
   const ip = typeof c.plotterIP === 'string' && c.plotterIP.trim()
     ? c.plotterIP.trim()
     : DEFAULTS.plotterIP;
+  const num = (v, def, min, max) => {
+    let n = Number(v);
+    if (!Number.isFinite(n)) n = def;
+    if (n < min) n = min;
+    if (n > max) n = max;
+    return n;
+  };
   return {
     plotterIP: ip,
     plotterPort: port,
     cortesDir: typeof c.cortesDir === 'string' ? c.cortesDir.trim() : DEFAULTS.cortesDir,
     activo: c.activo === undefined ? DEFAULTS.activo : !!c.activo,
+    qrSizeMm: num(c.qrSizeMm, DEFAULTS.qrSizeMm, 3, 40),
+    qrBottomMm: num(c.qrBottomMm, DEFAULTS.qrBottomMm, 1, 100),
+    qrCentered: c.qrCentered === undefined ? DEFAULTS.qrCentered : !!c.qrCentered,
+    // Prefijo saneado a caracteres QR/filesystem-safe (sin espacios ni acentos).
+    cutPrefix: typeof c.cutPrefix === 'string'
+      ? c.cutPrefix.trim().replace(/[^A-Za-z0-9_-]/g, '')
+      : DEFAULTS.cutPrefix,
   };
 }
 

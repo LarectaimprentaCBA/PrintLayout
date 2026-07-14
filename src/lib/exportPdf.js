@@ -1,4 +1,5 @@
-import { PDFDocument, rgb, degrees } from 'pdf-lib';
+import { PDFDocument, rgb, degrees, StandardFonts } from 'pdf-lib';
+import qrcode from 'qrcode-generator';
 import {
   cellPositions,
   cellsForPage,
@@ -109,6 +110,64 @@ function drawCornerMarks(page, {
   });
 }
 
+// Dibuja un QR VECTORIAL (nítido a cualquier DPI) en la HOJA física. El QR
+// contiene SOLO el texto `text` (= nombre del corte), igual que en busca2: la
+// cámara del cabezal lo lee y el server QR sirve <text>.plt. La posición es
+// relativa a la hoja física (pageWmm/pageHmm), NO al área de la plantilla.
+// Sin `text` → no dibuja nada (los callers actuales no pasan qr → todo igual).
+function drawQr(page, {
+  text, pageWmm, sizeMm = 8, bottomMm = 9.5, centered = true, showText = false, font = null,
+}) {
+  if (!text) return;
+  const qr = qrcode(0, 'M'); // typeNumber 0 = auto; corrección 'M'
+  qr.addData(String(text));
+  qr.make();
+  const n = qr.getModuleCount();
+  const sizePt = sizeMm * MM_TO_PT;
+  const moduleSz = sizePt / n;
+  // Horizontal: centrado en la hoja si `centered`; si no, un inset a la izquierda.
+  const xLeftMm = centered ? (pageWmm - sizeMm) / 2 : 10;
+  // Vertical: el CENTRO del QR queda a `bottomMm` del borde INFERIOR de la hoja
+  // → el borde de abajo del QR va en (bottomMm - sizeMm/2). Y crece hacia arriba.
+  const yBottomMm = bottomMm - sizeMm / 2;
+  const xLeftPt = xLeftMm * MM_TO_PT;
+  const yBottomPt = yBottomMm * MM_TO_PT;
+
+  // Quiet zone: recuadro blanco ~1mm alrededor ANTES de los módulos (contraste
+  // para el escáner, por si abajo hubiera arte o color).
+  const quietPt = 1 * MM_TO_PT;
+  page.drawRectangle({
+    x: xLeftPt - quietPt,
+    y: yBottomPt - quietPt,
+    width: sizePt + 2 * quietPt,
+    height: sizePt + 2 * quietPt,
+    color: rgb(1, 1, 1),
+  });
+
+  // Módulos oscuros. La matriz tiene la fila 0 ARRIBA; en PDF la Y crece hacia
+  // arriba, así que invertimos la fila al mapear.
+  for (let r = 0; r < n; r++) {
+    for (let c = 0; c < n; c++) {
+      if (!qr.isDark(r, c)) continue;
+      page.drawRectangle({
+        x: xLeftPt + c * moduleSz,
+        y: yBottomPt + (n - 1 - r) * moduleSz,
+        width: moduleSz,
+        height: moduleSz,
+        color: rgb(0, 0, 0),
+      });
+    }
+  }
+
+  // Texto opcional a la DERECHA del QR, centrado vertical (como el print de Corel).
+  if (showText && font) {
+    const fontSize = 7.5;
+    const tx = xLeftPt + sizePt + quietPt + 2 * MM_TO_PT;
+    const ty = yBottomPt + sizePt / 2 - fontSize * 0.35;
+    page.drawText(String(text), { x: tx, y: ty, size: fontSize, font, color: rgb(0, 0, 0) });
+  }
+}
+
 function base64ToBytes(base64) {
   const bin = atob(base64);
   const bytes = new Uint8Array(bin.length);
@@ -120,7 +179,7 @@ function base64ToBytes(base64) {
 // El embedCache se comparte entre llamadas para que las mismas imagenes usadas
 // en frente y dorso se embeban una sola vez.
 async function appendFaceToDoc(doc, ctx, template, assignments, options) {
-  const { layoutFitMode, embedBackground, face, paperWmm, paperHmm } = options;
+  const { layoutFitMode, embedBackground, face, paperWmm, paperHmm, qr } = options;
   // drawMarks: si es false, NO se dibujan las marcas L de corte aunque la
   // plantilla las tenga generadas. Default true (comportamiento histórico).
   // Solo aplica a marcas generadas (grilla rápida); las marcas embebidas en
@@ -207,6 +266,12 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
     const cellsLen = cellPositions(template, face).length;
     const total = assignments?.length ?? 0;
     pageCount = Math.max(1, Math.ceil(total / Math.max(1, cellsLen)));
+  }
+
+  // Fuente para el texto del QR (si se pide). Se embebe una sola vez por doc.
+  let qrFont = null;
+  if (qr && qr.text && qr.showText) {
+    qrFont = await doc.embedFont(StandardFonts.Helvetica);
   }
 
   for (let p = 0; p < pageCount; p++) {
@@ -345,6 +410,23 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
         });
       }
     }
+
+    // QR de corte (SOLO frente): una vez por hoja, en la franja inferior de la
+    // hoja física. La cámara del cabezal lo lee y pide <text>.plt. En layouts
+    // multipágina va el MISMO QR en cada hoja del frente (cualquiera sirve para
+    // escanear). Ausente (callers actuales) → no dibuja nada.
+    if (qr && qr.text && !(template.doubleSided && face === 'back')) {
+      drawQr(page, {
+        text: qr.text,
+        pageWmm: paperWmm,
+        pageHmm: paperHmm,
+        sizeMm: qr.sizeMm,
+        bottomMm: qr.bottomMm,
+        centered: qr.centered,
+        showText: qr.showText,
+        font: qrFont,
+      });
+    }
   }
 }
 
@@ -376,6 +458,7 @@ export async function buildPdf(template, assignments, imageMap, options = {}) {
     paperWmm,
     paperHmm,
     drawMarks: options.drawMarks,
+    qr: options.qr,
     // Rotacion del dorso: independiente del espejo de posicion. La controla el
     // flag backRotate180 de la plantilla (toggle "Rotar dorso" en la UI).
     rotateContent180: face === 'back' && template.doubleSided && backRotate180(template),
@@ -411,6 +494,7 @@ export async function buildDoubleSidedPdf(
     paperWmm,
     paperHmm,
     drawMarks: options.drawMarks,
+    qr: options.qr, // el QR va SOLO en el frente
   });
   await appendFaceToDoc(doc, ctx, template, assignmentsBack, {
     layoutFitMode,

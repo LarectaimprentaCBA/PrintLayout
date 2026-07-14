@@ -46,6 +46,8 @@ contextBridge.exposeInMainWorld('printlayout', {
   },
   plotter: {
     sendCut: (payload) => ipcRenderer.invoke('plotter:send-cut', payload),
+    // Escribe el corte como .plt en la carpeta del server QR (no lo envía por socket).
+    exportCut: (payload) => ipcRenderer.invoke('plotter:export-cut', payload),
   },
   dobble: {
     importRecipe: () => ipcRenderer.invoke('dobble:import-recipe'),
@@ -139,6 +141,10 @@ contextBridge.exposeInMainWorld('printlayout', {
     setConfig: (patch) => ipcRenderer.invoke('qrcut:set-config', patch),
     reconnect: () => ipcRenderer.invoke('qrcut:reconnect'),
     chooseDir: () => ipcRenderer.invoke('qrcut:choose-dir'),
+    // Reserva un nombre de corte único (anticolisión) y devuelve las rutas .plt/.pdf.
+    reserveCutName: (baseName) => ipcRenderer.invoke('qrcut:reserve-cut-name', { baseName }),
+    // Guarda el PDF (con el QR impreso) en la carpeta de cortes.
+    savePdf: (filePath, bytes) => ipcRenderer.invoke('qrcut:save-pdf', { path: filePath, bytes }),
     // Eventos push del main:
     onStatus: (cb) => {
       const handler = (_evt, payload) => cb(payload);
