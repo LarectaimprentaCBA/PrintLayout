@@ -1475,7 +1475,7 @@ export default function App() {
 
   const submitCountPack = async ({
     paperWidthMm, paperHeightMm, pages, files, cellMapping,
-    totalCells, uniqueUsed, totalInput, pageCount, countPerPage,
+    totalCells, uniqueUsed, totalInput, pageCount, countPerPage, conQr = false,
   }) => {
     setCountPackFiles(null);
     if (!files?.length) return;
@@ -1501,6 +1501,10 @@ export default function App() {
         markMarginMm: 0,
         doubleSided: false,
         singlePage: true,
+        // "Con QR": el acomodo ya reservó la franja del QR (celdas centradas con
+        // lugar). conQr controla si el QR se dibuja cuando después agregás las
+        // marcas de corte. Sin QR → false (no dibuja aunque agregues marcas).
+        conQr,
       };
       const tabId = openInTab(tpl, { name, forceNew: true });
       setPendingAutoAssign({
@@ -1522,7 +1526,7 @@ export default function App() {
 
   const submitAutoPack = async ({
     paperWidthMm, paperHeightMm, pages, files, cellMapping,
-    totalCells, uniqueUsed, totalInput, repeated, pageCount,
+    totalCells, uniqueUsed, totalInput, repeated, pageCount, conQr = false,
   }) => {
     setAutoPackFiles(null);
     if (!files?.length) return;
@@ -1553,6 +1557,9 @@ export default function App() {
         markMarginMm: 0,
         doubleSided: false,
         singlePage: true,
+        // "Con QR": el acomodo ya reservó la franja del QR (celdas centradas con
+        // lugar). conQr controla si el QR se dibuja al agregar las marcas.
+        conQr,
       };
       const tabId = openInTab(tpl, { name, forceNew: true });
       setPendingAutoAssign({
@@ -3222,6 +3229,7 @@ export default function App() {
           files={autoPackFiles ?? []}
           onConfirm={submitAutoPack}
           onCancel={() => setAutoPackFiles(null)}
+          qrConfig={qrConfig}
         />
 
         <ImageCountPackModal
@@ -3229,6 +3237,7 @@ export default function App() {
           files={countPackFiles ?? []}
           onConfirm={submitCountPack}
           onCancel={() => setCountPackFiles(null)}
+          qrConfig={qrConfig}
         />
 
         <SaveTemplateModal

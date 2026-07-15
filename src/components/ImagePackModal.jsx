@@ -7,7 +7,7 @@ function parseNum(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-export default function ImagePackModal({ open, files = [], onConfirm, onCancel }) {
+export default function ImagePackModal({ open, files = [], onConfirm, onCancel, qrConfig = null }) {
   const [fixedDim, setFixedDim] = useState('alto');
   const [fixedValue, setFixedValue] = useState('50'); // 5 cm
   const [paperId, setPaperId] = useState('a4');
@@ -17,6 +17,9 @@ export default function ImagePackModal({ open, files = [], onConfirm, onCancel }
   const [spacingX, setSpacingX] = useState('2');
   const [spacingY, setSpacingY] = useState('2');
   const [repeatToFill, setRepeatToFill] = useState(false);
+  // "Con QR": reserva simétrica arriba y abajo (para cortar por QR sin que pise
+  // la última fila). Default OFF: el acomodar es primero para imprimir.
+  const [conQr, setConQr] = useState(false);
   const [imageDims, setImageDims] = useState(null); // [{naturalWidth, naturalHeight}]
   const inputRef = useRef(null);
 
@@ -80,6 +83,15 @@ export default function ImagePackModal({ open, files = [], onConfirm, onCancel }
     params.paperW > 0 && params.paperH > 0 && params.fixedValueMm > 0
   );
 
+  // Reserva del QR (misma fórmula que la grilla rápida): franja simétrica arriba
+  // y abajo. La aplicamos INFLANDO el margen vertical del acomodo → las celdas
+  // quedan centradas dejando el lugar del QR abajo, sin tocar el motor de packing.
+  const qrBottomMm = Number(qrConfig?.qrBottomMm ?? 9.5);
+  const qrSizeMm = Number(qrConfig?.qrSizeMm ?? 8);
+  const qrReserveMm = conQr
+    ? Math.max(0, qrBottomMm + qrSizeMm / 2 + 1 + 1 - params.marginY)
+    : 0;
+
   const pack = useMemo(() => {
     if (!valid || !imageDims) return null;
     return packImagesByFixedDimension({
@@ -89,13 +101,13 @@ export default function ImagePackModal({ open, files = [], onConfirm, onCancel }
       paperW: params.paperW,
       paperH: params.paperH,
       marginX: params.marginX,
-      marginY: params.marginY,
+      marginY: params.marginY + qrReserveMm,
       spacingX: params.spacingX,
       spacingY: params.spacingY,
       repeatToFill,
       multiPage: true,
     });
-  }, [valid, imageDims, fixedDim, params, repeatToFill]);
+  }, [valid, imageDims, fixedDim, params, repeatToFill, qrReserveMm]);
 
   const [previewPage, setPreviewPage] = useState(0);
 
@@ -148,6 +160,7 @@ export default function ImagePackModal({ open, files = [], onConfirm, onCancel }
       totalInput: pack.total,
       repeated: repeatToFill,
       pageCount: pack.pageCount,
+      conQr,
     });
   };
 
@@ -290,6 +303,23 @@ export default function ImagePackModal({ open, files = [], onConfirm, onCancel }
               </span>
             </label>
 
+            <label className="flex cursor-pointer items-start gap-2 text-xs text-ink-200">
+              <input
+                type="checkbox"
+                checked={conQr}
+                onChange={(e) => setConQr(e.target.checked)}
+                className="mt-0.5 h-4 w-4 accent-accent-500"
+              />
+              <span>
+                Con QR (reservar espacio para cortar)
+                <span className="block text-[10px] leading-snug text-ink-500">
+                  Deja una franja libre arriba y abajo (posado centrado) para que el
+                  QR de corte no pise la última fila. Tildalo si vas a cortar esta hoja
+                  por QR.{conQr && qrReserveMm > 0 ? ` Reserva ~${qrReserveMm.toFixed(1)} mm.` : ''}
+                </span>
+              </span>
+            </label>
+
             <div className="rounded border border-ink-700 bg-ink-800 p-2.5 text-xs">
               {imageDims === null ? (
                 <p className="text-ink-400">Leyendo dimensiones de las imágenes…</p>
@@ -354,6 +384,20 @@ export default function ImagePackModal({ open, files = [], onConfirm, onCancel }
                     height: params.paperH * previewScale,
                   }}
                 >
+                  {qrReserveMm > 0 && (
+                    <>
+                      <div
+                        className="absolute left-0 right-0 top-0 border-b border-dashed border-amber-500/60 bg-amber-400/15"
+                        style={{ height: (params.marginY + qrReserveMm) * previewScale }}
+                      />
+                      <div
+                        className="absolute left-0 right-0 bottom-0 flex items-center justify-center border-t border-dashed border-amber-500/60 bg-amber-400/15"
+                        style={{ height: (params.marginY + qrReserveMm) * previewScale }}
+                      >
+                        <span className="text-[8px] text-amber-700">QR</span>
+                      </div>
+                    </>
+                  )}
                   {(pack.pages[Math.min(previewPage, pack.pages.length - 1)] || []).map((c, i) => (
                     <div
                       key={i}
