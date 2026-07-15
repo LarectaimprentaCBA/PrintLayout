@@ -110,6 +110,9 @@ contextBridge.exposeInMainWorld('printlayout', {
     readFile: (localPath) => ipcRenderer.invoke('intake:read-file', localPath),
     orderBuilt: (payload) => ipcRenderer.invoke('intake:order-built', payload),
     dobbleOrderBuilt: (payload) => ipcRenderer.invoke('intake:dobble-order-built', payload),
+    // Guarda silencioso el PDF listo-para-imprimir de un pedido de fotos.
+    savePhotoPdf: (filePath, bytes) =>
+      ipcRenderer.invoke('intake:save-photo-pdf', { filePath, bytes }),
     publishCatalog: (rows) => ipcRenderer.invoke('intake:publish-catalog', rows),
     publishConfig: (clave, valor) => ipcRenderer.invoke('intake:publish-config', { clave, valor }),
     // Eventos push del main:
@@ -141,6 +144,8 @@ contextBridge.exposeInMainWorld('printlayout', {
     setConfig: (patch) => ipcRenderer.invoke('qrcut:set-config', patch),
     reconnect: () => ipcRenderer.invoke('qrcut:reconnect'),
     chooseDir: () => ipcRenderer.invoke('qrcut:choose-dir'),
+    // Asegura el corte base <planchaId>.plt en la carpeta QR (lo genera si falta).
+    ensureBaseCut: (payload) => ipcRenderer.invoke('qrcut:ensure-base-cut', payload),
     // Eventos push del main:
     onStatus: (cb) => {
       const handler = (_evt, payload) => cb(payload);

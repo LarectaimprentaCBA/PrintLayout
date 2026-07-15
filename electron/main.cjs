@@ -648,6 +648,46 @@ ipcMain.handle('plotter:export-cut', async (_evt, payload) => {
   }
 });
 
+// Corte BASE por plancha (pedidos de fotos): asegura que exista
+// <cortesDir>/<planchaId>.plt en la carpeta del server QR. Si ya está, NO lo
+// regenera (evita pisarlo si el plotter lo está sirviendo en ese momento). Si
+// falta, lo genera una vez desde los `cortes` de la plancha (mismo camino que
+// el .plt manual). Todas las hojas de la plancha comparten este corte.
+ipcMain.handle('qrcut:ensure-base-cut', async (_evt, payload) => {
+  try {
+    const planchaId = String(payload?.planchaId || '').replace(/[^A-Za-z0-9_-]/g, '');
+    if (!planchaId) return { ok: false, error: 'planchaId inválido.' };
+    if (!Array.isArray(payload?.cortes) || payload.cortes.length === 0) {
+      return { ok: false, error: 'La plancha no tiene cortes.' };
+    }
+    const cfg = qrCutServer.getConfig();
+    const dir = (cfg && cfg.cortesDir ? String(cfg.cortesDir) : '').trim();
+    if (!dir) return { ok: false, error: 'No hay carpeta de cortes configurada.' };
+    const outPath = path.join(dir, `${planchaId}.plt`);
+    if (fs.existsSync(outPath)) {
+      return { ok: true, existed: true, path: outPath };
+    }
+    const stdin = JSON.stringify({
+      cortes: payload.cortes,
+      pageWidthMm: payload.pageWidthMm,
+      pageHeightMm: payload.pageHeightMm,
+      markMarginMm: payload.markMarginMm,
+      bladeOffsetMm: payload.bladeOffsetMm,
+      outPath,
+    });
+    const { stdout } = await runPython('send_to_plotter.py', { stdin });
+    let result;
+    try {
+      result = JSON.parse(stdout.trim());
+    } catch (e) {
+      return { ok: false, error: `Salida inválida del sender: ${e.message}` };
+    }
+    return { ...result, existed: false };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 // Contorno (modo Stickers): trazar con potrace (Node) — recibe ArrayBuffer del
 // PNG B/N y opts, devuelve SVG. Mejores curvas que ImageTracer (que corre en el
 // renderer). Mirror del lab printlayout-contour-lab.
@@ -1144,6 +1184,17 @@ ipcMain.handle('dobble:save-pdf-silent', (_evt, { dir, numeroPresupuesto, nombre
     const filePath = path.join(dir, fileName);
     writePdfSilent(filePath, bytes);
     return { ok: true, path: filePath, fileName };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+// PDF listo para imprimir de un pedido de fotos: guardado SILENCIOSO al path
+// que arma el renderer (junto al .pljob). Reusa writePdfSilent (crea la carpeta).
+ipcMain.handle('intake:save-photo-pdf', (_evt, { filePath, bytes }) => {
+  try {
+    if (!filePath) return { ok: false, error: 'Falta la ruta del PDF.' };
+    writePdfSilent(filePath, bytes);
+    return { ok: true, path: filePath };
   } catch (err) {
     return { ok: false, error: err.message };
   }

@@ -1746,6 +1746,10 @@ export default function App() {
         readFileBytes: (p) => window.printlayout.intake.readFile(p),
       });
 
+      // Config del server QR (carpeta de cortes + posición del QR). La usamos
+      // para dejar el corte base por plancha y dibujar el QR en el PDF.
+      const qrcutCfg = await window.printlayout.qrcut?.getConfig?.().catch(() => null);
+
       let delivered = 0;
       for (const spec of specs) {
         const payload = {
@@ -1756,6 +1760,21 @@ export default function App() {
           assignmentsBack: spec.assignmentsBack,
           minPages: spec.minPages,
         };
+        // Corte por QR de planchas FIJAS (presets). En AMBOS modos aseguramos el
+        // corte base <planchaId>.plt (reusable, no se regenera si ya está). Las
+        // grillas custom (planchaId=null) no llevan QR automático.
+        if (spec.planchaId) {
+          try {
+            await window.printlayout.qrcut.ensureBaseCut({
+              planchaId: spec.planchaId,
+              cortes: spec.template.cortes,
+              pageWidthMm: spec.template.pageWidthMm,
+              pageHeightMm: spec.template.pageHeightMm,
+              markMarginMm: spec.template.markMarginMm ?? 10,
+              bladeOffsetMm,
+            });
+          } catch (_) { /* no bloquea la entrega del pedido */ }
+        }
         if (modo === 'carpeta') {
           // <outputDir>/Pedidos/<nombre seguro>.pljob (autocontenido). El main
           // crea la subcarpeta "Pedidos" si no existe.
@@ -1764,6 +1783,29 @@ export default function App() {
             const r = await window.printlayout.jobs.saveToPath(filePath, payload);
             if (r?.ok) delivered += 1;
           } catch (_) { /* si falla, queda sin entregar y el pedido se reintenta */ }
+          // Además: PDF listo para imprimir CON el QR de la plancha dibujado
+          // (camino rápido; el .pljob queda como fallback para retocar). Solo
+          // presets: las planchas ya dejan lugar para el QR → sin reserva.
+          if (spec.planchaId && qrcutCfg) {
+            try {
+              const imageMap = new Map(spec.images.map((im) => [im.id, im]));
+              const bytes = await buildPdf(spec.template, spec.assignmentsFront, imageMap, {
+                // Frente explícito (mismo que imprimir): con singlePage sin este
+                // face buildPdf lo inferiría como 'back'.
+                face: 'front',
+                embedBackground: !spec.template.singlePage,
+                qr: {
+                  text: spec.planchaId,
+                  sizeMm: qrcutCfg.qrSizeMm,
+                  bottomMm: qrcutCfg.qrBottomMm,
+                  centered: qrcutCfg.qrCentered,
+                  showText: true,
+                },
+              });
+              const pdfPath = `${outputDir}/Pedidos/${safeFileName(spec.name)}.pdf`;
+              await window.printlayout.intake.savePhotoPdf(pdfPath, bytes);
+            } catch (_) { /* el .pljob ya quedó entregado; el PDF es un extra */ }
+          }
         } else {
           let jobId = null;
           try {
@@ -1817,7 +1859,7 @@ export default function App() {
       } catch (_) { /* ignore */ }
       setToast({ kind: 'error', text: `Error armando el pedido ${label}: ${err.message}` });
     }
-  }, [templates, openInTab, saveJobToDisk]);
+  }, [templates, openInTab, saveJobToDisk, bladeOffsetMm]);
 
   useEffect(() => {
     const api = window.printlayout?.intake;

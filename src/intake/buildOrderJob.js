@@ -26,6 +26,12 @@ function cloneTemplate(tpl) {
   return JSON.parse(JSON.stringify(tpl));
 }
 
+// Nombre seguro para el QR / .plt: solo [A-Za-z0-9_-] (igual criterio que el
+// cutId manual). Los ids del catálogo web ya vienen así; esto es defensivo.
+function sanitizeCutName(s) {
+  return String(s || '').replace(/[^A-Za-z0-9_-]/g, '');
+}
+
 // Construye una plantilla de grilla en memoria para un tamaño custom (wmm×hmm).
 function buildCustomGridTemplate(wmm, hmm, label) {
   const s = CUSTOM_SHEET;
@@ -82,6 +88,10 @@ export async function buildOrderJobs(order, { templates, readFileBytes }) {
     // 1) Plantilla: preset guardado o grilla custom.
     let template;
     let isCustomGrid = false;
+    // Id de la plancha para el QR de corte. SOLO en presets (planchas FIJAS de
+    // geometría constante → un único corte base <planchaId>.plt reusable). Las
+    // grillas custom tienen geometría variable por pedido → sin QR automático.
+    let planchaId = null;
     if (tamano.tipo === 'preset') {
       const found = resolvePresetTemplate(templates, tamano.id);
       if (!found) {
@@ -89,6 +99,15 @@ export async function buildOrderJobs(order, { templates, readFileBytes }) {
         continue;
       }
       template = cloneTemplate(found);
+      // QR = id del catálogo (clave_web), estable y compartido por todas las
+      // hojas de esta plancha. Estampamos cutId + conQr en la plantilla del job
+      // para que el QR salga tanto en el PDF automático como al imprimir desde
+      // una pestaña (modo "abrir"). Las planchas ya dejan lugar → sin reserva.
+      planchaId = sanitizeCutName(found.catalogoId || tamano.id) || null;
+      if (planchaId) {
+        template.cutId = planchaId;
+        template.conQr = true;
+      }
     } else if (tamano.tipo === 'custom') {
       isCustomGrid = true;
       const wmm = Number(tamano.wmm);
@@ -207,6 +226,8 @@ export async function buildOrderJobs(order, { templates, readFileBytes }) {
       assignmentsFront,
       assignmentsBack: [],
       minPages,
+      // Id de plancha para el corte por QR (null en grillas custom).
+      planchaId,
     });
   }
 
