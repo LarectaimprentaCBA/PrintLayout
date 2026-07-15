@@ -1802,7 +1802,10 @@ export default function App() {
                   showText: true,
                 },
               });
-              const pdfPath = `${outputDir}/Pedidos/${safeFileName(spec.name)}.pdf`;
+              // El PDF listo-para-imprimir va a la RAÍZ de la carpeta de entrega
+              // (a la vista, como los PDF de Dobble); el .pljob queda en /Pedidos
+              // como fallback para retocar.
+              const pdfPath = `${outputDir}/${safeFileName(spec.name)}.pdf`;
               await window.printlayout.intake.savePhotoPdf(pdfPath, bytes);
             } catch (_) { /* el .pljob ya quedó entregado; el PDF es un extra */ }
           }
