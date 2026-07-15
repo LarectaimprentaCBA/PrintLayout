@@ -16,9 +16,15 @@ UNITS_PER_MM = 40
 # Headers descubiertos por captura. Los CMD: que aparecen son constantes
 # para esta maquina; los que cambian segun el job estan parametrizados.
 
+# CMD:32 lleva el tamaño de la HOJA FÍSICA (primer par) = ventana interior +
+# 2*margen. ANTES estaba hardcodeado 19000,13000 (≈Super A3): coincidía de casualidad
+# con las hojas Super A3 (Dobble) y andaba, pero con una hoja más chica (ej. A4) el
+# plotter cree que la hoja es 475×325mm y el cabezal se mueve como para esa hoja
+# gigante (registración corrida/rotada). Verificado contra .plt reales de Corel:
+# cartas/Caja (interior 452×302) traen CMD:32 = 472×322 = interior + 20mm.
 HEADER_CON_MARCAS = (
     "IN FSIZE{W},{H} "
-    "CMD:32,19000,13000,{m},{m};"
+    "CMD:32,{SW},{SH},{m},{m};"
     "CMD:18,1;"
     "CMD:103,0;"
     "CMD:35,2,1,0;"
@@ -107,7 +113,10 @@ def generar_payload_con_marcas(polilineas_mm, ancho_pagina_mm, alto_pagina_mm,
     W = mm_a_unidades(ancho_pagina_mm)
     H = mm_a_unidades(alto_pagina_mm)
     m = mm_a_unidades(margen_marcas_mm)
-    header = HEADER_CON_MARCAS.format(W=W, H=H, m=m)
+    # Hoja física = ventana interior + 2*margen (primer par de CMD:32).
+    SW = W + 2 * m
+    SH = H + 2 * m
+    header = HEADER_CON_MARCAS.format(W=W, H=H, SW=SW, SH=SH, m=m)
     movs = generar_movimientos(polilineas_mm)
     park = f" U{W + 200},200"
     txt = header + prueba_cuchilla(blade_offset_mm) + movs + park + FIN_CON_MARCAS
