@@ -1160,6 +1160,7 @@ export default function App() {
     markMarginMm = 0,
     cutShape = 'rect',
     doubleSided = false,
+    conQr = true,
     gridParams,
   }) => {
     // Solo generamos cortes si va a poder usarlos (necesita marcas L para
@@ -1186,6 +1187,9 @@ export default function App() {
       markMarginMm,
       cutShape,
       doubleSided,
+      // ¿Se dibuja el QR de corte en la hoja? Al crear "Con QR" ya reservó la
+      // franja inferior (las celdas vienen subidas en `cells`).
+      conQr,
       backMirror: doubleSided ? 'x' : undefined,
       backRotate180: doubleSided ? false : undefined,
       singlePage: true,
@@ -2186,7 +2190,8 @@ export default function App() {
   // oficial). Regenera cortes y, si es doble faz, conserva espejo/rotación.
   const submitEditGeometry = async ({
     paperWidthMm, paperHeightMm, cells,
-    cutMarginMm = 0, markMarginMm = 0, cutShape = 'rect', doubleSided = false, gridParams,
+    cutMarginMm = 0, markMarginMm = 0, cutShape = 'rect', doubleSided = false,
+    conQr = true, gridParams,
   }) => {
     const base = editGeometryTemplate;
     setEditGeometryTemplate(null);
@@ -2207,6 +2212,7 @@ export default function App() {
         markMarginMm,
         cutShape,
         doubleSided,
+        conQr,
         backMirror: doubleSided ? (base.backMirror || 'x') : undefined,
         backRotate180: doubleSided ? !!base.backRotate180 : undefined,
         backFlip: undefined,
@@ -2520,8 +2526,8 @@ export default function App() {
         paperHeightMm: customPaper?.heightMm,
         // El QR es parte de la hoja con corte: se imprime SOLO en el frente, en
         // la misma posición que la vista previa. Solo si la hoja tiene cortes,
-        // nombre y config cargada.
-        qr: (!isBack && hasCuts(selected) && selected.cutId && qrConfig) ? {
+        // nombre, config cargada y el interruptor "QR" prendido (conQr).
+        qr: (!isBack && (selected.conQr ?? true) && hasCuts(selected) && selected.cutId && qrConfig) ? {
           text: selected.cutId,
           sizeMm: qrConfig.qrSizeMm,
           bottomMm: qrConfig.qrBottomMm,
@@ -2864,7 +2870,7 @@ export default function App() {
             face={viewingFace}
             showBackground={viewingFace !== 'back'}
             showCuts={showCuts}
-            qr={hasCuts(selected) && selected.cutId && qrConfig ? {
+            qr={(selected?.conQr ?? true) && hasCuts(selected) && selected.cutId && qrConfig ? {
               text: selected.cutId,
               sizeMm: qrConfig.qrSizeMm,
               bottomMm: qrConfig.qrBottomMm,
@@ -2900,6 +2906,9 @@ export default function App() {
             onEditMargin={handleEditMargin}
             onSetCutId={(v) => updateActiveTab((tab) => (tab.template
               ? { template: { ...tab.template, cutId: v }, isDirty: true }
+              : {}))}
+            onSetConQr={(v) => updateActiveTab((tab) => (tab.template
+              ? { template: { ...tab.template, conQr: v }, isDirty: true }
               : {}))}
             dobbleBusy={dobbleBusy}
             onReposeDobble={handleReposeDobble}
@@ -3009,6 +3018,8 @@ export default function App() {
             onCancel={() => { setGridModalOpen(false); setGridForDobbleReceta(null); }}
             presets={paperPresetList}
             onOpenPresetsEditor={() => setPresetsModalOpen(true)}
+            qrConfig={qrConfig}
+            showQrReserve={!gridForDobbleReceta}
             defaultCutShape={gridForDobbleReceta ? 'circle' : 'rect'}
             {...(gridForDobbleReceta ? {
               title: 'Plantilla redonda para el mazo Dobble',
@@ -3040,6 +3051,7 @@ export default function App() {
             initial={{
               ...gridParamsForEdit(editGeometryTemplate),
               doubleSided: !!editGeometryTemplate.doubleSided,
+              conQr: editGeometryTemplate.conQr !== false,
             }}
             title={`Editar medidas — ${editGeometryTemplate.name}`}
             description="Cambiá medidas, márgenes, separación y cortes. Se guarda sobre la misma plantilla."
@@ -3048,6 +3060,7 @@ export default function App() {
             onCancel={() => setEditGeometryTemplate(null)}
             presets={paperPresetList}
             onOpenPresetsEditor={() => setPresetsModalOpen(true)}
+            qrConfig={qrConfig}
           />
         )}
 

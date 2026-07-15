@@ -16,6 +16,13 @@ export default function GridUploadModal({
   onCancel,
   presets,
   onOpenPresetsEditor,
+  // Config del server QR (qrBottomMm/qrSizeMm). Con esto y el margen de la
+  // grilla derivamos la franja inferior a reservar para que el QR de corte no
+  // pise la última fila. null = usar los defaults (9.5 / 8 mm).
+  qrConfig = null,
+  // Muestra el checkbox "Con QR (reserva el espacio)" y aplica la reserva.
+  // Se apaga en el flujo Dobble (posado de mazo), que tiene su propio armado.
+  showQrReserve = true,
   // Modo edición: si `initial` viene cargado, el modal arranca con esos valores
   // (medidas de una plantilla existente) y cambian los textos. Montar con un
   // `key` distinto por plantilla para que el prefill se aplique en limpio.
@@ -48,6 +55,9 @@ export default function GridUploadModal({
   const [cutMargin, setCutMargin] = useState(s(ini.cutMargin, '0'));
   const [markMargin, setMarkMargin] = useState(s(ini.markMargin, '10'));
   const [doubleSided, setDoubleSided] = useState(!!ini.doubleSided);
+  // "Con QR": al crear, reserva la franja del QR abajo Y marca template.conQr.
+  // Default ON (tanto al crear como al re-editar una plantilla que ya lo tenía).
+  const [conQr, setConQr] = useState(ini.conQr !== false);
   const [cutShape, setCutShape] = useState(ini.cutShape || defaultCutShape || 'rect'); // 'rect' | 'circle'
   const [diameter, setDiameter] = useState(s(ini.diameter, '60'));
   const [rotateMode, setRotateMode] = useState(ini.rotateMode || 'auto'); // 'auto' | 'direct' | 'rotated'
@@ -107,6 +117,20 @@ export default function GridUploadModal({
     }
   }, [paperId, paperList]);
 
+  // Franja inferior a reservar para el QR de corte. Solo tiene sentido si la
+  // hoja va a llevar corte (markMargin>0, hay marcas → puede haber QR) y el
+  // usuario dejó "Con QR" tildado. Fórmula: el QR se ancla en qrBottomMm (centro)
+  // y ocupa ±qrSizeMm/2; +1mm de quiet zone +1mm de seguridad; le restamos el
+  // margen inferior que la grilla ya deja libre. Clamp a >=0.
+  const qrBottomMm = Number(qrConfig?.qrBottomMm ?? 9.5);
+  const qrSizeMm = Number(qrConfig?.qrSizeMm ?? 8);
+  const marginNum = parseNum(margin) || 0;
+  const markMarginNum = Math.max(0, parseNum(markMargin) || 0);
+  const wantQrReserve = showQrReserve && conQr && markMarginNum > 0;
+  const bottomReserveMm = wantQrReserve
+    ? Math.max(0, qrBottomMm + qrSizeMm / 2 + 1 + 1 - marginNum)
+    : 0;
+
   const params = useMemo(() => {
     const d = parseNum(diameter);
     const isCircle = cutShape === 'circle';
@@ -120,8 +144,9 @@ export default function GridUploadModal({
       marginY: parseNum(margin) || 0,
       spacingX: parseNum(spacingX) || 0,
       spacingY: parseNum(spacingY) || 0,
+      bottomReserveMm,
     };
-  }, [paperW, paperH, cellW, cellH, diameter, cutShape, margin, spacingX, spacingY]);
+  }, [paperW, paperH, cellW, cellH, diameter, cutShape, margin, spacingX, spacingY, bottomReserveMm]);
 
   const valid = (
     params.paperW > 0 && params.paperH > 0
@@ -167,6 +192,9 @@ export default function GridUploadModal({
       markMarginMm,
       cutShape,
       doubleSided,
+      // ¿Se dibuja el QR de corte en la hoja? Al crear "Con QR" además reservó
+      // la franja inferior (bottomReserveMm) para que no pise la última fila.
+      conQr,
       // Parámetros crudos de la grilla: se guardan en la plantilla para poder
       // re-editar las medidas con exactitud más adelante.
       gridParams: {
@@ -209,6 +237,7 @@ export default function GridUploadModal({
               cutShape={cutShape}
               cutMarginMm={cutMarginMm}
               markMarginMm={markMarginMm}
+              bottomReserveMm={params.bottomReserveMm}
               maxW={620}
               maxH={580}
             />
@@ -451,6 +480,40 @@ export default function GridUploadModal({
               </label>
             </div>
           </div>
+
+          {showQrReserve && (
+          <div className="pt-2 mt-2 border-t border-ink-700">
+            <label className="flex cursor-pointer items-start gap-2">
+              <input
+                type="checkbox"
+                checked={conQr}
+                onChange={(e) => setConQr(e.target.checked)}
+                className="mt-0.5 accent-accent-600"
+              />
+              <span className="text-xs">
+                <span className="block text-ink-200">Con QR (reserva el espacio)</span>
+                <span className="block text-[10px] leading-snug text-ink-500">
+                  Deja libre una franja abajo para el QR de corte, así no pisa la
+                  última fila.{' '}
+                  {markMarginNum <= 0 ? (
+                    <span className="text-amber-400">
+                      Esta hoja no tiene corte (margen de marcas en 0), así que no
+                      reserva nada.
+                    </span>
+                  ) : conQr && bottomReserveMm > 0 ? (
+                    <span className="text-ink-400">
+                      Reserva ~{bottomReserveMm.toFixed(1)} mm.
+                    </span>
+                  ) : (
+                    <span className="text-ink-400">
+                      Destildado: la hoja usa el alto completo y no se dibuja el QR.
+                    </span>
+                  )}
+                </span>
+              </span>
+            </label>
+          </div>
+          )}
 
           <div className="pt-2 mt-2 border-t border-ink-700">
             <label className="flex cursor-pointer items-start gap-2">

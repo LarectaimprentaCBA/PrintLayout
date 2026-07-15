@@ -9,9 +9,16 @@ export function computeGrid({
   marginY = 0,
   spacingX = 0,
   spacingY = 0,
+  bottomReserveMm = 0,
 }) {
+  // Franja reservada al pie de la hoja (para el QR de corte, que se ancla al
+  // borde físico inferior). Reduce el alto útil SOLO por abajo, sin tocar el
+  // margen superior. Con reserve=0 el comportamiento es IDÉNTICO al histórico
+  // (celdas centradas verticalmente); con reserve>0 las celdas se empacan
+  // pegadas al margen de arriba dejando libre la franja de abajo.
+  const reserve = Math.max(0, Number(bottomReserveMm) || 0);
   const usableW = paperW - 2 * marginX;
-  const usableH = paperH - 2 * marginY;
+  const usableH = paperH - 2 * marginY - reserve;
   if (usableW <= 0 || usableH <= 0 || cellW <= 0 || cellH <= 0) {
     return { cells: [], cols: 0, rows: 0 };
   }
@@ -26,7 +33,12 @@ export function computeGrid({
   const totalGridW = cols * cellW + (cols - 1) * spacingX;
   const totalGridH = rows * cellH + (rows - 1) * spacingY;
   const startX = marginX + (usableW - totalGridW) / 2;
-  const startY = marginY + (usableH - totalGridH) / 2;
+  // Con reserva, las celdas quedan pegadas al margen superior (startY = marginY)
+  // y toda la holgura vertical cae abajo, junto a la franja del QR. Sin reserva,
+  // centrado vertical como siempre.
+  const startY = reserve > 0
+    ? marginY
+    : marginY + (usableH - totalGridH) / 2;
   const cells = [];
   let id = 0;
   for (let r = 0; r < rows; r++) {
@@ -181,9 +193,15 @@ export function centerCellsInSheet(cells, {
   innerH,
   marginX = 0,
   marginY = 0,
+  bottomReserveMm = 0,
   tol = 0.01,
 } = {}) {
   if (!Array.isArray(cells) || cells.length === 0) return cells;
+
+  // Franja reservada al pie: reduce el alto efectivo del centrado vertical.
+  // Con reserve=0 es idéntico al comportamiento histórico.
+  const reserve = Math.max(0, Number(bottomReserveMm) || 0);
+  const effInnerH = innerH - reserve;
 
   const groupBy = (getKey) => {
     const groups = [];
@@ -200,7 +218,7 @@ export function centerCellsInSheet(cells, {
     for (const g of groupBy((c) => c.x)) {
       const minY = Math.min(...g.items.map((c) => c.y));
       const maxY = Math.max(...g.items.map((c) => c.y + c.h));
-      const dy = marginY + (innerH - (maxY - minY)) / 2 - minY;
+      const dy = marginY + (effInnerH - (maxY - minY)) / 2 - minY;
       for (const c of g.items) c.y += dy;
     }
     const minX = Math.min(...cells.map((c) => c.x));
@@ -216,7 +234,7 @@ export function centerCellsInSheet(cells, {
     }
     const minY = Math.min(...cells.map((c) => c.y));
     const maxY = Math.max(...cells.map((c) => c.y + c.h));
-    const dy = marginY + (innerH - (maxY - minY)) / 2 - minY;
+    const dy = marginY + (effInnerH - (maxY - minY)) / 2 - minY;
     for (const c of cells) c.y += dy;
   }
   return cells;

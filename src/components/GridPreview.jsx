@@ -34,6 +34,7 @@ export default function GridPreview({
   cutShape = 'rect',
   cutMarginMm = 0,
   markMarginMm = 0,
+  bottomReserveMm = 0,
   maxW = DEFAULT_MAX_W,
   maxH = DEFAULT_MAX_H,
 }) {
@@ -56,11 +57,16 @@ export default function GridPreview({
     );
   }
 
+  const reserve = Math.max(0, Number(bottomReserveMm) || 0);
   const usableW = paperW - 2 * marginX;
-  const usableH = paperH - 2 * marginY;
+  const usableH = paperH - 2 * marginY - reserve;
   const showMargin = (marginX > 0 || marginY > 0) && usableW > 0 && usableH > 0;
   const showMarks = markMarginMm > 0;
   const showCutLines = cutMarginMm > 0 && cells.length > 0;
+  // Franja reservada para el QR de corte (banda inferior). Va desde donde
+  // terminan las celdas hasta el borde inferior de la hoja.
+  const showReserve = reserve > 0 && paperH > 0;
+  const reserveY = paperH - marginY - reserve;
 
   // Marcas L: 4 esquinas, cada una con 2 lineas perpendiculares apuntando al
   // interior del area imprimible.
@@ -115,6 +121,34 @@ export default function GridPreview({
           strokeDasharray="3,3"
           vectorEffect="non-scaling-stroke"
         />
+      )}
+
+      {/* 2b) Franja reservada para el QR de corte */}
+      {showReserve && (
+        <>
+          <rect
+            x={0}
+            y={reserveY}
+            width={paperW}
+            height={paperH - reserveY}
+            fill="rgba(245,158,11,0.10)"
+            stroke="rgba(245,158,11,0.55)"
+            strokeWidth={1}
+            strokeDasharray="3,3"
+            vectorEffect="non-scaling-stroke"
+          />
+          <text
+            x={paperW / 2}
+            y={(reserveY + paperH) / 2}
+            textAnchor="middle"
+            dominantBaseline="middle"
+            fill="#b45309"
+            fontSize={Math.max(4, Math.min(reserve * 0.6, paperW / 40))}
+            fontFamily="ui-sans-serif, system-ui"
+          >
+            espacio QR
+          </text>
+        </>
       )}
 
       {/* 3) Marcas L */}

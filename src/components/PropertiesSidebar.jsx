@@ -95,6 +95,7 @@ export default function PropertiesSidebar({
   onShare,
   onEditMargin,
   onSetCutId,
+  onSetConQr,
   dobbleBusy = false,
   onReposeDobble,
   onChangeDobbleColor,
@@ -702,6 +703,27 @@ export default function PropertiesSidebar({
                 )}
               </dd>
             </div>
+            {hasCuts(template) && onSetConQr && (
+              <div className="flex items-center justify-between">
+                <dt className="text-ink-400">Dibujar QR</dt>
+                <dd>
+                  <label
+                    className="flex cursor-pointer items-center gap-1.5"
+                    title="Prende o apaga el dibujo del QR de corte en la hoja. No modifica la plantilla ni mueve las celdas: sólo se ve/no se ve en pantalla y en la impresión. Apagalo en plantillas donde el QR pisaría."
+                  >
+                    <input
+                      type="checkbox"
+                      checked={template.conQr !== false}
+                      onChange={(e) => onSetConQr(e.target.checked)}
+                      className="accent-accent-600"
+                    />
+                    <span className="text-xs text-ink-300">
+                      {template.conQr !== false ? 'Sí' : 'No'}
+                    </span>
+                  </label>
+                </dd>
+              </div>
+            )}
             {hasCuts(template) && onSetCutId && (
               <div className="flex items-center justify-between">
                 <dt className="text-ink-400">Nombre del corte (QR)</dt>
