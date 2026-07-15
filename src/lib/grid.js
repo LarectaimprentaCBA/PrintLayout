@@ -10,15 +10,20 @@ export function computeGrid({
   spacingX = 0,
   spacingY = 0,
   bottomReserveMm = 0,
+  topReserveMm = 0,
 }) {
-  // Franja reservada al pie de la hoja (para el QR de corte, que se ancla al
-  // borde físico inferior). Reduce el alto útil SOLO por abajo, sin tocar el
-  // margen superior. Con reserve=0 el comportamiento es IDÉNTICO al histórico
-  // (celdas centradas verticalmente); con reserve>0 las celdas se empacan
-  // pegadas al margen de arriba dejando libre la franja de abajo.
-  const reserve = Math.max(0, Number(bottomReserveMm) || 0);
+  // Franjas reservadas para el QR de corte (que se ancla al borde físico
+  // inferior). Reducen el alto útil. Casos:
+  //  - Sin reserva (ambas 0): comportamiento IDÉNTICO al histórico (centrado).
+  //  - Solo abajo (bottomReserve>0, single-faz): celdas pegadas al margen
+  //    superior, la franja del QR queda libre abajo.
+  //  - Simétrica (top y bottom>0, DOBLE FAZ): celdas CENTRADAS en la hoja con la
+  //    misma franja libre arriba y abajo (para que al dar vuelta la hoja el
+  //    posado quede balanceado). El QR igual va solo abajo.
+  const bottomReserve = Math.max(0, Number(bottomReserveMm) || 0);
+  const topReserve = Math.max(0, Number(topReserveMm) || 0);
   const usableW = paperW - 2 * marginX;
-  const usableH = paperH - 2 * marginY - reserve;
+  const usableH = paperH - 2 * marginY - topReserve - bottomReserve;
   if (usableW <= 0 || usableH <= 0 || cellW <= 0 || cellH <= 0) {
     return { cells: [], cols: 0, rows: 0 };
   }
@@ -33,12 +38,15 @@ export function computeGrid({
   const totalGridW = cols * cellW + (cols - 1) * spacingX;
   const totalGridH = rows * cellH + (rows - 1) * spacingY;
   const startX = marginX + (usableW - totalGridW) / 2;
-  // Con reserva, las celdas quedan pegadas al margen superior (startY = marginY)
-  // y toda la holgura vertical cae abajo, junto a la franja del QR. Sin reserva,
-  // centrado vertical como siempre.
-  const startY = reserve > 0
-    ? marginY
-    : marginY + (usableH - totalGridH) / 2;
+  // Alineación vertical:
+  //  - Reserva simétrica (topReserve>0, doble faz): centrado en la hoja.
+  //  - Reserva solo abajo (single-faz): pegado al margen superior.
+  //  - Sin reserva: centrado (histórico).
+  const startY = topReserve > 0
+    ? marginY + topReserve + (usableH - totalGridH) / 2
+    : bottomReserve > 0
+      ? marginY
+      : marginY + (usableH - totalGridH) / 2;
   const cells = [];
   let id = 0;
   for (let r = 0; r < rows; r++) {

@@ -35,6 +35,7 @@ export default function GridPreview({
   cutMarginMm = 0,
   markMarginMm = 0,
   bottomReserveMm = 0,
+  topReserveMm = 0,
   maxW = DEFAULT_MAX_W,
   maxH = DEFAULT_MAX_H,
 }) {
@@ -58,8 +59,9 @@ export default function GridPreview({
   }
 
   const reserve = Math.max(0, Number(bottomReserveMm) || 0);
+  const topReserve = Math.max(0, Number(topReserveMm) || 0);
   const usableW = paperW - 2 * marginX;
-  const usableH = paperH - 2 * marginY - reserve;
+  const usableH = paperH - 2 * marginY - reserve - topReserve;
   const showMargin = (marginX > 0 || marginY > 0) && usableW > 0 && usableH > 0;
   const showMarks = markMarginMm > 0;
   const showCutLines = cutMarginMm > 0 && cells.length > 0;
@@ -67,6 +69,10 @@ export default function GridPreview({
   // terminan las celdas hasta el borde inferior de la hoja.
   const showReserve = reserve > 0 && paperH > 0;
   const reserveY = paperH - marginY - reserve;
+  // Banda superior simétrica (solo doble faz): misma franja arriba para que el
+  // posado quede centrado. No lleva QR, solo indica la simetría.
+  const showTopReserve = topReserve > 0 && paperH > 0;
+  const topReserveH = marginY + topReserve;
 
   // Marcas L: 4 esquinas, cada una con 2 lineas perpendiculares apuntando al
   // interior del area imprimible.
@@ -117,6 +123,21 @@ export default function GridPreview({
           height={usableH}
           fill="none"
           stroke={COLOR_MARGIN}
+          strokeWidth={1}
+          strokeDasharray="3,3"
+          vectorEffect="non-scaling-stroke"
+        />
+      )}
+
+      {/* 2a) Banda superior simétrica (doble faz) */}
+      {showTopReserve && (
+        <rect
+          x={0}
+          y={0}
+          width={paperW}
+          height={topReserveH}
+          fill="rgba(245,158,11,0.10)"
+          stroke="rgba(245,158,11,0.55)"
           strokeWidth={1}
           strokeDasharray="3,3"
           vectorEffect="non-scaling-stroke"
