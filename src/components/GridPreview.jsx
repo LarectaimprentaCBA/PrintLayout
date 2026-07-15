@@ -69,8 +69,8 @@ export default function GridPreview({
   // terminan las celdas hasta el borde inferior de la hoja.
   const showReserve = reserve > 0 && paperH > 0;
   const reserveY = paperH - marginY - reserve;
-  // Banda superior simétrica (solo doble faz): misma franja arriba para que el
-  // posado quede centrado. No lleva QR, solo indica la simetría.
+  // Banda superior simétrica: misma franja arriba que abajo para que el posado
+  // quede centrado en la hoja. No lleva QR, solo indica la simetría del centrado.
   const showTopReserve = topReserve > 0 && paperH > 0;
   const topReserveH = marginY + topReserve;
 

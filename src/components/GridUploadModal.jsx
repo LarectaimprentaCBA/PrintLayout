@@ -130,10 +130,10 @@ export default function GridUploadModal({
   const bottomReserveMm = wantQrReserve
     ? Math.max(0, qrBottomMm + qrSizeMm / 2 + 1 + 1 - marginNum)
     : 0;
-  // Doble faz: reservamos la MISMA franja arriba y abajo para que el posado
-  // quede CENTRADO en la hoja (el QR igual va solo abajo). Una sola cara: solo
-  // abajo (celdas pegadas arriba).
-  const topReserveMm = doubleSided ? bottomReserveMm : 0;
+  // Reservamos la MISMA franja arriba y abajo (simétrica) para que el posado
+  // quede CENTRADO en la hoja, tanto en una cara como en doble faz. El QR igual
+  // se dibuja SOLO abajo; la franja de arriba es espacio simétrico para centrar.
+  const topReserveMm = bottomReserveMm;
 
   const params = useMemo(() => {
     const d = parseNum(diameter);
