@@ -3393,7 +3393,15 @@ export default function App() {
             <ImageCropModal
               open
               image={croppingImage}
+              sheetImages={layout.images}
               onApply={(updates) => layout.updateImage(croppingImageId, updates)}
+              onApplyAll={(entries) => {
+                layout.updateImages(entries);
+                setToast({
+                  kind: 'success',
+                  text: `Recorte aplicado a ${entries.length} ${entries.length === 1 ? 'imagen' : 'imágenes'}. (Ctrl+Z para deshacer)`,
+                });
+              }}
               onClose={() => setCroppingImageId(null)}
             />
           );
@@ -3409,7 +3417,15 @@ export default function App() {
               open
               image={editingImage}
               template={selected}
+              sheetImages={layout.images}
               onSave={(updates) => layout.updateImage(editingImageId, updates)}
+              onApplyAll={(entries) => {
+                layout.updateImages(entries);
+                setToast({
+                  kind: 'success',
+                  text: `Edición aplicada a ${entries.length} ${entries.length === 1 ? 'imagen' : 'imágenes'}. (Ctrl+Z para deshacer)`,
+                });
+              }}
               onClose={() => setEditingImageId(null)}
               onTemplateSafetyChange={async (mm) => {
                 if (!selected || selected.temporal) return;

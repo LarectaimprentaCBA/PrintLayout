@@ -16,9 +16,13 @@ export default function ImageEditorModal({
   image,
   template,
   onSave,
+  onApplyAll,
+  sheetImages = [],
   onClose,
   onTemplateSafetyChange,
 }) {
+  // Cantidad de imagenes en la hoja (para "aplicar a todas"). Incluye la actual.
+  const sheetCount = Array.isArray(sheetImages) ? sheetImages.length : 0;
   // Tamano declarado y target en mm (strings para inputs).
   const [actualW, setActualW] = useState('');
   const [actualH, setActualH] = useState('');
@@ -41,6 +45,8 @@ export default function ImageEditorModal({
   // Estado de UI.
   const [previewUrl, setPreviewUrl] = useState(null);
   const [busy, setBusy] = useState(false);
+  // Progreso del "aplicar a todas" (null = no esta corriendo).
+  const [bulkProgress, setBulkProgress] = useState(null); // { done, total }
   const [pickingColor, setPickingColor] = useState(false);
   const [showGuides, setShowGuides] = useState(true);
   const [draggingHandle, setDraggingHandle] = useState(null); // null | 'tl' | 'tr' | 'bl' | 'br' | 'move'
@@ -268,6 +274,54 @@ export default function ImageEditorModal({
       console.error('apply fallo:', err);
     } finally {
       setBusy(false);
+    }
+  };
+
+  // Aplica la MISMA edicion (metodo de relleno + tamanos + posicion) a todas
+  // las imagenes de la hoja. Pensado para lotes iguales (ej. 20 etiquetas del
+  // mismo posado): dialas el sangrado en una y se replica identico en todas.
+  const applyAll = async () => {
+    if (aw <= 0 || ah <= 0 || tw <= 0 || th <= 0) return;
+    const targets = sheetCount > 0 ? sheetImages : [image];
+    setBusy(true);
+    setBulkProgress({ done: 0, total: targets.length });
+    try {
+      const cfg = methodConfig({
+        method, stripPx, color, shrinkPercent, shrinkFillMode, centerRectMm, cropPercent, radialStyle, edgeGrowStyle,
+        offsetMm: imageOffsetMm,
+      });
+      const entries = [];
+      for (const img of targets) {
+        if (!img?.dataUrl) {
+          setBulkProgress({ done: entries.length, total: targets.length });
+          continue;
+        }
+        const out = await extendWithMethod(
+          img.dataUrl,
+          { w: aw, h: ah },
+          { w: tw, h: th },
+          cfg,
+        );
+        entries.push({
+          id: img.id,
+          updates: {
+            dataUrl: out.dataUrl,
+            width: out.width,
+            height: out.height,
+            physicalSizeMm: out.sizeMm,
+            faces: [],
+            autoZoomed: false,
+          },
+        });
+        setBulkProgress({ done: entries.length, total: targets.length });
+      }
+      onApplyAll?.(entries);
+      onClose?.();
+    } catch (err) {
+      console.error('apply-all fallo:', err);
+    } finally {
+      setBusy(false);
+      setBulkProgress(null);
     }
   };
 
@@ -1281,7 +1335,9 @@ export default function ImageEditorModal({
 
         <div className="flex items-center justify-between gap-2 border-t border-ink-700 px-4 py-2">
           <span className="text-[11px] text-ink-500">
-            {busy ? 'Procesando…' : 'Live preview con cambios'}
+            {bulkProgress
+              ? `Aplicando a todas… ${bulkProgress.done}/${bulkProgress.total}`
+              : busy ? 'Procesando…' : 'Live preview con cambios'}
           </span>
           <div className="flex gap-2">
             <button
@@ -1290,6 +1346,16 @@ export default function ImageEditorModal({
             >
               Cancelar
             </button>
+            {onApplyAll && sheetCount > 1 && (
+              <button
+                onClick={applyAll}
+                disabled={busy}
+                className="rounded border border-accent-500 bg-accent-500/15 px-3 py-1 text-xs font-medium text-accent-200 hover:bg-accent-500/25 disabled:opacity-50"
+                title={`Aplica esta misma edición a las ${sheetCount} imágenes de la hoja. Se puede deshacer con Ctrl+Z.`}
+              >
+                {busy ? 'Procesando…' : `Aplicar a todas (${sheetCount})`}
+              </button>
+            )}
             <button
               onClick={apply}
               disabled={busy}

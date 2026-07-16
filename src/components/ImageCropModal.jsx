@@ -21,9 +21,11 @@ function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
 }
 
-export default function ImageCropModal({ open, image, onApply, onClose }) {
+export default function ImageCropModal({ open, image, onApply, onApplyAll, sheetImages = [], onClose }) {
   const W = image?.width ?? 0;
   const H = image?.height ?? 0;
+  // Cantidad de imagenes en la hoja (para "aplicar a todas"). Incluye la actual.
+  const sheetCount = Array.isArray(sheetImages) ? sheetImages.length : 0;
 
   const [mode, setMode] = useState('rect'); // 'rect' | 'poly'
   const [rect, setRect] = useState(null); // {x,y,w,h} en px de la imagen
@@ -32,6 +34,8 @@ export default function ImageCropModal({ open, image, onApply, onClose }) {
   const [busy, setBusy] = useState(false);
   const [detectResult, setDetectResult] = useState(null); // 'ok' | 'fail' | null
   const [error, setError] = useState(null);
+  // Progreso del "aplicar a todas" (null = no esta corriendo).
+  const [bulkProgress, setBulkProgress] = useState(null); // { done, total }
 
   // Zoom y pan del viewport. zoom=1 = fit-to-screen.
   // pan en pixeles del viewport (DOM).
@@ -442,6 +446,92 @@ export default function ImageCropModal({ open, image, onApply, onClose }) {
       setError(err.message || 'No se pudo aplicar el recorte.');
     } finally {
       setBusy(false);
+    }
+  }
+
+  // Aplica el MISMO recorte a todas las imagenes de la hoja. El recorte se
+  // expresa en coordenadas normalizadas (fracciones del ancho/alto) para que
+  // caiga en la MISMA region relativa en cada imagen — pensado para lotes de
+  // imagenes iguales (ej. 20 etiquetas del mismo posado, cambia el sabor).
+  async function handleApplyAll() {
+    if (!image || busy) return;
+    // Receta normalizada del recorte actual.
+    let recipe;
+    if (mode === 'rect' || mode === 'circle') {
+      if (!rect || rect.w < 2 || rect.h < 2) {
+        setError('El recorte es demasiado chico.');
+        return;
+      }
+      if (rect.x === 0 && rect.y === 0 && rect.w === W && rect.h === H) {
+        setError('No hay recorte para aplicar (cubre toda la imagen).');
+        return;
+      }
+      recipe = {
+        mode,
+        nx: rect.x / W, ny: rect.y / H, nw: rect.w / W, nh: rect.h / H,
+      };
+    } else {
+      if (!polyClosed || poly.length < 3) {
+        setError('Cerrá el polígono antes de aplicar.');
+        return;
+      }
+      recipe = { mode: 'poly', pts: poly.map((p) => ({ nx: p.x / W, ny: p.y / H })) };
+    }
+
+    const targets = sheetCount > 0 ? sheetImages : [image];
+    setBusy(true);
+    setError(null);
+    setBulkProgress({ done: 0, total: targets.length });
+    try {
+      const entries = [];
+      for (const img of targets) {
+        const sw = img?.width || 0;
+        const sh = img?.height || 0;
+        if (!img?.dataUrl || sw < 2 || sh < 2) {
+          setBulkProgress({ done: entries.length, total: targets.length });
+          continue;
+        }
+        let result;
+        if (recipe.mode === 'rect') {
+          const r = { x: recipe.nx * sw, y: recipe.ny * sh, w: recipe.nw * sw, h: recipe.nh * sh };
+          result = await cropRectFromDataUrl(img.dataUrl, r);
+        } else if (recipe.mode === 'circle') {
+          const r = { x: recipe.nx * sw, y: recipe.ny * sh, w: recipe.nw * sw, h: recipe.nh * sh };
+          result = await cropEllipseFromDataUrl(img.dataUrl, r);
+        } else {
+          const pts = recipe.pts.map((p) => ({ x: p.nx * sw, y: p.ny * sh }));
+          result = await cropPolygonFromDataUrl(img.dataUrl, pts);
+        }
+        let physicalSizeMm = img.physicalSizeMm ?? null;
+        if (physicalSizeMm && sw > 0 && sh > 0) {
+          physicalSizeMm = {
+            w: physicalSizeMm.w * (result.width / sw),
+            h: physicalSizeMm.h * (result.height / sh),
+          };
+        }
+        entries.push({
+          id: img.id,
+          updates: {
+            dataUrl: result.dataUrl,
+            width: result.width,
+            height: result.height,
+            physicalSizeMm,
+            faces: [],
+            autoZoomed: false,
+            coverCropRect: null,
+            focalPoint: null,
+          },
+        });
+        setBulkProgress({ done: entries.length, total: targets.length });
+      }
+      onApplyAll?.(entries);
+      onClose?.();
+    } catch (err) {
+      console.error('Apply-all crop fallo:', err);
+      setError(err.message || 'No se pudo aplicar a todas.');
+    } finally {
+      setBusy(false);
+      setBulkProgress(null);
     }
   }
 
@@ -869,6 +959,9 @@ export default function ImageCropModal({ open, image, onApply, onClose }) {
             {mode === 'poly' && (
               <>Polígono: {poly.length} {poly.length === 1 ? 'punto' : 'puntos'}{polyClosed ? ' (cerrado)' : ' (abierto)'}</>
             )}
+            {bulkProgress && (
+              <span className="ml-3 text-accent-300">Aplicando a todas… {bulkProgress.done}/{bulkProgress.total}</span>
+            )}
             {error && <span className="ml-3 text-red-300">{error}</span>}
           </div>
           <div className="flex items-center gap-2">
@@ -880,6 +973,17 @@ export default function ImageCropModal({ open, image, onApply, onClose }) {
             >
               Cancelar
             </button>
+            {onApplyAll && sheetCount > 1 && (
+              <button
+                type="button"
+                onClick={handleApplyAll}
+                disabled={busy || (mode === 'poly' && (!polyClosed || poly.length < 3))}
+                className="rounded border border-accent-500 bg-accent-500/15 px-4 py-1.5 font-medium text-accent-200 hover:bg-accent-500/25 disabled:opacity-50"
+                title={`Aplica este mismo recorte a las ${sheetCount} imágenes de la hoja. Se puede deshacer con Ctrl+Z.`}
+              >
+                {busy ? 'Procesando…' : `Aplicar a todas (${sheetCount})`}
+              </button>
+            )}
             <button
               type="button"
               onClick={handleApply}

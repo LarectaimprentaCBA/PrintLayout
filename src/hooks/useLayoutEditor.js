@@ -732,6 +732,18 @@ export function useLayoutEditor(template, face = 'front') {
     );
   }, []);
 
+  // Aplica varios cambios de imagen en UNA sola operacion (un solo setState ->
+  // un solo snapshot de historial, asi "deshacer" revierte todo el lote de una).
+  // entries: [{ id, updates }]. Se usa para "aplicar la misma edicion a todas".
+  const updateImages = useCallback((entries) => {
+    if (!Array.isArray(entries) || entries.length === 0) return;
+    const byId = new Map(entries.filter((e) => e && e.id).map((e) => [e.id, e.updates || {}]));
+    if (byId.size === 0) return;
+    setImages((prev) =>
+      prev.map((img) => (byId.has(img.id) ? { ...img, ...byId.get(img.id) } : img)),
+    );
+  }, []);
+
   // Carga el estado completo desde un job guardado. Sobreescribe images +
   // assignments + minPages directamente, resetea el historial al snapshot
   // cargado, y marca skipNextSnapshot para que NO se cuente como accion
@@ -800,6 +812,7 @@ export function useLayoutEditor(template, face = 'front') {
     clearCell,
     removeImage,
     updateImage,
+    updateImages,
     clearAll,
     undo,
     redo,
