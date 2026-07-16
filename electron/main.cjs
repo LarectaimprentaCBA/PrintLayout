@@ -1,4 +1,6 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const {
+  app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, nativeImage,
+} = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -53,58 +55,144 @@ function resolvePythonBin() {
 }
 const PYTHON_BIN = resolvePythonBin();
 
-let isQuittingConfirmed = false;
+// Ícono de la app (bandeja + ventana). PNG 32×32 embebido en base64: el proyecto
+// no trae archivo de ícono, así el ícono es autocontenido (dev e instalado) y no
+// depende de configurar el build.
+const APP_ICON_B64 =
+  'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAZUlEQVR4nO3RMQ4AIAgDQCf/'
+  + '/xpf4n90cgUkYDFpEyYTepHWmMrpY66IgRW7INKCE++7CQEFaF8YARARBJQBZOUfAPwEBBA'
+  + 'AB2TlHwD8BATAABoiAiCWlwBYTuEdU3kG5LqYeZkNxYpURqvulikAAAAASUVORK5CYII=';
+function appIconImage() {
+  try {
+    const img = nativeImage.createFromDataURL(`data:image/png;base64,${APP_ICON_B64}`);
+    return img.isEmpty() ? nativeImage.createEmpty() : img;
+  } catch (_) {
+    return nativeImage.createEmpty();
+  }
+}
+
+let mainWindow = null;
+let tray = null;
+let trayBalloonShown = false;
+// app.isQuitting = true SÓLO en un cierre real (menú "Salir" o instalar update).
+// La X esconde en la bandeja; este flag hace que el 'close' deje cerrar de verdad.
+app.isQuitting = false;
+
 let dirtyTabCount = 0;
 
-// El renderer reporta cuántas tabs tienen cambios sin guardar. Lo usamos en el
-// evento `close` para decidir si avisar — SIN depender de que el renderer
-// responda (si está colgado, antes la app no se cerraba y el instalador "no la
-// podía cerrar").
+// El renderer reporta cuántas tabs tienen cambios sin guardar. Lo usamos al
+// SALIR de verdad para avisar (el cierre no depende del renderer).
 ipcMain.on('app:dirty-count', (_evt, n) => {
   dirtyTabCount = Math.max(0, Number(n) || 0);
 });
 
+// Instancia única: si ya hay una corriendo (en la bandeja) y el operario hace
+// doble clic en el acceso directo, esta segunda instancia se cierra y le pide a
+// la primera que muestre/enfoque su ventana (no abre una segunda).
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => showMainWindow());
+}
+
+// Muestra/enfoca la ventana principal (desde el tray, el segundo-instance, etc.).
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+// Cierre REAL (menú "Salir"). Avisa si hay cambios sin guardar (que igual se
+// auto-guardan y restauran al reabrir). Cancelar → sigue viva en la bandeja.
+function quitApp() {
+  if (dirtyTabCount > 0 && mainWindow && !mainWindow.isDestroyed()) {
+    showMainWindow();
+    const choice = dialog.showMessageBoxSync(mainWindow, {
+      type: 'warning',
+      buttons: ['Salir', 'Cancelar'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+      title: 'Cambios sin guardar',
+      message: `Hay ${dirtyTabCount} trabajo${dirtyTabCount === 1 ? '' : 's'} con cambios sin guardar.`,
+      detail: 'Se guardan automáticamente y se restauran al reabrir la app.',
+    });
+    if (choice !== 0) return; // Cancelar → no salir
+  }
+  app.isQuitting = true;
+  app.quit();
+}
+
+// Ícono en la bandeja del sistema. Clic (o doble clic) → mostrar la ventana.
+// Menú contextual → Abrir / Salir. Si crear la bandeja falla, NO dejamos la app
+// inaccesible (oculta sin ícono): mostramos la ventana como fallback.
+function createTray() {
+  if (tray) return;
+  try {
+    tray = new Tray(appIconImage());
+    tray.setToolTip('PrintLayout');
+    const menu = Menu.buildFromTemplate([
+      { label: 'Abrir PrintLayout', click: () => showMainWindow() },
+      { type: 'separator' },
+      { label: 'Salir', click: () => quitApp() },
+    ]);
+    tray.setContextMenu(menu);
+    tray.on('click', () => showMainWindow());
+    tray.on('double-click', () => showMainWindow());
+  } catch (err) {
+    console.error('No se pudo crear el ícono de bandeja:', err);
+    tray = null;
+    showMainWindow();
+  }
+}
+
 function createWindow() {
-  const win = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 1000,
     minHeight: 700,
     backgroundColor: '#0b0d10',
     title: 'PrintLayout',
+    icon: appIconImage(),
+    // Arranca OCULTA: la app vive en la bandeja. El renderer igual se carga, así
+    // el trabajo de fondo (intake de fotos, server QR) corre con la ventana oculta.
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      // Que Chromium NO frene los timers del renderer cuando la ventana está
+      // oculta: el armado de pedidos del intake corre en el renderer y tiene que
+      // funcionar a pleno aunque no se vea la ventana.
+      backgroundThrottling: false,
     },
   });
+  const win = mainWindow;
 
-  // Aviso de cambios sin guardar con un diálogo NATIVO del proceso principal.
-  // Antes se preguntaba al renderer (executeJavaScript): si el renderer estaba
-  // colgado, la respuesta nunca volvía, la ventana no se cerraba y el instalador
-  // "no podía cerrar" la app. Ahora la decisión NO depende del renderer.
+  // La X ESCONDE en la bandeja, no cierra. Solo cierra de verdad cuando
+  // app.isQuitting = true (menú "Salir" o instalar update). Así el trabajo de
+  // fondo sigue corriendo y el instalador puede cerrar la app sin depender del
+  // renderer (el flag hace que el 'close' no se cancele).
   win.on('close', (e) => {
-    if (isQuittingConfirmed) return;
-    if (dirtyTabCount > 0) {
-      e.preventDefault();
-      const choice = dialog.showMessageBoxSync(win, {
-        type: 'warning',
-        buttons: ['Cerrar igual', 'Cancelar'],
-        defaultId: 0,
-        cancelId: 1,
-        noLink: true,
-        title: 'Cambios sin guardar',
-        message: `Hay ${dirtyTabCount} trabajo${dirtyTabCount === 1 ? '' : 's'} con cambios sin guardar.`,
-        detail: 'Se guardan automáticamente y se restauran al reabrir. Si querés guardarlos como trabajo nombrado, hacelo antes de cerrar.',
-      });
-      if (choice === 0) {
-        isQuittingConfirmed = true;
-        win.close();
-      }
-      // choice === 1 (Cancelar) → no cerrar (preventDefault ya aplicado).
+    if (app.isQuitting) return;
+    e.preventDefault();
+    win.hide();
+    // La primera vez, avisamos dónde quedó (globo de la bandeja).
+    if (!trayBalloonShown) {
+      trayBalloonShown = true;
+      try {
+        tray?.displayBalloon({
+          title: 'PrintLayout sigue corriendo',
+          content: 'Quedó en la bandeja (al lado del reloj). Clic en el ícono para volver a abrirla.',
+        });
+      } catch (_) { /* el globo no está soportado en este SO */ }
     }
-    // dirtyTabCount === 0 → no preventDefault → la ventana se cierra directo.
   });
+
+  win.on('closed', () => { mainWindow = null; });
 
   if (isDev) {
     win.loadURL('http://localhost:5174');
@@ -1104,12 +1192,10 @@ function setupAutoUpdate(parentWin) {
 
 ipcMain.handle('updater:install-now', () => {
   if (!app.isPackaged) return { ok: false, error: 'Solo en builds instalados.' };
-  // El usuario YA aceptó actualizar: saltear el interceptor de cierre (el
-  // confirm bloqueante de "cambios sin guardar") para que la ventana se cierre
-  // sola y el instalador pueda reemplazar la app. Sin esto, el confirm dejaba
-  // la app colgada y el instalador "no la podía cerrar". El trabajo en curso
-  // igual queda auto-guardado y se restaura al reabrir.
-  isQuittingConfirmed = true;
+  // El usuario YA aceptó actualizar: marcamos cierre real (app.isQuitting) para
+  // que el 'close' de la ventana NO la esconda en la bandeja y el instalador
+  // pueda reemplazar la app. El trabajo en curso igual queda auto-guardado.
+  app.isQuitting = true;
   autoUpdater.quitAndInstall();
   return { ok: true };
 });
@@ -1234,17 +1320,23 @@ ipcMain.handle('qrcut:choose-dir', async () => {
 });
 
 app.whenReady().then(() => {
-  createWindow();
-  const win = BrowserWindow.getAllWindows()[0];
-  setupAutoUpdate(win);
-  intakeService.start(win);
-  qrCutServer.start(win);
+  // Si no obtuvimos el lock de instancia única, esta copia ya llamó app.quit():
+  // no armamos nada (la primera instancia es la que corre).
+  if (!gotSingleInstanceLock) return;
+  createWindow();   // arranca OCULTA (show:false)
+  createTray();     // ícono en la bandeja
+  setupAutoUpdate(mainWindow);
+  intakeService.start(mainWindow);
+  qrCutServer.start(mainWindow);
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    // macOS (dock): si no hay ventana, la creamos; si está oculta, la mostramos.
+    if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+    showMainWindow();
   });
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  // NO cerramos: la app sigue viva en la bandeja aunque no haya ventana visible.
+  // El cierre real pasa por quitApp() / el updater (app.isQuitting + app.quit()).
 });
