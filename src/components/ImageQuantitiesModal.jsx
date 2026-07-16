@@ -13,6 +13,10 @@ export default function ImageQuantitiesModal({
   const [counts, setCounts] = useState({});
   // Campo libre para "poner a todas" una cantidad escrita por el usuario.
   const [allValue, setAllValue] = useState('');
+  // Preview grande al pasar el mouse por una miniatura, para identificar cuál
+  // es (las etiquetas se parecen y la miniatura chica no alcanza).
+  // { url, name, x, y } | null — x/y son coords de viewport del cursor.
+  const [hoverPreview, setHoverPreview] = useState(null);
 
   // Al abrir (o cambiar las imágenes), arrancar todas en 1.
   useEffect(() => {
@@ -31,6 +35,11 @@ export default function ImageQuantitiesModal({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onCancel]);
+
+  // Al cerrar el modal, limpiar el preview flotante.
+  useEffect(() => {
+    if (!open) setHoverPreview(null);
+  }, [open]);
 
   const setOne = (id, value) => {
     const n = Math.max(0, Math.floor(Number(value) || 0));
@@ -84,6 +93,9 @@ export default function ImageQuantitiesModal({
             Indicá cuántas copias querés de cada foto. Se acomodan en la
             plantilla y, si falta lugar, se agregan hojas nuevas con la misma
             plantilla.
+            <span className="mt-0.5 block text-ink-500">
+              Pasá el mouse por una miniatura para verla en grande e identificarla.
+            </span>
           </p>
         </div>
 
@@ -133,16 +145,22 @@ export default function ImageQuantitiesModal({
                   key={img.id}
                   className="flex items-center gap-3 rounded border border-ink-700 bg-ink-800 p-2"
                 >
-                  <div className="h-12 w-12 shrink-0 overflow-hidden rounded bg-ink-700">
+                  <div
+                    className="h-16 w-16 shrink-0 overflow-hidden rounded bg-ink-700 ring-1 ring-ink-600 cursor-zoom-in"
+                    onMouseEnter={(e) => img.dataUrl && setHoverPreview({ url: img.dataUrl, name: img.name || 'foto', x: e.clientX, y: e.clientY })}
+                    onMouseMove={(e) => img.dataUrl && setHoverPreview((p) => (p ? { ...p, x: e.clientX, y: e.clientY } : p))}
+                    onMouseLeave={() => setHoverPreview(null)}
+                  >
                     {img.dataUrl && (
                       <img
                         src={img.dataUrl}
                         alt={img.name || ''}
-                        className="h-full w-full object-cover"
+                        className="h-full w-full object-contain"
+                        draggable={false}
                       />
                     )}
                   </div>
-                  <span className="flex-1 truncate text-xs text-ink-200" title={img.name}>
+                  <span className="flex-1 break-all text-xs text-ink-200 line-clamp-2" title={img.name}>
                     {img.name || 'foto'}
                   </span>
                   <div className="flex items-center gap-1">
@@ -203,6 +221,36 @@ export default function ImageQuantitiesModal({
           </button>
         </div>
       </form>
+
+      {/* Preview grande flotante junto al cursor (position:fixed → no lo
+          recorta el overflow del listado). pointer-events-none para que nunca
+          bloquee el hover ni los botones. */}
+      {hoverPreview && (() => {
+        const BOX = 340; // ancho/alto máx del preview en px
+        const vw = typeof window !== 'undefined' ? window.innerWidth : 1280;
+        const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
+        let left = hoverPreview.x + 24;
+        if (left + BOX > vw - 8) left = hoverPreview.x - BOX - 24;
+        if (left < 8) left = 8;
+        let top = hoverPreview.y - BOX / 2;
+        top = Math.max(8, Math.min(top, vh - BOX - 8));
+        return (
+          <div
+            className="pointer-events-none fixed z-[60] flex flex-col overflow-hidden rounded-lg border border-ink-600 bg-ink-950/95 p-2 shadow-2xl ring-1 ring-black/40"
+            style={{ left, top, width: BOX }}
+          >
+            <img
+              src={hoverPreview.url}
+              alt=""
+              className="max-h-[300px] w-full rounded object-contain"
+              draggable={false}
+            />
+            <span className="mt-1.5 break-all text-center text-[11px] text-ink-200">
+              {hoverPreview.name}
+            </span>
+          </div>
+        );
+      })()}
     </div>
   );
 }
