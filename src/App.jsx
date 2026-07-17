@@ -2426,6 +2426,31 @@ export default function App() {
     }
   };
 
+  // Descargar una imagen (como quedó editada) a disco. Abre "Guardar como" y
+  // escribe el PNG. El nombre sugerido = nombre original sin extensión + .png
+  // (el dataUrl interno siempre es PNG, aunque el archivo original fuera JPG).
+  const handleDownloadImage = async (imageId) => {
+    const img = layout.imageMap.get(imageId);
+    if (!img?.dataUrl) return;
+    const base = String(img.name || 'imagen')
+      .replace(/\.[^.]+$/, '')
+      .replace(/[\\/:*?"<>|]/g, '_')
+      .trim() || 'imagen';
+    try {
+      const result = await window.printlayout.pdf.saveImage(`${base}.png`, img.dataUrl);
+      if (result?.canceled) {
+        setToast(null);
+      } else if (result?.error) {
+        setToast({ kind: 'error', text: `No se pudo descargar: ${result.error}` });
+      } else if (result?.path) {
+        setToast({ kind: 'success', text: 'Imagen descargada', path: result.path });
+      }
+    } catch (err) {
+      console.error('Descargar imagen falló:', err);
+      setToast({ kind: 'error', text: `No se pudo descargar: ${err.message}` });
+    }
+  };
+
   const handleAutoZoom = async (imageId) => {
     const img = layout.imageMap.get(imageId);
     if (!img || !img.faces || img.faces.length === 0) return;
@@ -3006,6 +3031,7 @@ export default function App() {
             onRotate={handleRotate}
             onEditImage={(imageId) => setEditingImageId(imageId)}
             onCropImage={(imageId) => setCroppingImageId(imageId)}
+            onDownloadImage={handleDownloadImage}
             onCycleFit={(imageId, value) =>
               layout.updateImage(imageId, { fitOverride: value })
             }

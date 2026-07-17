@@ -125,6 +125,7 @@ export default function PropertiesSidebar({
   onRotate,
   onEditImage,
   onCropImage,
+  onDownloadImage,
   onCycleFit,
   onSelectImage,
   onResetWork,
@@ -340,6 +341,7 @@ export default function PropertiesSidebar({
                 onRotate={onRotate}
                 onEditImage={onEditImage}
                 onCropImage={onCropImage}
+                onDownloadImage={onDownloadImage}
                 onCycleFit={onCycleFit}
               />
             ))}

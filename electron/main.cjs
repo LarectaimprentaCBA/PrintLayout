@@ -817,6 +817,27 @@ ipcMain.handle('export:save-pdf', async (evt, { defaultName, bytes }) => {
   }
 });
 
+// Descargar una imagen editada a disco. El renderer manda el dataURL (PNG,
+// que es el formato interno de las imagenes ya editadas). Mostramos "Guardar
+// como" y escribimos los bytes. Espeja export:save-pdf.
+ipcMain.handle('export:save-image', async (evt, { defaultName, dataUrl }) => {
+  const win = BrowserWindow.fromWebContents(evt.sender);
+  const result = await dialog.showSaveDialog(win, {
+    title: 'Guardar imagen',
+    defaultPath: defaultName ?? 'imagen.png',
+    filters: [{ name: 'PNG', extensions: ['png'] }],
+  });
+  if (result.canceled || !result.filePath) {
+    return { canceled: true };
+  }
+  try {
+    fs.writeFileSync(result.filePath, dataUrlToBuffer(dataUrl));
+    return { canceled: false, path: result.filePath };
+  } catch (err) {
+    return { canceled: false, error: err.message };
+  }
+});
+
 ipcMain.handle('shell:show-item', (_evt, p) => {
   shell.showItemInFolder(p);
 });
