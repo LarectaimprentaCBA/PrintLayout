@@ -2578,6 +2578,31 @@ export default function App() {
     setPrintPrompt({ face });
   };
 
+  // IO puro para escribir <cutId>.plt en la carpeta del server QR, SIN tocar
+  // estado de UI (toast/cutting). Lo usa el guardado automático al imprimir.
+  // Mismo destino y payload que el botón manual "Guardar corte QR"
+  // (handleExportCutToQr), que queda intacto. Devuelve {ok, error?}.
+  const saveCutToQrFolder = async () => {
+    try {
+      const cfg = await window.printlayout.qrcut.getConfig();
+      const dir = (cfg?.cortesDir || '').trim();
+      if (!dir) return { ok: false, error: 'no hay carpeta de cortes configurada' };
+      const sep = dir.includes('\\') || !dir.includes('/') ? '\\' : '/';
+      const outPath = `${dir.replace(/[\\/]+$/, '')}${sep}${selected.cutId}.plt`;
+      const result = await window.printlayout.plotter.exportCut({
+        cortes: selected.cortes,
+        pageWidthMm: selected.pageWidthMm,
+        pageHeightMm: selected.pageHeightMm,
+        markMarginMm: selected.markMarginMm ?? 10,
+        bladeOffsetMm,
+        outPath,
+      });
+      return result?.ok ? { ok: true, bytes: result.bytes } : { ok: false, error: result?.error ?? 'desconocido' };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  };
+
   const runPrint = async ({ deviceName, copies, pages, cutMarks }) => {
     const prompt = printPrompt;
     setPrintPrompt(null);
@@ -2620,12 +2645,22 @@ export default function App() {
       if (result?.canceled) {
         setToast(null);
       } else if (result?.ok) {
-        setToast({
-          kind: 'success',
-          text: selected.doubleSided
-            ? `Enviado a la impresora (${isBack ? 'dorso' : 'frente'}).`
-            : 'Enviado a la impresora.',
-        });
+        const base = selected.doubleSided
+          ? `Enviado a la impresora (${isBack ? 'dorso' : 'frente'}).`
+          : 'Enviado a la impresora.';
+        // Guardado AUTOMÁTICO del corte al imprimir: así no hay que acordarse de
+        // apretar "Guardar corte QR". Se hace solo en el frente que lleva el QR,
+        // con la MISMA condición con que se dibuja el QR (línea ~2607) → el .plt
+        // guardado siempre corresponde al QR impreso. Best-effort: si falla, avisa
+        // pero NO tumba el "Enviado a la impresora". El botón manual sigue igual.
+        let cutNote = '';
+        if (!isBack && (selected.conQr ?? true) && hasCuts(selected) && selected.cutId && qrConfig) {
+          const cut = await saveCutToQrFolder();
+          cutNote = cut.ok
+            ? ` Corte "${selected.cutId}.plt" guardado en la carpeta QR.`
+            : ` ⚠ No se pudo guardar el corte automáticamente (${cut.error}). Usá "Guardar corte QR".`;
+        }
+        setToast({ kind: 'success', text: base + cutNote });
       } else {
         setToast({ kind: 'error', text: `No se pudo imprimir: ${result?.error ?? 'desconocido'}` });
       }
