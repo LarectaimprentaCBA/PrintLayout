@@ -55,6 +55,58 @@ function resolvePythonBin() {
 }
 const PYTHON_BIN = resolvePythonBin();
 
+// Ghostscript embebido (bundle en ghostscript/, ver scripts/setup-ghostscript.ps1).
+// Se usa para "Reparar PDF (para Corel)": re-destila PDFs de Canva (limpia la
+// estructura, re-embebe fuentes, saca protecciones) manteniendo vectores/textos
+// editables, para que abran en CorelDRAW sin el "archivo bloqueado".
+const GHOSTSCRIPT_DIR = resolveResourcePath('ghostscript');
+function ghostscriptBin() {
+  const exe = path.join(GHOSTSCRIPT_DIR, 'bin', 'gswin64c.exe');
+  return fs.existsSync(exe) ? exe : null;
+}
+function runGhostscriptRepair(inPath, outPath) {
+  return new Promise((resolve, reject) => {
+    const gs = ghostscriptBin();
+    if (!gs) {
+      reject(new Error('El motor de PDF (Ghostscript) no está disponible en esta instalación.'));
+      return;
+    }
+    // Rutas de recursos EXPLÍCITAS → GS portable, no depende de una instalación
+    // del sistema ni del registro. CompatibilityLevel 1.4 mantiene la
+    // transparencia viva (editable); /prepress = máxima calidad.
+    const args = [
+      `-I${path.join(GHOSTSCRIPT_DIR, 'lib')}`,
+      `-I${path.join(GHOSTSCRIPT_DIR, 'Resource', 'Init')}`,
+      `-I${path.join(GHOSTSCRIPT_DIR, 'Resource')}`,
+      `-I${path.join(GHOSTSCRIPT_DIR, 'iccprofiles')}`,
+      '-sDEVICE=pdfwrite',
+      '-dCompatibilityLevel=1.4',
+      '-dPDFSETTINGS=/prepress',
+      '-dDetectDuplicateImages=true',
+      '-dNOPAUSE', '-dBATCH', '-dQUIET',
+      `-sOutputFile=${outPath}`,
+      inPath,
+    ];
+    let proc;
+    try {
+      proc = spawn(gs, args, { windowsHide: true });
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    let stderr = '';
+    proc.stderr.on('data', (d) => { stderr += d.toString('utf-8'); });
+    proc.on('error', (err) => reject(err));
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`Ghostscript salió con código ${code}: ${stderr.slice(0, 400)}`));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
 // Ícono de la app (bandeja + ventana). PNG 32×32 embebido en base64: el proyecto
 // no trae archivo de ícono, así el ícono es autocontenido (dev e instalado) y no
 // depende de configurar el build.
@@ -836,6 +888,41 @@ ipcMain.handle('export:save-image', async (evt, { defaultName, dataUrl }) => {
   } catch (err) {
     return { canceled: false, error: err.message };
   }
+});
+
+// Reparar PDF (para Corel): el usuario elige uno o varios PDF (típico: hechos en
+// Canva que Corel dice "bloqueado"). Ghostscript los re-destila y guarda una
+// copia "<nombre>_reparado.pdf" al lado del original, editable en Corel.
+ipcMain.handle('pdf:repair', async (evt) => {
+  const win = BrowserWindow.fromWebContents(evt.sender);
+  if (!ghostscriptBin()) {
+    return { ok: false, error: 'El motor de PDF no está disponible en esta instalación.' };
+  }
+  const pick = await dialog.showOpenDialog(win, {
+    title: 'Elegí el/los PDF a reparar (Canva / “bloqueado” en Corel)',
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'PDF', extensions: ['pdf'] }],
+  });
+  if (pick.canceled || !pick.filePaths?.length) return { canceled: true };
+  const results = [];
+  for (const inPath of pick.filePaths) {
+    try {
+      const dir = path.dirname(inPath);
+      const base = path.basename(inPath, path.extname(inPath));
+      let outPath = path.join(dir, `${base}_reparado.pdf`);
+      let n = 2;
+      while (fs.existsSync(outPath)) {
+        outPath = path.join(dir, `${base}_reparado (${n}).pdf`);
+        n++;
+      }
+      await runGhostscriptRepair(inPath, outPath);
+      if (!fs.existsSync(outPath)) throw new Error('no se generó el archivo');
+      results.push({ ok: true, name: base, path: outPath });
+    } catch (err) {
+      results.push({ ok: false, name: path.basename(inPath), error: err.message });
+    }
+  }
+  return { ok: true, results };
 });
 
 ipcMain.handle('shell:show-item', (_evt, p) => {

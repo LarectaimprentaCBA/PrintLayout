@@ -2426,6 +2426,33 @@ export default function App() {
     }
   };
 
+  // Reparar PDF (para Corel): elige uno o varios PDF (típico Canva "bloqueado")
+  // y Ghostscript los re-destila → copia "<nombre>_reparado.pdf" al lado, editable.
+  const handleRepairPdf = async () => {
+    try {
+      setToast({ kind: 'info', text: 'Reparando PDF… puede tardar unos segundos.' });
+      const r = await window.printlayout.pdf.repair();
+      if (r?.canceled) { setToast(null); return; }
+      if (!r?.ok) {
+        setToast({ kind: 'error', text: `No se pudo reparar: ${r?.error ?? 'error'}` });
+        return;
+      }
+      const okOnes = (r.results || []).filter((x) => x.ok);
+      const failed = (r.results || []).filter((x) => !x.ok);
+      if (okOnes.length === 0) {
+        setToast({ kind: 'error', text: `No se pudo reparar: ${failed[0]?.error ?? 'error'}` });
+        return;
+      }
+      let text = okOnes.length === 1
+        ? `PDF reparado: "${okOnes[0].name}_reparado.pdf". Ya lo podés abrir en Corel.`
+        : `${okOnes.length} PDF reparados (copia "_reparado" al lado de cada original).`;
+      if (failed.length) text += ` ${failed.length} no se pudo reparar.`;
+      setToast({ kind: 'success', text, path: okOnes[0].path });
+    } catch (err) {
+      setToast({ kind: 'error', text: `No se pudo reparar: ${err.message}` });
+    }
+  };
+
   // Descargar una imagen (como quedó editada) a disco. Abre "Guardar como" y
   // escribe el PNG. El nombre sugerido = nombre original sin extensión + .png
   // (el dataUrl interno siempre es PNG, aunque el archivo original fuera JPG).
@@ -2939,6 +2966,7 @@ export default function App() {
           onOpenJob={handleOpenJobsList}
           onOpenTemplates={() => setTemplatesManagerOpen(true)}
           onOpenPdfToImage={() => setPdfToImageOpen(true)}
+          onRepairPdf={handleRepairPdf}
           onOpenIntake={isLaRecta ? () => setIntakePanelOpen(true) : undefined}
           onOpenQrCut={() => setQrCutPanelOpen(true)}
         />

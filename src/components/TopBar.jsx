@@ -294,6 +294,7 @@ export default function TopBar({
   // Utilidades globales
   onOpenTemplates,
   onOpenPdfToImage,
+  onRepairPdf,
 }) {
   const fitDisabled = !onLayoutFitChange;
   const pdfBusy = exporting || printing;
@@ -410,6 +411,16 @@ export default function TopBar({
                 className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:bg-ink-700"
               >
                 PDF→Imagen
+              </button>
+            )}
+            {onRepairPdf && (
+              <button
+                type="button"
+                onClick={onRepairPdf}
+                title="Reparar un PDF hecho en Canva que Corel no abre (“bloqueado”). Lo re-arma dejándolo editable y guarda una copia “_reparado” al lado del original."
+                className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:bg-ink-700"
+              >
+                Reparar PDF
               </button>
             )}
             {onOpenIntake && (

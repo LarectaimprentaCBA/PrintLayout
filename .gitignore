@@ -13,6 +13,9 @@ Thumbs.db
 python-runtime/
 get-pip.py
 
+# Ghostscript embebido (Reparar PDF para Corel): lo regenera scripts/setup-ghostscript.ps1
+ghostscript/
+
 # Cache de Python (bytecode local)
 __pycache__/
 
