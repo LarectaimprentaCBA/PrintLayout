@@ -38,6 +38,14 @@ export function useLayoutEditor(template, face = 'front') {
   // carga mas, el array sigue creciendo igual que antes.
   const [minPages, setMinPagesState] = useState(1);
 
+  // Refs siempre al día con el estado del último render. applyMutation lee de
+  // acá (no de closures) para no perder escrituras cuando corre en el mismo
+  // batch que un loadFromJob/reset. Ver fix del dorso perdido al reabrir.
+  const assignmentsFrontRef = useRef(assignmentsFront);
+  const assignmentsBackRef = useRef(assignmentsBack);
+  assignmentsFrontRef.current = assignmentsFront;
+  assignmentsBackRef.current = assignmentsBack;
+
   const isMultiPage = fixedPageCount(template) !== null;
   // cellsPerPage tiene el significado legacy (cantidad por hoja, constante).
   // En multi-page no aplica directamente; usamos cellsCountOnPage(pageIdx).
@@ -396,35 +404,49 @@ export function useLayoutEditor(template, face = 'front') {
   // y devuelven [front, back] compactados al final.
   const applyMutation = useCallback(
     (mutator) => {
-      setAssignmentsFront((prevFront) => {
-        let nextFront = prevFront;
-        let nextBack = assignmentsBack;
-        if (isFront) {
-          nextFront = mutator([...prevFront]);
-          [nextFront, nextBack] = matchLength(nextFront, assignmentsBack, nextFront.length);
-        } else {
-          nextBack = mutator([...assignmentsBack]);
-          [nextFront, nextBack] = matchLength(prevFront, nextBack, nextBack.length);
+      // Leemos AMBOS arrays de refs (al día con el último render) y seteamos los
+      // dos DIRECTAMENTE. Antes el back se seteaba DENTRO del updater de
+      // setAssignmentsFront: eso DIFERÍA la escritura del back al momento en que
+      // React procesa la cola del front, que ocurre DESPUÉS de las escrituras
+      // directas del mismo batch. Si un loadFromJob (reabrir un trabajo doble
+      // faz) corría en ese batch, su setAssignmentsBack([cargado]) se pisaba con
+      // el back diferido (stale/vacío) → el dorso se perdía al reabrir. El front
+      // sobrevivía porque se leía en vivo desde el updater. Al setear ambos
+      // directo, el orden de encolado respeta el orden de llamada y loadFromJob
+      // (posterior) gana.
+      const prevFront = assignmentsFrontRef.current;
+      const prevBack = assignmentsBackRef.current;
+      let nextFront = prevFront;
+      let nextBack = prevBack;
+      if (isFront) {
+        nextFront = mutator([...prevFront]);
+        [nextFront, nextBack] = matchLength(nextFront, prevBack, nextFront.length);
+      } else {
+        nextBack = mutator([...prevBack]);
+        [nextFront, nextBack] = matchLength(prevFront, nextBack, nextBack.length);
+      }
+      // Compact trailing pages solo en modo legacy (las hojas son virtuales).
+      // En multi-page la cantidad es fija — no se compacta. Nunca baja
+      // del piso minCellsFloor (asegura las hojas pedidas a mano).
+      if (!isMultiPage && cellsPerPage > 0) {
+        const floor = Math.max(cellsPerPage, minCellsFloor);
+        while (
+          nextFront.length > floor &&
+          nextFront.slice(-cellsPerPage).every((id) => id === null) &&
+          nextBack.slice(-cellsPerPage).every((id) => id === null)
+        ) {
+          nextFront = nextFront.slice(0, nextFront.length - cellsPerPage);
+          nextBack = nextBack.slice(0, nextBack.length - cellsPerPage);
         }
-        // Compact trailing pages solo en modo legacy (las hojas son virtuales).
-        // En multi-page la cantidad es fija — no se compacta. Nunca baja
-        // del piso minCellsFloor (asegura las hojas pedidas a mano).
-        if (!isMultiPage && cellsPerPage > 0) {
-          const floor = Math.max(cellsPerPage, minCellsFloor);
-          while (
-            nextFront.length > floor &&
-            nextFront.slice(-cellsPerPage).every((id) => id === null) &&
-            nextBack.slice(-cellsPerPage).every((id) => id === null)
-          ) {
-            nextFront = nextFront.slice(0, nextFront.length - cellsPerPage);
-            nextBack = nextBack.slice(0, nextBack.length - cellsPerPage);
-          }
-        }
-        setAssignmentsBack(nextBack);
-        return nextFront;
-      });
+      }
+      // Refs sincrónicos: si hay varias mutaciones en el mismo tick, la segunda
+      // ve el resultado de la primera (encadenan sin render intermedio).
+      assignmentsFrontRef.current = nextFront;
+      assignmentsBackRef.current = nextBack;
+      setAssignmentsFront(nextFront);
+      setAssignmentsBack(nextBack);
     },
-    [isFront, assignmentsBack, matchLength, cellsPerPage, isMultiPage, minCellsFloor],
+    [isFront, matchLength, cellsPerPage, isMultiPage, minCellsFloor],
   );
 
   // Reaccionar a cambios de minPages: dispara una pasada por matchLength +

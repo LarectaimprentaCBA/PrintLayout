@@ -8,7 +8,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
 const LS_LAST_PRINTER = 'printlayout.lastPrinter';
-const LS_LAST_COPIES = 'printlayout.lastCopies';
 
 // Parsea una lista tipo "1-3,5,7-9" a indices 0-based, validados contra
 // totalPages. Devuelve null si hay error de sintaxis o algun rango sale de
@@ -81,13 +80,14 @@ export default function PrintModal({
         const list = r.printers ?? [];
         setPrinters(list);
         const last = localStorage.getItem(LS_LAST_PRINTER);
-        const lastCopies = parseInt(localStorage.getItem(LS_LAST_COPIES) ?? '1', 10);
         const lastExists = last && list.some((p) => p.name === last);
         const def = lastExists
           ? last
           : list.find((p) => p.isDefault)?.name ?? list[0]?.name ?? '';
         setDeviceName(def);
-        setCopies(Number.isFinite(lastCopies) && lastCopies > 0 ? lastCopies : 1);
+        // Copias SIEMPRE arranca en 1 (no recordar la última): así no se imprime
+        // de más por accidente. Se cambia a mano si hacen falta más.
+        setCopies(1);
       } catch (err) {
         if (!cancelled) setError(err.message);
       } finally {
@@ -157,7 +157,6 @@ export default function PrintModal({
     if (!canPrint) return;
     try {
       localStorage.setItem(LS_LAST_PRINTER, deviceName);
-      localStorage.setItem(LS_LAST_COPIES, String(copies));
     } catch {}
     onConfirm?.({
       deviceName,

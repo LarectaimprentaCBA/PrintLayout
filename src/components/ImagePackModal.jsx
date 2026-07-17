@@ -109,6 +109,24 @@ export default function ImagePackModal({ open, files = [], onConfirm, onCancel, 
     });
   }, [valid, imageDims, fixedDim, params, repeatToFill, qrReserveMm]);
 
+  // Tamaño de la celda que se crea. En "por tamaño" un lado es fijo (el que
+  // elegís) y el otro sale del aspecto de cada imagen: si son todas iguales, la
+  // celda es única; si varían, mostramos el rango.
+  const cellSizeText = useMemo(() => {
+    if (!pack || !pack.cells || pack.cells.length === 0) return null;
+    const r1 = (n) => (Math.round(n * 10) / 10).toFixed(1);
+    const ws = pack.cells.map((c) => Math.round(c.w * 10) / 10);
+    const hs = pack.cells.map((c) => Math.round(c.h * 10) / 10);
+    const wMin = Math.min(...ws), wMax = Math.max(...ws);
+    const hMin = Math.min(...hs), hMax = Math.max(...hs);
+    const wStr = wMin === wMax ? r1(wMin) : `${r1(wMin)}–${r1(wMax)}`;
+    const hStr = hMin === hMax ? r1(hMin) : `${r1(hMin)}–${r1(hMax)}`;
+    if (wMin === wMax && hMin === hMax) {
+      return `Cada celda mide ${wStr} × ${hStr} mm (ancho × alto).`;
+    }
+    return `Celda: ${wStr} mm (ancho) × ${hStr} mm (alto) — el lado libre varía según cada imagen.`;
+  }, [pack]);
+
   const [previewPage, setPreviewPage] = useState(0);
 
   useEffect(() => {
@@ -370,6 +388,11 @@ export default function ImagePackModal({ open, files = [], onConfirm, onCancel, 
                     </p>
                   )}
                 </>
+              )}
+              {cellSizeText && (
+                <p className="mt-1.5 border-t border-ink-700 pt-1.5 font-medium text-accent-300">
+                  {cellSizeText}
+                </p>
               )}
             </div>
           </div>
