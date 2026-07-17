@@ -13,6 +13,18 @@ contextBridge.exposeInMainWorld('printlayout', {
     share: (template) => ipcRenderer.invoke('templates:share', template),
     deleteShared: (id) => ipcRenderer.invoke('templates:delete-shared', id),
   },
+  // Rótulos escolares (cargar tipografías + modelos).
+  rotulos: {
+    fontsList: () => ipcRenderer.invoke('rotulos:fonts-list'),
+    fontAdd: () => ipcRenderer.invoke('rotulos:font-add'),
+    fontRemove: (id) => ipcRenderer.invoke('rotulos:font-remove', id),
+    modelsList: () => ipcRenderer.invoke('rotulos:models-list'),
+    modelParse: () => ipcRenderer.invoke('rotulos:model-parse'),
+    modelSave: (payload) => ipcRenderer.invoke('rotulos:model-save', payload),
+    modelRemove: (id) => ipcRenderer.invoke('rotulos:model-remove', id),
+    modelDiscard: (tmpDir) => ipcRenderer.invoke('rotulos:model-discard', tmpDir),
+    readImage: (filePath) => ipcRenderer.invoke('rotulos:read-image', filePath),
+  },
   workStates: {
     list: () => ipcRenderer.invoke('work-states:list'),
     load: (templateId) => ipcRenderer.invoke('work-states:load', templateId),

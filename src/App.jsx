@@ -34,6 +34,7 @@ import SaveJobModal from './components/SaveJobModal.jsx';
 import JobsListModal from './components/JobsListModal.jsx';
 import NewTabModal from './components/NewTabModal.jsx';
 import TemplatesManagerModal from './components/TemplatesManagerModal.jsx';
+import RotulosManagerModal from './components/RotulosManagerModal.jsx';
 import PaperPresetsModal from './components/PaperPresetsModal.jsx';
 import { useTemplates } from './hooks/useTemplates.js';
 import { usePaperPresets } from './hooks/usePaperPresets.js';
@@ -367,6 +368,7 @@ export default function App() {
   const [dobbleBusy, setDobbleBusy] = useState(false);
   // Editor de plantillas (botón "Plantillas" de la barra) + edición de medidas.
   const [templatesManagerOpen, setTemplatesManagerOpen] = useState(false);
+  const [rotulosOpen, setRotulosOpen] = useState(false);
   const [editGeometryTemplate, setEditGeometryTemplate] = useState(null);
   const [quantitiesOpen, setQuantitiesOpen] = useState(false);
   const [poseFrontBackOpen, setPoseFrontBackOpen] = useState(false);
@@ -2990,6 +2992,7 @@ export default function App() {
           onSaveJobAs={handleSaveJobAs}
           onOpenJob={handleOpenJobsList}
           onOpenTemplates={() => setTemplatesManagerOpen(true)}
+          onOpenRotulos={() => setRotulosOpen(true)}
           onOpenPdfToImage={() => setPdfToImageOpen(true)}
           onRepairPdf={handleRepairPdf}
           onOpenIntake={isLaRecta ? () => setIntakePanelOpen(true) : undefined}
@@ -3210,6 +3213,11 @@ export default function App() {
           onOpenInTab={handleOpenTemplateFromManager}
           onRenameCategoria={handleRenameCategoria}
           onClose={() => setTemplatesManagerOpen(false)}
+        />
+
+        <RotulosManagerModal
+          open={rotulosOpen}
+          onClose={() => setRotulosOpen(false)}
         />
 
         {editGeometryTemplate && (

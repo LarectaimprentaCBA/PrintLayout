@@ -293,6 +293,7 @@ export default function TopBar({
   onOpenQrCut,
   // Utilidades globales
   onOpenTemplates,
+  onOpenRotulos,
   onOpenPdfToImage,
   onRepairPdf,
 }) {
@@ -401,6 +402,16 @@ export default function TopBar({
                 className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:bg-ink-700"
               >
                 Plantillas
+              </button>
+            )}
+            {onOpenRotulos && (
+              <button
+                type="button"
+                onClick={onOpenRotulos}
+                title="Rótulos escolares: cargar tipografías y modelos de rótulo"
+                className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:bg-ink-700"
+              >
+                Rótulos
               </button>
             )}
             {onOpenPdfToImage && (
