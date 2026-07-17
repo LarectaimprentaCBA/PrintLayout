@@ -35,6 +35,7 @@ import JobsListModal from './components/JobsListModal.jsx';
 import NewTabModal from './components/NewTabModal.jsx';
 import TemplatesManagerModal from './components/TemplatesManagerModal.jsx';
 import RotulosManagerModal from './components/RotulosManagerModal.jsx';
+import RotulosPlanchaModal from './components/RotulosPlanchaModal.jsx';
 import PaperPresetsModal from './components/PaperPresetsModal.jsx';
 import { useTemplates } from './hooks/useTemplates.js';
 import { usePaperPresets } from './hooks/usePaperPresets.js';
@@ -369,6 +370,7 @@ export default function App() {
   // Editor de plantillas (botón "Plantillas" de la barra) + edición de medidas.
   const [templatesManagerOpen, setTemplatesManagerOpen] = useState(false);
   const [rotulosOpen, setRotulosOpen] = useState(false);
+  const [rotulosPlanchaOpen, setRotulosPlanchaOpen] = useState(false);
   const [editGeometryTemplate, setEditGeometryTemplate] = useState(null);
   const [quantitiesOpen, setQuantitiesOpen] = useState(false);
   const [poseFrontBackOpen, setPoseFrontBackOpen] = useState(false);
@@ -3218,6 +3220,12 @@ export default function App() {
         <RotulosManagerModal
           open={rotulosOpen}
           onClose={() => setRotulosOpen(false)}
+          onArmarPlancha={() => { setRotulosOpen(false); setRotulosPlanchaOpen(true); }}
+        />
+
+        <RotulosPlanchaModal
+          open={rotulosPlanchaOpen}
+          onClose={() => setRotulosPlanchaOpen(false)}
         />
 
         {editGeometryTemplate && (

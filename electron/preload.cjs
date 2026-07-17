@@ -22,6 +22,8 @@ contextBridge.exposeInMainWorld('printlayout', {
     modelSave: (payload) => ipcRenderer.invoke('rotulos:model-save', payload),
     modelRemove: (id) => ipcRenderer.invoke('rotulos:model-remove', id),
     readImage: (filePath) => ipcRenderer.invoke('rotulos:read-image', filePath),
+    readFont: (id) => ipcRenderer.invoke('rotulos:read-font', id),
+    savePdf: (defaultName, bytes) => ipcRenderer.invoke('rotulos:save-pdf', { defaultName, bytes }),
   },
   workStates: {
     list: () => ipcRenderer.invoke('work-states:list'),

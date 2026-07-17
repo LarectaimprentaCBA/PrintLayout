@@ -201,7 +201,7 @@ function SizeSlotEditor({ size, slot, onPick, onChangeBox }) {
   );
 }
 
-export default function RotulosManagerModal({ open, onClose }) {
+export default function RotulosManagerModal({ open, onClose, onArmarPlancha }) {
   const api = typeof window !== 'undefined' ? window.printlayout?.rotulos : null;
 
   const [tab, setTab] = useState('fuentes');
@@ -453,13 +453,24 @@ export default function RotulosManagerModal({ open, onClose }) {
                 <span className="text-xs text-ink-400">
                   Un modelo = 3 imágenes (grande, intermedio, chico) con la zona del nombre marcada a mano.
                 </span>
-                <button
-                  type="button"
-                  onClick={newModel}
-                  className="rounded bg-accent-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-accent-500"
-                >
-                  Nuevo modelo
-                </button>
+                <div className="flex items-center gap-2">
+                  {onArmarPlancha && (
+                    <button
+                      type="button"
+                      onClick={onArmarPlancha}
+                      className="rounded border border-accent-500/50 px-3 py-1.5 text-xs font-medium text-accent-200 hover:bg-accent-500/10"
+                    >
+                      Armar plancha
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={newModel}
+                    className="rounded bg-accent-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-accent-500"
+                  >
+                    Nuevo modelo
+                  </button>
+                </div>
               </div>
               {models.length === 0 ? (
                 <p className="rounded border border-dashed border-ink-700 py-8 text-center text-xs text-ink-500">

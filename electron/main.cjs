@@ -923,6 +923,38 @@ ipcMain.handle('rotulos:read-image', (_evt, filePath) => {
   }
 });
 
+// Lee los bytes de una tipografía (dataURL) para embeberla en el PDF con pdf-lib.
+ipcMain.handle('rotulos:read-font', (_evt, id) => {
+  try {
+    const font = rotulosStore.listFonts().find((f) => f.id === id);
+    if (!font?.archivo || !fs.existsSync(font.archivo)) {
+      return { ok: false, error: 'Fuente no encontrada.' };
+    }
+    const buf = fs.readFileSync(font.archivo);
+    const ext = (font.ext || 'ttf').toLowerCase();
+    const mime = ext === 'otf' ? 'font/otf' : 'font/ttf';
+    return { ok: true, dataUrl: `data:${mime};base64,${buf.toString('base64')}`, ext };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// Guarda silencioso el PDF de la plancha de rótulos en una carpeta de salida y lo
+// abre (clona intake:save-photo-pdf / writePdfSilent).
+ipcMain.handle('rotulos:save-pdf', async (_evt, { defaultName, bytes }) => {
+  try {
+    const dir = path.join(app.getPath('documents'), 'PrintLayout Rotulos');
+    const safe = String(defaultName || 'rotulos')
+      .replace(/[<>:"/\\|?*]+/g, '_').replace(/\s+/g, ' ').trim() || 'rotulos';
+    const filePath = path.join(dir, `${safe}.pdf`);
+    writePdfSilent(filePath, Buffer.from(bytes));
+    await shell.openPath(filePath).catch(() => {});
+    return { ok: true, path: filePath };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 ipcMain.handle('plotter:send-cut', async (_evt, payload) => {
   // La IP/puerto del plotter salen de la config del Servidor QR (única fuente de
   // verdad), salvo que el payload los traiga explícitos. Así el envío directo y
