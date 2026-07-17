@@ -87,6 +87,16 @@ export function useTemplates() {
     setTemplates((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
+  // Borra una plantilla del repo compartido (todas las PCs) y de esta PC.
+  // Devuelve el resultado del IPC para que la UI avise si falla.
+  const removeShared = useCallback(async (id) => {
+    const res = await window.printlayout.templates.deleteShared(id);
+    if (res?.ok) {
+      setTemplates((prev) => prev.filter((t) => t.id !== id));
+    }
+    return res;
+  }, []);
+
   const share = useCallback(async (template) => {
     const res = await window.printlayout.templates.share(template);
     if (res?.ok && res.template) {
@@ -109,7 +119,7 @@ export function useTemplates() {
     const res = await window.printlayout.templates.syncPull();
     if (
       res?.ok
-      && (res.added?.length || res.updated?.length || res.replaced?.length)
+      && (res.added?.length || res.updated?.length || res.replaced?.length || res.removed?.length)
     ) {
       const list = await window.printlayout.templates.list();
       setTemplates(list);
@@ -125,6 +135,7 @@ export function useTemplates() {
     createFromPdf,
     update,
     remove,
+    removeShared,
     share,
     syncPull,
   };

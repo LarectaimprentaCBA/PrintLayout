@@ -191,6 +191,29 @@ async function putFile(filePath, contentString, message, prevSha) {
   return await r.json();
 }
 
+// Borra un archivo del repo via Contents API. Necesita el sha actual.
+async function deleteFile(filePath, message, sha) {
+  if (!getToken()) throw new Error('Token de sync no configurado.');
+  const fetchFn = getFetch();
+  const url = `${API}/repos/${OWNER}/${REPO}/contents/${filePath}`;
+  const r = await fetchFn(url, {
+    method: 'DELETE',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, sha, branch: BRANCH }),
+  });
+  if (r.status === 409 || r.status === 422) {
+    const txt = await r.text();
+    const err = new Error(`conflict: ${r.status} ${txt}`);
+    err.conflict = true;
+    throw err;
+  }
+  if (!r.ok) {
+    const txt = await r.text();
+    throw new Error(`DELETE ${filePath} -> ${r.status} ${txt}`);
+  }
+  return await r.json();
+}
+
 // Sube una plantilla y actualiza el manifest. Reintenta hasta 3 veces si hay
 // conflicto en el manifest (otra PC pusheo entre nuestro fetch y nuestro put).
 async function pushTemplate(template) {
@@ -252,6 +275,63 @@ async function pushTemplate(template) {
   return { ok: false, error: 'No se pudo actualizar el manifest tras varios intentos.' };
 }
 
+// Borra una plantilla del repo compartido: la saca del manifest (asi ninguna
+// PC la vuelve a bajar en el pull) y borra el archivo templates/{id}.json.
+// Sacamos primero del manifest para que, aunque el borrado del archivo falle,
+// las demas PCs dejen de verla (un archivo huerfano sin entrada es inocuo).
+async function deleteTemplate(id) {
+  if (!getToken()) {
+    return { ok: false, error: 'Token no configurado en este build.' };
+  }
+  if (!id) {
+    return { ok: false, error: 'Falta el id de la plantilla.' };
+  }
+  const file = `templates/${id}.json`;
+
+  // 1) Sacar la entrada del manifest (con reintentos si otra PC pusheo justo).
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const manifestMeta = await getFileMeta(MANIFEST_PATH).catch(() => null);
+    if (!manifestMeta) break; // no hay manifest, nada que actualizar
+    const current = JSON.parse(
+      Buffer.from(manifestMeta.content, 'base64').toString('utf-8'),
+    );
+    const list = Array.isArray(current.templates) ? current.templates : [];
+    const idx = list.findIndex((t) => t.id === id);
+    if (idx < 0) break; // ya no figuraba en el manifest
+    list.splice(idx, 1);
+    const next = { version: 1, templates: list };
+    try {
+      await putFile(
+        MANIFEST_PATH,
+        JSON.stringify(next, null, 2),
+        `Manifest: remove ${id}`,
+        manifestMeta.sha,
+      );
+      break;
+    } catch (err) {
+      if (err.conflict && attempt < 2) {
+        await new Promise((res) => setTimeout(res, 250 * (attempt + 1)));
+        continue;
+      }
+      return { ok: false, error: `No se pudo actualizar el manifest: ${err.message}` };
+    }
+  }
+
+  // 2) Borrar el archivo de la plantilla (si sigue existiendo).
+  try {
+    const meta = await getFileMeta(file).catch(() => null);
+    if (meta?.sha) {
+      await deleteFile(file, `Delete template ${id}`, meta.sha);
+    }
+  } catch (err) {
+    // El manifest ya no la lista, asi que las otras PCs no la veran; el archivo
+    // huerfano no molesta. No fallamos por esto.
+    console.warn('[templates-sync] archivo quedo huerfano al borrar:', err.message);
+  }
+
+  return { ok: true };
+}
+
 // Lee el manifest remoto y devuelve la lista de plantillas remotas (sin
 // bajar el contenido aun). El renderer compara con sus locales y decide.
 async function listRemote() {
@@ -273,5 +353,6 @@ module.exports = {
   listRemote,
   pullTemplate,
   pushTemplate,
+  deleteTemplate,
   hasToken,
 };

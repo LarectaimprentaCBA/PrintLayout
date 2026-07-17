@@ -17,9 +17,11 @@ export default function TemplatesManagerModal({
   templates = [],
   categorias = [],
   isLaRecta = false,
+  canShare = false,
   onSaveDetails,
   onDuplicate,
   onDelete,
+  onDeleteShared,
   onToggleOficial,
   onEditGeometry,
   onOpenInTab,
@@ -254,6 +256,9 @@ export default function TemplatesManagerModal({
                   const locked = t.oficial && !isLaRecta; // oficial read-only fuera de La Recta
                   const isPdf = !!t.pdfBase64;
                   const editing = editingId === t.id;
+                  // Compartida + esta PC puede escribir el repo => el borrado es
+                  // REAL (todas las PCs). Si no, "Eliminar" es solo-local.
+                  const sharedDeletable = !!t.sharedAt && canShare;
                   return (
                     <li
                       key={t.id}
@@ -402,16 +407,34 @@ export default function TemplatesManagerModal({
                                 {t.oficial ? 'Quitar oficial' : 'Marcar oficial'}
                               </ActionBtn>
                             )}
-                            <ActionBtn
-                              onClick={() => {
-                                if (confirm(`¿Eliminar la plantilla "${t.name}"?`)) onDelete?.(t.id);
-                              }}
-                              disabled={locked}
-                              tone="danger"
-                              title={locked ? 'Oficial: solo La Recta puede borrarla' : 'Eliminar plantilla'}
-                            >
-                              Eliminar
-                            </ActionBtn>
+                            {sharedDeletable ? (
+                              <ActionBtn
+                                onClick={() => {
+                                  if (confirm(
+                                    `¿Borrar "${t.name}" de TODAS las PCs?\n\n`
+                                    + 'Se quita del repositorio compartido y desaparece en todas '
+                                    + 'las computadoras del taller (cuando cada una sincronice).\n\n'
+                                    + 'Esto NO se puede deshacer.',
+                                  )) onDeleteShared?.(t.id);
+                                }}
+                                disabled={locked}
+                                tone="danger"
+                                title={locked ? 'Oficial: solo La Recta puede borrarla' : 'Borrar del repositorio compartido (todas las PCs)'}
+                              >
+                                Borrar de todas
+                              </ActionBtn>
+                            ) : (
+                              <ActionBtn
+                                onClick={() => {
+                                  if (confirm(`¿Eliminar la plantilla "${t.name}"?`)) onDelete?.(t.id);
+                                }}
+                                disabled={locked}
+                                tone="danger"
+                                title={locked ? 'Oficial: solo La Recta puede borrarla' : 'Eliminar plantilla'}
+                              >
+                                Eliminar
+                              </ActionBtn>
+                            )}
                           </div>
                         </div>
                       )}

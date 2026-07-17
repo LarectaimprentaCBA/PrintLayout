@@ -543,7 +543,23 @@ ipcMain.handle('templates:sync-pull', async () => {
       }
     }
 
-    return { ok: true, added, updated, replaced, cleaned, errors };
+    // Propagacion de borrados: si una plantilla local vino del repo (tiene
+    // sharedAt) pero su id ya NO esta en el manifest remoto, es porque se
+    // borro "de todas las PCs". La sacamos tambien aca.
+    // Guarda de seguridad: solo cuando el remoto trajo al menos una plantilla,
+    // asi un manifest vacio o un 404 por red caida no borra todo lo compartido.
+    const removed = [];
+    if (remote.length > 0) {
+      const remoteIds = new Set(remote.map((e) => e.id));
+      for (const t of templatesStore.list()) {
+        if (t.sharedAt && !remoteIds.has(t.id)) {
+          templatesStore.remove(t.id);
+          removed.push({ id: t.id, name: t.name });
+        }
+      }
+    }
+
+    return { ok: true, added, updated, replaced, cleaned, removed, errors };
   } catch (err) {
     return { ok: false, error: err.message };
   }
@@ -563,6 +579,24 @@ ipcMain.handle('templates:share', async (_evt, template) => {
       sharedHash: r.hash,
     });
     return { ok: true, template: updated };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// templates:delete-shared => borra una plantilla del repo compartido (todas las
+// PCs) y tambien de esta PC. Requiere token. Las otras PCs la pierden en su
+// proximo sync (el pull propaga la ausencia del manifest).
+ipcMain.handle('templates:delete-shared', async (_evt, id) => {
+  try {
+    if (!templatesSync.hasToken()) {
+      return { ok: false, error: 'Esta PC no puede borrar plantillas compartidas (sin permiso de escritura).' };
+    }
+    const r = await templatesSync.deleteTemplate(id);
+    if (!r.ok) return r;
+    // Sacar tambien la copia local de esta PC.
+    templatesStore.remove(id);
+    return { ok: true };
   } catch (err) {
     return { ok: false, error: err.message };
   }

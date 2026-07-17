@@ -20,6 +20,8 @@ export default function NewTabModal({
   syncing = false,
   onSync,
   onDeleteTemplate,
+  onDeleteSharedTemplate,
+  canShare = false,
   onPickTemplate,
   isLaRecta = false,
   onToggleOficial,
@@ -341,8 +343,27 @@ export default function NewTabModal({
                               {t.oficial ? 'Quitar oficial' : 'Marcar oficial'}
                             </button>
                           )}
-                          {/* Borrar: bloqueado para oficiales salvo modo La Recta. */}
-                          {onDeleteTemplate && (!t.oficial || isLaRecta) && (
+                          {/* Borrar: bloqueado para oficiales salvo modo La Recta.
+                              Si la plantilla es compartida y esta PC puede
+                              escribir el repo, el borrado es REAL (todas las PCs). */}
+                          {(!t.oficial || isLaRecta) && t.sharedAt && canShare && onDeleteSharedTemplate ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (confirm(
+                                  `¿Borrar "${t.name}" de TODAS las PCs?\n\n`
+                                  + 'Se quita del repositorio compartido y desaparece en todas '
+                                  + 'las computadoras del taller (cuando cada una sincronice).\n\n'
+                                  + 'Esto NO se puede deshacer.',
+                                )) onDeleteSharedTemplate(t.id);
+                              }}
+                              className="shrink-0 rounded border border-red-500/40 px-2 py-1 text-[11px] text-red-300 opacity-0 transition hover:bg-red-500/15 group-hover:opacity-100"
+                              title="Borrar del repositorio compartido (todas las PCs)"
+                            >
+                              Borrar de todas
+                            </button>
+                          ) : onDeleteTemplate && (!t.oficial || isLaRecta) && (
                             <button
                               type="button"
                               onClick={(e) => {

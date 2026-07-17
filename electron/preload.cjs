@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('printlayout', {
     canShare: () => ipcRenderer.invoke('templates:can-share'),
     syncPull: () => ipcRenderer.invoke('templates:sync-pull'),
     share: (template) => ipcRenderer.invoke('templates:share', template),
+    deleteShared: (id) => ipcRenderer.invoke('templates:delete-shared', id),
   },
   workStates: {
     list: () => ipcRenderer.invoke('work-states:list'),

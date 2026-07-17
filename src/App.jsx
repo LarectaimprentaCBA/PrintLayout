@@ -85,6 +85,7 @@ export default function App() {
     createFromPdf,
     update,
     remove,
+    removeShared,
     share,
     syncPull,
   } = useTemplates();
@@ -156,16 +157,18 @@ export default function App() {
       const u = r.updated?.length ?? 0;
       const rep = r.replaced?.length ?? 0;
       const c = r.cleaned?.length ?? 0;
+      const rem = r.removed?.length ?? 0;
       const errs = r.errors?.length ?? 0;
       if (errs > 0) {
         const failed = r.errors.map((e) => `${e.name}: ${e.error}`).join('; ');
         setToast({ kind: 'error', text: `Sync con errores — ${failed}` });
-      } else if (a + u + rep + c > 0) {
+      } else if (a + u + rep + c + rem > 0) {
         const parts = [];
         if (a) parts.push(`${a} nueva${a === 1 ? '' : 's'}`);
         if (u) parts.push(`${u} actualizada${u === 1 ? '' : 's'}`);
         if (rep) parts.push(`${rep} reemplazada${rep === 1 ? '' : 's'}`);
         if (c) parts.push(`${c} duplicada${c === 1 ? '' : 's'} eliminada${c === 1 ? '' : 's'}`);
+        if (rem) parts.push(`${rem} borrada${rem === 1 ? '' : 's'} en el equipo`);
         setToast({ kind: 'success', text: `Plantillas: ${parts.join(', ')}.` });
       } else if (!silent) {
         setToast({ kind: 'success', text: 'Plantillas sincronizadas, sin cambios.' });
@@ -2044,6 +2047,28 @@ export default function App() {
     await remove(id);
   };
 
+  // Borra una plantilla del REPOSITORIO COMPARTIDO: desaparece de esta PC y de
+  // todas las demas (en su proximo sync). Solo para plantillas ya compartidas
+  // y en PCs con permiso de escritura (canShare). Es irreversible.
+  const handleDeleteShared = async (id) => {
+    if (isTemplateOfficial(id) && !isLaRecta) {
+      setToast({ kind: 'error', text: 'Es una plancha oficial: solo La Recta puede borrarla.' });
+      return;
+    }
+    const name = templates.find((t) => t.id === id)?.name || 'la plantilla';
+    setToast({ kind: 'info', text: `Borrando "${name}" de todas las PCs…` });
+    try {
+      const res = await removeShared(id);
+      if (res?.ok) {
+        setToast({ kind: 'success', text: `"${name}" borrada de todas las PCs.` });
+      } else {
+        setToast({ kind: 'error', text: `No se pudo borrar: ${res?.error ?? 'error'}` });
+      }
+    } catch (err) {
+      setToast({ kind: 'error', text: `No se pudo borrar: ${err.message}` });
+    }
+  };
+
   // Marca/desmarca una plancha como oficial (solo modo La Recta). Opera sobre
   // la plantilla GUARDADA (id real). MARCAR pide el id de catálogo (lo confirma
   // Mariano); QUITAR es baja lógica en el catálogo (activo=false, no borra).
@@ -3175,9 +3200,11 @@ export default function App() {
           templates={templates}
           categorias={categoriasList}
           isLaRecta={isLaRecta}
+          canShare={canShare}
           onSaveDetails={handleSaveTemplateDetails}
           onDuplicate={handleDuplicateTemplate}
           onDelete={handleDelete}
+          onDeleteShared={handleDeleteShared}
           onToggleOficial={handleToggleOficial}
           onEditGeometry={handleEditTemplateGeometry}
           onOpenInTab={handleOpenTemplateFromManager}
@@ -3405,6 +3432,8 @@ export default function App() {
           syncing={syncing}
           onSync={() => runSyncWithToast()}
           onDeleteTemplate={handleDelete}
+          onDeleteSharedTemplate={handleDeleteShared}
+          canShare={canShare}
           isLaRecta={isLaRecta}
           onToggleOficial={handleToggleOficial}
           onClose={() => setNewTabModalOpen(false)}
