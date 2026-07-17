@@ -260,7 +260,7 @@ export default function RotulosManagerModal({ open, onClose, onArmarPlancha }) {
   // --- Modelos ---
   const newModel = () => {
     setFeedback(null);
-    setDraft({ nombre: '', slots: { grande: null, intermedio: null, chico: null } });
+    setDraft({ nombre: '', arteIncluyeRecuadro: false, slots: { grande: null, intermedio: null, chico: null } });
   };
 
   const editModel = async (m) => {
@@ -283,7 +283,7 @@ export default function RotulosManagerModal({ open, onClose, onArmarPlancha }) {
           }
         }
       }
-      setDraft({ id: m.id, nombre: m.nombre, slots });
+      setDraft({ id: m.id, nombre: m.nombre, arteIncluyeRecuadro: !!m.arteIncluyeRecuadro, slots });
     } finally { setBusy(false); }
   };
 
@@ -353,6 +353,7 @@ export default function RotulosManagerModal({ open, onClose, onArmarPlancha }) {
       const r = await api.modelSave({
         id: draft.id,
         nombre: draft.nombre.trim() || 'Modelo',
+        arteIncluyeRecuadro: !!draft.arteIncluyeRecuadro,
         thumb,
         sizes,
       });
@@ -536,6 +537,22 @@ export default function RotulosManagerModal({ open, onClose, onArmarPlancha }) {
                   El recuadro punteado es el borde del rótulo.
                 </p>
               </div>
+
+              <label className="mb-3 flex cursor-pointer items-start gap-2 rounded border border-ink-800 bg-ink-950/40 px-3 py-2 text-xs text-ink-200">
+                <input
+                  type="checkbox"
+                  checked={!!draft.arteIncluyeRecuadro}
+                  onChange={(e) => setDraft((p) => ({ ...p, arteIncluyeRecuadro: e.target.checked }))}
+                  className="mt-0.5 h-4 w-4 accent-accent-500"
+                />
+                <span>
+                  <span className="font-medium text-ink-100">El arte ya incluye el recuadro del nombre</span>
+                  <span className="block text-[11px] text-ink-400">
+                    Dejalo destildado si el arte es solo el fondo (el programa dibuja el recuadro, con el
+                    color que elijas al armar la plancha). Tildalo solo si el recuadro blanco ya viene pegado en la imagen.
+                  </span>
+                </span>
+              </label>
 
               <div className="flex flex-col gap-4">
                 {SIZES.map((s) => (

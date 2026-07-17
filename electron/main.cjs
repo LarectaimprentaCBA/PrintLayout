@@ -847,7 +847,7 @@ ipcMain.handle('rotulos:models-list', () => rotulosStore.listModels());
 // edición, reescribe el directorio del modelo desde cero.
 ipcMain.handle('rotulos:model-save', async (_evt, payload) => {
   try {
-    const { id: reqId, nombre, thumb, sizes } = payload || {};
+    const { id: reqId, nombre, thumb, sizes, arteIncluyeRecuadro } = payload || {};
     if (!sizes || Object.keys(sizes).length === 0) {
       return { ok: false, error: 'Subí al menos una imagen para guardar el modelo.' };
     }
@@ -882,6 +882,7 @@ ipcMain.handle('rotulos:model-save', async (_evt, payload) => {
     const model = rotulosStore.saveModel({
       id,
       nombre: nombre || 'Modelo',
+      arteIncluyeRecuadro: !!arteIncluyeRecuadro,
       thumb: thumb || null,
       sizes: savedSizes,
     });
