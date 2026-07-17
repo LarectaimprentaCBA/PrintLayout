@@ -2,83 +2,119 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 // Gestor de "Rótulos escolares" — Fase 1: CARGAR.
 //   · Tipografías: subir/validar/listar/eliminar fuentes .ttf/.otf.
-//   · Modelos: cargar un PDF (grupos de 3 páginas: arte/corte/texto por tamaño),
-//     ver los 3 artes con su caja de texto detectada, ajustarla a mano y guardar.
-// NO genera nada (sin texto, sin plancha, sin corte, sin QR): eso va después.
+//   · Modelos: por cada tamaño (GRANDE/INTERMEDIO/CHICO) el usuario sube UNA
+//     imagen del arte y dibuja a mano el rectángulo donde va el nombre. Son 3
+//     imágenes sueltas (no PDF). Se guarda la caja en mm, relativa al rótulo.
+// NO genera nada (sin texto, plancha, corte ni QR): eso va en otra orden.
 
 const round2 = (n) => Math.round(n * 100) / 100;
-const fmt = (n) => (Number.isFinite(n) ? (Math.round(n * 100) / 100) : '?');
+const fmt = (n) => (Number.isFinite(n) ? Math.round(n * 100) / 100 : '?');
 
-const SIZE_LABELS = {
-  grande: 'Grande (60 × 40 mm)',
-  intermedio: 'Intermedio (40 × 20 mm)',
-  chico: 'Chico (40 × 7 mm)',
+// Tamaños fijos del sistema (corte redondeado, en mm).
+const SIZES = [
+  { key: 'grande', label: 'Grande', cutW: 60, cutH: 40, radius: 3.15 },
+  { key: 'intermedio', label: 'Intermedio', cutW: 40, cutH: 20, radius: 1.57 },
+  { key: 'chico', label: 'Chico', cutW: 40, cutH: 7, radius: 1.47 },
+];
+const SIZE_KEYS = SIZES.map((s) => s.key);
+const sizeDef = (key) => SIZES.find((s) => s.key === key);
+
+// Handles de resize: 4 lados + 4 esquinas.
+const RESIZE_HANDLES = [
+  { dir: 'n', pos: 'left-1/2 top-0 -translate-x-1/2 -translate-y-1/2', cur: 'cursor-ns-resize' },
+  { dir: 's', pos: 'left-1/2 bottom-0 -translate-x-1/2 translate-y-1/2', cur: 'cursor-ns-resize' },
+  { dir: 'w', pos: 'left-0 top-1/2 -translate-x-1/2 -translate-y-1/2', cur: 'cursor-ew-resize' },
+  { dir: 'e', pos: 'right-0 top-1/2 translate-x-1/2 -translate-y-1/2', cur: 'cursor-ew-resize' },
+  { dir: 'nw', pos: 'left-0 top-0 -translate-x-1/2 -translate-y-1/2', cur: 'cursor-nwse-resize' },
+  { dir: 'ne', pos: 'right-0 top-0 translate-x-1/2 -translate-y-1/2', cur: 'cursor-nesw-resize' },
+  { dir: 'sw', pos: 'left-0 bottom-0 -translate-x-1/2 translate-y-1/2', cur: 'cursor-nesw-resize' },
+  { dir: 'se', pos: 'right-0 bottom-0 translate-x-1/2 translate-y-1/2', cur: 'cursor-nwse-resize' },
+];
+const RESIZE_EDGES = {
+  n: { top: true }, s: { bottom: true }, w: { left: true }, e: { right: true },
+  nw: { top: true, left: true }, ne: { top: true, right: true },
+  sw: { bottom: true, left: true }, se: { bottom: true, right: true },
 };
-const SIZE_ORDER = ['grande', 'intermedio', 'chico'];
 
-// Editor de UNA imagen de arte con la caja de texto superpuesta (arrastrar/redimensionar).
-function SizeArtEditor({ sizeKey, size, onChange }) {
-  const dragRef = useRef(null);
-  const DISP_W = 340;
+const extFromFile = (file) => {
+  const t = (file?.type || '').toLowerCase();
+  if (t.includes('png')) return 'png';
+  if (t.includes('jpeg') || t.includes('jpg')) return 'jpg';
+  return (file?.name || '').toLowerCase().endsWith('.png') ? 'png' : 'jpg';
+};
 
-  const arteMm = size?.arteMm;
-  const cutMm = size?.cutMm;
-  const tb = size?.textBox;
-  if (!arteMm || !cutMm || !tb) return null;
+// Caja por defecto en la parte baja del rótulo (el usuario la mueve).
+function defaultBox(cutW, cutH) {
+  const w = round2(cutW * 0.8);
+  const h = round2(Math.min(cutH * 0.35, Math.max(2.5, cutH - 2)));
+  const x = round2(Math.max(0, (cutW - w) / 2));
+  const y = round2(Math.max(0, cutH - h - Math.min(cutH * 0.12, 2)));
+  return { x, y, w, h };
+}
 
-  const scale = DISP_W / arteMm.w;
-  const dispH = arteMm.h * scale;
-  const offX = cutMm.x - arteMm.x; // demasía izquierda (≈1mm)
-  const offY = cutMm.y - arteMm.y; // demasía arriba
-
-  const boxLeftPx = (offX + tb.xFromLabelLeft) * scale;
-  const boxTopPx = (offY + tb.yFromLabelTop) * scale;
-  const boxWPx = tb.w * scale;
-  const boxHPx = tb.h * scale;
-
-  const cutLeftPx = offX * scale;
-  const cutTopPx = offY * scale;
-  const cutWPx = cutMm.w * scale;
-  const cutHPx = cutMm.h * scale;
-
-  const clamp = (nb) => {
-    let { xFromLabelLeft, yFromLabelTop, w, h } = nb;
-    w = Math.max(2, Math.min(w, cutMm.w));
-    h = Math.max(1, Math.min(h, cutMm.h));
-    xFromLabelLeft = Math.max(0, Math.min(xFromLabelLeft, cutMm.w - w));
-    yFromLabelTop = Math.max(0, Math.min(yFromLabelTop, cutMm.h - h));
-    return {
-      xFromLabelLeft: round2(xFromLabelLeft),
-      yFromLabelTop: round2(yFromLabelTop),
-      w: round2(w),
-      h: round2(h),
+// Miniatura chica para la lista (downscale por canvas).
+function makeThumb(dataUrl, maxPx = 200) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxPx / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.max(1, Math.round(img.naturalWidth * scale));
+      const h = Math.max(1, Math.round(img.naturalHeight * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      try { resolve(canvas.toDataURL('image/jpeg', 0.82)); } catch { resolve(null); }
     };
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
+  });
+}
+
+// Editor de UNA imagen de un tamaño, con la caja de texto encima.
+function SizeSlotEditor({ size, slot, onPick, onChangeBox }) {
+  const dragRef = useRef(null);
+  const inputRef = useRef(null);
+  const DISP_W = 380;
+  const scale = DISP_W / size.cutW;
+  const dispH = size.cutH * scale;
+  const radiusPx = size.radius * scale;
+  const box = slot?.textBox;
+
+  const clampMove = (x, y, w, h) => ({
+    x: round2(Math.max(0, Math.min(x, size.cutW - w))),
+    y: round2(Math.max(0, Math.min(y, size.cutH - h))),
+    w: round2(w),
+    h: round2(h),
+  });
+
+  const doResize = (edges, dx, dy, s) => {
+    const minW = 2;
+    const minH = 1;
+    let left = s.x;
+    let right = s.x + s.w;
+    let top = s.y;
+    let bottom = s.y + s.h;
+    if (edges.left) left = Math.max(0, Math.min(s.x + dx, right - minW));
+    if (edges.right) right = Math.min(size.cutW, Math.max(s.x + s.w + dx, left + minW));
+    if (edges.top) top = Math.max(0, Math.min(s.y + dy, bottom - minH));
+    if (edges.bottom) bottom = Math.min(size.cutH, Math.max(s.y + s.h + dy, top + minH));
+    return { x: round2(left), y: round2(top), w: round2(right - left), h: round2(bottom - top) };
   };
 
-  const startDrag = (mode) => (e) => {
+  const startDrag = (kind) => (e) => {
+    if (!slot) return;
     e.preventDefault();
     e.stopPropagation();
-    dragRef.current = { mode, startX: e.clientX, startY: e.clientY, startBox: { ...tb } };
+    const start = { ...slot.textBox };
+    dragRef.current = { kind, sx: e.clientX, sy: e.clientY, start };
     const onMove = (ev) => {
       const d = dragRef.current;
       if (!d) return;
-      const dxMm = (ev.clientX - d.startX) / scale;
-      const dyMm = (ev.clientY - d.startY) / scale;
-      if (d.mode === 'move') {
-        onChange(clamp({
-          xFromLabelLeft: d.startBox.xFromLabelLeft + dxMm,
-          yFromLabelTop: d.startBox.yFromLabelTop + dyMm,
-          w: d.startBox.w,
-          h: d.startBox.h,
-        }));
-      } else {
-        onChange(clamp({
-          xFromLabelLeft: d.startBox.xFromLabelLeft,
-          yFromLabelTop: d.startBox.yFromLabelTop,
-          w: d.startBox.w + dxMm,
-          h: d.startBox.h + dyMm,
-        }));
-      }
+      const dx = (ev.clientX - d.sx) / scale;
+      const dy = (ev.clientY - d.sy) / scale;
+      if (d.kind === 'move') onChangeBox(clampMove(d.start.x + dx, d.start.y + dy, d.start.w, d.start.h));
+      else onChangeBox(doResize(RESIZE_EDGES[d.kind], dx, dy, d.start));
     };
     const onUp = () => {
       dragRef.current = null;
@@ -89,53 +125,77 @@ function SizeArtEditor({ sizeKey, size, onChange }) {
     window.addEventListener('pointerup', onUp);
   };
 
-  const preview = size.arte?.previewB64;
-
   return (
     <div className="rounded-lg border border-ink-700 bg-ink-950/40 p-3">
       <div className="mb-2 flex items-center justify-between">
-        <span className="text-xs font-semibold text-ink-100">{SIZE_LABELS[sizeKey] || sizeKey}</span>
-        {!size.matched && (
-          <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-300" title="El tamaño medido no coincide con el fijo del sistema">
-            ⚠ tamaño raro
-          </span>
-        )}
+        <span className="text-xs font-semibold text-ink-100">
+          {size.label} <span className="text-ink-500">· {size.cutW} × {size.cutH} mm</span>
+        </span>
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          className="rounded border border-ink-700 px-2 py-1 text-[11px] text-ink-200 hover:bg-ink-800"
+        >
+          {slot ? 'Cambiar imagen' : 'Subir imagen'}
+        </button>
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/png,image/jpeg"
+          className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) onPick(f); e.target.value = ''; }}
+        />
       </div>
 
-      <div
-        className="relative mx-auto select-none overflow-hidden rounded border border-ink-700 bg-white"
-        style={{ width: `${DISP_W}px`, height: `${dispH}px` }}
-      >
-        {preview ? (
-          <img src={preview} alt="" draggable={false} className="absolute inset-0 h-full w-full object-fill" />
-        ) : (
-          <div className="absolute inset-0 flex items-center justify-center text-[11px] text-ink-500">
-            (sin arte)
+      <div className="relative mx-auto" style={{ width: `${DISP_W}px`, height: `${dispH}px` }}>
+        {/* Capa imagen: recorte redondeado = borde del rótulo */}
+        <div
+          className="absolute inset-0 overflow-hidden border border-dashed border-sky-400/80 bg-white"
+          style={{ borderRadius: `${radiusPx}px` }}
+          title="Contorno del corte (redondeado)"
+        >
+          {slot ? (
+            <img src={slot.dataUrl} alt="" draggable={false} className="absolute inset-0 h-full w-full object-cover" />
+          ) : (
+            <button
+              type="button"
+              onClick={() => inputRef.current?.click()}
+              className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-ink-400 hover:bg-black/5"
+            >
+              <span className="text-2xl leading-none text-ink-300">＋</span>
+              <span className="text-[11px]">Subir imagen (PNG/JPG)</span>
+            </button>
+          )}
+        </div>
+
+        {/* Capa caja: sin recorte, encima */}
+        {slot && box && (
+          <div
+            onPointerDown={startDrag('move')}
+            className="absolute cursor-move border-2 border-accent-500 bg-accent-500/20"
+            style={{
+              left: `${box.x * scale}px`,
+              top: `${box.y * scale}px`,
+              width: `${box.w * scale}px`,
+              height: `${box.h * scale}px`,
+            }}
+            title="Arrastrá para mover; los cuadraditos cambian el tamaño por cualquier lado"
+          >
+            {RESIZE_HANDLES.map((h) => (
+              <div
+                key={h.dir}
+                onPointerDown={startDrag(h.dir)}
+                className={`absolute h-2.5 w-2.5 rounded-sm border border-white bg-accent-500 ${h.pos} ${h.cur}`}
+              />
+            ))}
           </div>
         )}
-
-        {/* Borde del rótulo (corte) */}
-        <div
-          className="pointer-events-none absolute border border-dashed border-sky-500/70"
-          style={{ left: `${cutLeftPx}px`, top: `${cutTopPx}px`, width: `${cutWPx}px`, height: `${cutHPx}px` }}
-        />
-
-        {/* Caja de texto (arrastrable) */}
-        <div
-          onPointerDown={startDrag('move')}
-          className="absolute cursor-move border-2 border-accent-500 bg-accent-500/20"
-          style={{ left: `${boxLeftPx}px`, top: `${boxTopPx}px`, width: `${boxWPx}px`, height: `${boxHPx}px` }}
-          title="Arrastrá para mover; tirá de la esquina para cambiar el tamaño"
-        >
-          <div
-            onPointerDown={startDrag('resize')}
-            className="absolute -bottom-1.5 -right-1.5 h-3 w-3 cursor-se-resize rounded-sm border border-white bg-accent-500"
-          />
-        </div>
       </div>
 
       <div className="mt-2 text-center text-[10px] text-ink-400">
-        Caja del nombre: {fmt(tb.w)} × {fmt(tb.h)} mm · desde el rótulo x {fmt(tb.xFromLabelLeft)} / y {fmt(tb.yFromLabelTop)} mm
+        {box
+          ? <>Caja del nombre: {fmt(box.w)} × {fmt(box.h)} mm · desde arriba-izquierda x {fmt(box.x)} / y {fmt(box.y)} mm</>
+          : 'Subí la imagen del arte de este tamaño.'}
       </div>
     </div>
   );
@@ -148,12 +208,10 @@ export default function RotulosManagerModal({ open, onClose }) {
   const [fonts, setFonts] = useState([]);
   const [models, setModels] = useState([]);
   const [busy, setBusy] = useState(false);
-  const [feedback, setFeedback] = useState(null); // { kind:'ok'|'err'|'info', text }
+  const [feedback, setFeedback] = useState(null); // { kind:'ok'|'err', text }
 
-  // Editor de un modelo recién parseado (o re-cargado).
-  const [parse, setParse] = useState(null); // { tmpDir, sizes, warnings }
-  const [modelName, setModelName] = useState('');
-  const [replaceId, setReplaceId] = useState(null);
+  // Modelo en edición (nuevo o re-editado): { id?, nombre, slots:{grande,intermedio,chico} }
+  const [draft, setDraft] = useState(null);
 
   const refresh = useCallback(async () => {
     if (!api) return;
@@ -168,24 +226,17 @@ export default function RotulosManagerModal({ open, onClose }) {
     refresh();
   }, [open, refresh]);
 
-  const discardParse = useCallback(() => {
-    if (parse?.tmpDir) { api?.modelDiscard(parse.tmpDir); }
-    setParse(null);
-    setModelName('');
-    setReplaceId(null);
-  }, [api, parse]);
-
   const handleClose = useCallback(() => {
-    if (parse) discardParse();
+    setDraft(null);
     onClose?.();
-  }, [parse, discardParse, onClose]);
+  }, [onClose]);
 
   useEffect(() => {
     if (!open) return undefined;
-    const onKey = (e) => { if (e.key === 'Escape') handleClose(); };
+    const onKey = (e) => { if (e.key === 'Escape') { if (draft) setDraft(null); else handleClose(); } };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, handleClose]);
+  }, [open, draft, handleClose]);
 
   if (!open) return null;
 
@@ -196,17 +247,10 @@ export default function RotulosManagerModal({ open, onClose }) {
     try {
       const r = await api.fontAdd();
       if (r?.canceled) return;
-      if (r?.ok) {
-        setFeedback({ kind: 'ok', text: `Fuente agregada: ${r.font.familia}` });
-        await refresh();
-      } else {
-        setFeedback({ kind: 'err', text: r?.error || 'No se pudo agregar la fuente.' });
-      }
-    } finally {
-      setBusy(false);
-    }
+      if (r?.ok) { setFeedback({ kind: 'ok', text: `Fuente agregada: ${r.font.familia}` }); await refresh(); }
+      else setFeedback({ kind: 'err', text: r?.error || 'No se pudo agregar la fuente.' });
+    } finally { setBusy(false); }
   };
-
   const removeFont = async (f) => {
     if (!window.confirm(`¿Eliminar la tipografía "${f.familia}"?`)) return;
     await api.fontRemove(f.id);
@@ -214,76 +258,112 @@ export default function RotulosManagerModal({ open, onClose }) {
   };
 
   // --- Modelos ---
-  const parsePdf = async (forId = null, forName = '') => {
+  const newModel = () => {
+    setFeedback(null);
+    setDraft({ nombre: '', slots: { grande: null, intermedio: null, chico: null } });
+  };
+
+  const editModel = async (m) => {
     setBusy(true);
     setFeedback(null);
     try {
-      const r = await api.modelParse();
-      if (r?.canceled) return;
-      if (!r?.ok) {
-        setFeedback({ kind: 'err', text: r?.error || 'No se pudo leer el PDF.' });
-        return;
+      const slots = { grande: null, intermedio: null, chico: null };
+      for (const key of SIZE_KEYS) {
+        const s = m.sizes?.[key];
+        if (s?.artePath) {
+          const r = await api.readImage(s.artePath);
+          if (r?.ok) {
+            slots[key] = {
+              dataUrl: r.dataUrl,
+              ext: s.ext || 'png',
+              wPx: s.wPx || null,
+              hPx: s.hPx || null,
+              textBox: s.textBox || defaultBox(sizeDef(key).cutW, sizeDef(key).cutH),
+            };
+          }
+        }
       }
-      setParse({ tmpDir: r.tmpDir, sizes: r.sizes, warnings: r.warnings || [] });
-      setModelName(forName || r.defaultName || 'Modelo');
-      setReplaceId(forId);
-      if (r.warnings?.length) {
-        setFeedback({ kind: 'info', text: r.warnings.join(' ') });
-      }
-    } finally {
-      setBusy(false);
-    }
+      setDraft({ id: m.id, nombre: m.nombre, slots });
+    } finally { setBusy(false); }
   };
 
-  const updateBox = (sizeKey, newBox) => {
-    setParse((prev) => (prev ? {
+  const pickImage = (sizeKey, file) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result);
+      const img = new Image();
+      img.onload = () => {
+        setDraft((prev) => {
+          if (!prev) return prev;
+          const existing = prev.slots[sizeKey];
+          const def = sizeDef(sizeKey);
+          return {
+            ...prev,
+            slots: {
+              ...prev.slots,
+              [sizeKey]: {
+                dataUrl,
+                ext: extFromFile(file),
+                wPx: img.naturalWidth,
+                hPx: img.naturalHeight,
+                textBox: existing?.textBox || defaultBox(def.cutW, def.cutH),
+              },
+            },
+          };
+        });
+      };
+      img.src = dataUrl;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const changeBox = (sizeKey, box) => {
+    setDraft((prev) => (prev ? {
       ...prev,
-      sizes: { ...prev.sizes, [sizeKey]: { ...prev.sizes[sizeKey], textBox: newBox } },
+      slots: { ...prev.slots, [sizeKey]: { ...prev.slots[sizeKey], textBox: box } },
     } : prev));
   };
 
   const saveModel = async () => {
-    if (!parse) return;
+    if (!draft) return;
     setBusy(true);
     setFeedback(null);
     try {
-      // Armar payload: solo lo necesario por tamaño + arte a copiar del tmp.
       const sizes = {};
-      let thumb = null;
-      for (const key of Object.keys(parse.sizes)) {
-        const s = parse.sizes[key];
+      let thumbSrc = null;
+      for (const key of SIZE_KEYS) {
+        const slot = draft.slots[key];
+        if (!slot?.dataUrl) continue;
+        const def = sizeDef(key);
         sizes[key] = {
-          artePath: s.arte?.path || null,
-          ext: s.arte?.ext || null,
-          wPx: s.arte?.wPx || null,
-          hPx: s.arte?.hPx || null,
-          cutMm: s.cutMm,
-          arteMm: s.arteMm,
-          textBox: s.textBox,
+          dataUrl: slot.dataUrl,
+          ext: slot.ext,
+          wPx: slot.wPx,
+          hPx: slot.hPx,
+          cutMm: { w: def.cutW, h: def.cutH, radius: def.radius },
+          textBox: slot.textBox,
         };
-        if (!thumb && (s.arte?.thumbB64 || s.arte?.previewB64)) {
-          thumb = s.arte.thumbB64 || s.arte.previewB64;
-        }
+        if (!thumbSrc) thumbSrc = slot.dataUrl;
       }
+      if (Object.keys(sizes).length === 0) {
+        setFeedback({ kind: 'err', text: 'Subí al menos una imagen antes de guardar.' });
+        return;
+      }
+      const thumb = thumbSrc ? await makeThumb(thumbSrc) : null;
       const r = await api.modelSave({
-        id: replaceId || undefined,
-        nombre: modelName.trim() || 'Modelo',
+        id: draft.id,
+        nombre: draft.nombre.trim() || 'Modelo',
         thumb,
-        tmpDir: parse.tmpDir,
         sizes,
       });
       if (r?.ok) {
-        setParse(null);
-        setModelName('');
-        setReplaceId(null);
+        setDraft(null);
         setFeedback({ kind: 'ok', text: `Modelo guardado: ${r.model.nombre}` });
         await refresh();
       } else {
         setFeedback({ kind: 'err', text: r?.error || 'No se pudo guardar el modelo.' });
       }
-    } finally {
-      setBusy(false);
-    }
+    } finally { setBusy(false); }
   };
 
   const removeModel = async (m) => {
@@ -292,13 +372,12 @@ export default function RotulosManagerModal({ open, onClose }) {
     await refresh();
   };
 
-  const fbColor = feedback?.kind === 'ok' ? 'text-green-300'
-    : feedback?.kind === 'err' ? 'text-red-300'
-      : 'text-sky-300';
+  const fbColor = feedback?.kind === 'ok' ? 'text-green-300' : feedback?.kind === 'err' ? 'text-red-300' : 'text-sky-300';
+  const slotsFilled = draft ? SIZE_KEYS.filter((k) => draft.slots[k]).length : 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="flex max-h-[92vh] w-[56rem] max-w-[96vw] flex-col rounded-lg border border-ink-700 bg-ink-900 shadow-2xl">
+      <div className="flex max-h-[92vh] w-[52rem] max-w-[96vw] flex-col rounded-lg border border-ink-700 bg-ink-900 shadow-2xl">
         <div className="flex items-center justify-between border-b border-ink-700 p-4">
           <div>
             <h3 className="text-sm font-semibold text-ink-100">Rótulos escolares</h3>
@@ -350,9 +429,7 @@ export default function RotulosManagerModal({ open, onClose }) {
                   {fonts.map((f) => (
                     <li key={f.id} className="flex items-center justify-between px-3 py-2">
                       <div className="min-w-0">
-                        <div className="truncate text-sm text-ink-100" style={{ fontFamily: `"${f.familia}"` }}>
-                          {f.familia}
-                        </div>
+                        <div className="truncate text-sm text-ink-100">{f.familia}</div>
                         <div className="text-[10px] uppercase text-ink-500">.{f.ext}</div>
                       </div>
                       <button
@@ -369,30 +446,29 @@ export default function RotulosManagerModal({ open, onClose }) {
             </div>
           )}
 
-          {/* ---------------- MODELOS ---------------- */}
-          {tab === 'modelos' && !parse && (
+          {/* ---------------- MODELOS: lista ---------------- */}
+          {tab === 'modelos' && !draft && (
             <div>
               <div className="mb-3 flex items-center justify-between">
                 <span className="text-xs text-ink-400">
-                  Cargá el PDF exportado de Corel (grupos de 3 páginas: arte, corte y texto por tamaño).
+                  Un modelo = 3 imágenes (grande, intermedio, chico) con la zona del nombre marcada a mano.
                 </span>
                 <button
                   type="button"
-                  onClick={() => parsePdf()}
-                  disabled={busy}
-                  className="rounded bg-accent-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-accent-500 disabled:opacity-40"
+                  onClick={newModel}
+                  className="rounded bg-accent-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-accent-500"
                 >
-                  {busy ? 'Leyendo…' : 'Cargar modelo (PDF)…'}
+                  Nuevo modelo
                 </button>
               </div>
               {models.length === 0 ? (
                 <p className="rounded border border-dashed border-ink-700 py-8 text-center text-xs text-ink-500">
-                  Todavía no hay modelos. Cargá uno con el botón de arriba.
+                  Todavía no hay modelos. Creá uno con “Nuevo modelo”.
                 </p>
               ) : (
                 <ul className="grid grid-cols-2 gap-3">
                   {models.map((m) => {
-                    const sizeKeys = SIZE_ORDER.filter((k) => m.sizes?.[k]);
+                    const keys = SIZE_KEYS.filter((k) => m.sizes?.[k]);
                     return (
                       <li key={m.id} className="flex gap-3 rounded-lg border border-ink-800 bg-ink-950/40 p-3">
                         <div className="h-16 w-24 shrink-0 overflow-hidden rounded border border-ink-700 bg-white">
@@ -404,16 +480,14 @@ export default function RotulosManagerModal({ open, onClose }) {
                         </div>
                         <div className="flex min-w-0 flex-1 flex-col">
                           <div className="truncate text-sm font-medium text-ink-100" title={m.nombre}>{m.nombre}</div>
-                          <div className="mt-0.5 text-[11px] text-ink-400">
-                            {sizeKeys.length} tamaño(s): {sizeKeys.join(' · ')}
-                          </div>
+                          <div className="mt-0.5 text-[11px] text-ink-400">{keys.length} tamaño(s): {keys.join(' · ')}</div>
                           <div className="mt-auto flex gap-2 pt-2">
                             <button
                               type="button"
-                              onClick={() => parsePdf(m.id, m.nombre)}
+                              onClick={() => editModel(m)}
                               className="rounded border border-ink-700 px-2 py-1 text-[11px] text-ink-200 hover:bg-ink-800"
                             >
-                              Recargar PDF
+                              Editar
                             </button>
                             <button
                               type="button"
@@ -432,31 +506,34 @@ export default function RotulosManagerModal({ open, onClose }) {
             </div>
           )}
 
-          {/* ---------------- EDITOR DE MODELO (parse) ---------------- */}
-          {tab === 'modelos' && parse && (
+          {/* ---------------- MODELOS: editor ---------------- */}
+          {tab === 'modelos' && draft && (
             <div>
               <div className="mb-3 flex flex-wrap items-end gap-3">
                 <label className="text-xs text-ink-300">
-                  <span className="mb-1 block">Nombre / número del modelo</span>
+                  <span className="mb-1 block">Número / nombre del modelo</span>
                   <input
-                    value={modelName}
-                    onChange={(e) => setModelName(e.target.value)}
+                    value={draft.nombre}
+                    onChange={(e) => setDraft((p) => ({ ...p, nombre: e.target.value }))}
+                    placeholder="ej: 125"
                     className="w-64 rounded border border-ink-700 bg-ink-800 px-3 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
                   />
                 </label>
                 <p className="flex-1 text-[11px] text-ink-400">
-                  Arrastrá la caja azul para ubicar dónde va el nombre; tirá de la esquina para
-                  cambiar su tamaño. El recuadro punteado es el borde del rótulo (corte).
+                  Subí la imagen de cada tamaño y arrastrá la caja azul a donde va el nombre.
+                  Cambiá su tamaño desde cualquier lado o esquina (los cuadraditos).
+                  El recuadro punteado es el borde del rótulo.
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {SIZE_ORDER.filter((k) => parse.sizes?.[k]).map((k) => (
-                  <SizeArtEditor
-                    key={k}
-                    sizeKey={k}
-                    size={parse.sizes[k]}
-                    onChange={(nb) => updateBox(k, nb)}
+              <div className="flex flex-col gap-4">
+                {SIZES.map((s) => (
+                  <SizeSlotEditor
+                    key={s.key}
+                    size={s}
+                    slot={draft.slots[s.key]}
+                    onPick={(file) => pickImage(s.key, file)}
+                    onChangeBox={(box) => changeBox(s.key, box)}
                   />
                 ))}
               </div>
@@ -467,30 +544,24 @@ export default function RotulosManagerModal({ open, onClose }) {
         </div>
 
         <div className="flex items-center justify-end gap-2 border-t border-ink-700 p-4">
-          {parse ? (
+          {draft ? (
             <>
+              <span className="mr-auto text-[11px] text-ink-500">{slotsFilled}/3 imágenes cargadas</span>
               <button
                 type="button"
-                onClick={discardParse}
+                onClick={() => setDraft(null)}
                 disabled={busy}
-                className="mr-auto rounded border border-ink-700 px-3 py-1 text-xs text-ink-200 hover:bg-ink-800 disabled:opacity-40"
+                className="rounded border border-ink-700 px-3 py-1 text-xs text-ink-200 hover:bg-ink-800 disabled:opacity-40"
               >
-                Cancelar carga
-              </button>
-              <button
-                type="button"
-                onClick={handleClose}
-                className="rounded border border-ink-700 px-3 py-1 text-xs text-ink-200 hover:bg-ink-800"
-              >
-                Cerrar
+                Cancelar
               </button>
               <button
                 type="button"
                 onClick={saveModel}
-                disabled={busy}
+                disabled={busy || slotsFilled === 0}
                 className="rounded bg-accent-600 px-3 py-1 text-xs font-medium text-white hover:bg-accent-500 disabled:opacity-40"
               >
-                {busy ? 'Guardando…' : (replaceId ? 'Guardar cambios' : 'Guardar modelo')}
+                {busy ? 'Guardando…' : (draft.id ? 'Guardar cambios' : 'Guardar modelo')}
               </button>
             </>
           ) : (

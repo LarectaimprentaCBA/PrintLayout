@@ -19,10 +19,8 @@ contextBridge.exposeInMainWorld('printlayout', {
     fontAdd: () => ipcRenderer.invoke('rotulos:font-add'),
     fontRemove: (id) => ipcRenderer.invoke('rotulos:font-remove', id),
     modelsList: () => ipcRenderer.invoke('rotulos:models-list'),
-    modelParse: () => ipcRenderer.invoke('rotulos:model-parse'),
     modelSave: (payload) => ipcRenderer.invoke('rotulos:model-save', payload),
     modelRemove: (id) => ipcRenderer.invoke('rotulos:model-remove', id),
-    modelDiscard: (tmpDir) => ipcRenderer.invoke('rotulos:model-discard', tmpDir),
     readImage: (filePath) => ipcRenderer.invoke('rotulos:read-image', filePath),
   },
   workStates: {

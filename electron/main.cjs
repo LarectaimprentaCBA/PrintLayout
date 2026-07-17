@@ -253,6 +253,13 @@ function createWindow() {
   } else {
     win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
+
+  // Conveniencia para probar localmente: con PRINTLAYOUT_DEV_SHOW=1 la ventana se
+  // abre al arrancar (en producción la app arranca oculta en la bandeja). No
+  // afecta al build normal instalado.
+  if (process.env.PRINTLAYOUT_DEV_SHOW) {
+    win.once('ready-to-show', () => { win.show(); win.focus(); });
+  }
 }
 
 function runPython(scriptName, { args = [], stdin = null } = {}) {
@@ -834,91 +841,50 @@ ipcMain.handle('rotulos:font-remove', (_evt, id) => {
 
 ipcMain.handle('rotulos:models-list', () => rotulosStore.listModels());
 
-// Elige el PDF del modelo, corre el parser Python y devuelve los 3 tamanios con
-// arte (path temporal + preview base64) y caja de texto detectada. NO guarda
-// todavia: el renderer muestra el preview editable y confirma con model-save.
-ipcMain.handle('rotulos:model-parse', async () => {
-  const win = BrowserWindow.getFocusedWindow();
-  const pick = await dialog.showOpenDialog(win, {
-    title: 'Elegir PDF del modelo de rótulo',
-    properties: ['openFile'],
-    filters: [{ name: 'PDF', extensions: ['pdf'] }],
-  });
-  if (pick.canceled || !pick.filePaths?.[0]) return { canceled: true };
-  const pdfPath = pick.filePaths[0];
-  const defaultName = path.basename(pdfPath, path.extname(pdfPath));
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'printlayout-rotulo-'));
-  const outDir = path.join(tmpDir, 'arte');
-  try {
-    fs.mkdirSync(outDir, { recursive: true });
-    const { stdout } = await runPython('parse_rotulo_model.py', { args: [pdfPath, outDir] });
-    let parsed;
-    try {
-      parsed = JSON.parse(stdout.trim());
-    } catch (e) {
-      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) { /* noop */ }
-      return { ok: false, error: `Salida inválida del parser: ${e.message}` };
-    }
-    if (!parsed.ok) {
-      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) { /* noop */ }
-      return parsed;
-    }
-    parsed.tmpDir = tmpDir;
-    parsed.defaultName = defaultName;
-    return parsed;
-  } catch (err) {
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) { /* noop */ }
-    return { ok: false, error: err.message };
-  }
-});
-
-// Guarda el modelo: copia los artes (full-res) del tmp al catalogo y persiste la
-// entrada con la caja de texto (posiblemente ajustada a mano). Limpia el tmp.
+// Guarda el modelo: escribe las imágenes (dataURL -> archivo full-res) al catálogo
+// y persiste la entrada con la caja de texto dibujada a mano (mm, relativa al
+// rótulo). Un modelo = 3 imágenes sueltas (grande/intermedio/chico), NO PDF. En
+// edición, reescribe el directorio del modelo desde cero.
 ipcMain.handle('rotulos:model-save', async (_evt, payload) => {
   try {
-    const { nombre, thumb, tmpDir, sizes } = payload || {};
+    const { id: reqId, nombre, thumb, sizes } = payload || {};
     if (!sizes || Object.keys(sizes).length === 0) {
-      return { ok: false, error: 'El modelo no tiene tamaños para guardar.' };
+      return { ok: false, error: 'Subí al menos una imagen para guardar el modelo.' };
     }
     rotulosStore.ensureDirs();
-    const id = payload.id || rotulosStore.generateId('rot');
+    const id = reqId || rotulosStore.generateId('rot');
     const dir = rotulosStore.modelDir(id);
+    // Reescribir limpio: borra imágenes previas (soporta editar / cambiar formato).
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) { /* noop */ }
     fs.mkdirSync(dir, { recursive: true });
 
     const savedSizes = {};
     for (const [key, s] of Object.entries(sizes)) {
-      let arteFile = null;
-      if (s.artePath && fs.existsSync(s.artePath)) {
-        const ext = s.ext || 'png';
-        arteFile = `${key}.${ext}`;
-        fs.copyFileSync(s.artePath, path.join(dir, arteFile));
-      }
+      if (!s || !s.dataUrl) continue;
+      const ext = (s.ext || 'png').toLowerCase();
+      const arteFile = `${key}.${ext}`;
+      fs.writeFileSync(path.join(dir, arteFile), dataUrlToBuffer(s.dataUrl));
       savedSizes[key] = {
         arteFile,
-        artePath: arteFile ? path.join(dir, arteFile) : null,
-        ext: s.ext || null,
+        artePath: path.join(dir, arteFile),
+        ext,
         wPx: s.wPx || null,
         hPx: s.hPx || null,
-        cutMm: s.cutMm || null,
-        arteMm: s.arteMm || null,
-        textBox: s.textBox || null,
+        cutMm: s.cutMm || null,     // {w,h,radius} fijo del tamaño
+        textBox: s.textBox || null, // {x,y,w,h} en mm, relativa al rótulo
       };
+    }
+    if (Object.keys(savedSizes).length === 0) {
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) { /* noop */ }
+      return { ok: false, error: 'No se pudo leer ninguna imagen del modelo.' };
     }
 
     const model = rotulosStore.saveModel({
-      id: payload.id || id,
+      id,
       nombre: nombre || 'Modelo',
       thumb: thumb || null,
       sizes: savedSizes,
     });
-
-    if (tmpDir) {
-      const root = path.resolve(os.tmpdir());
-      const resolved = path.resolve(tmpDir);
-      if (resolved.startsWith(root + path.sep)) {
-        try { fs.rmSync(resolved, { recursive: true, force: true }); } catch (_) { /* noop */ }
-      }
-    }
     return { ok: true, model };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -939,23 +905,7 @@ ipcMain.handle('rotulos:model-remove', (_evt, id) => {
   }
 });
 
-// Limpia el tmp de un parse que no se guardo (cancelar / re-cargar).
-ipcMain.handle('rotulos:model-discard', (_evt, tmpDir) => {
-  try {
-    if (!tmpDir) return { ok: false };
-    const root = path.resolve(os.tmpdir());
-    const resolved = path.resolve(tmpDir);
-    if (resolved.startsWith(root + path.sep)) {
-      fs.rmSync(resolved, { recursive: true, force: true });
-      return { ok: true };
-    }
-    return { ok: false };
-  } catch (err) {
-    return { ok: false, error: err.message };
-  }
-});
-
-// Lee un arte ya guardado como dataURL (para el preview del listado si hiciera falta).
+// Lee un arte ya guardado como dataURL (para el preview del listado y la edición).
 ipcMain.handle('rotulos:read-image', (_evt, filePath) => {
   try {
     if (!filePath) return { ok: false, error: 'path requerido' };
