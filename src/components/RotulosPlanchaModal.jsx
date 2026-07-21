@@ -329,8 +329,8 @@ export default function RotulosPlanchaModal({ open, init = null, onSubmit, onClo
       const out = {};
       for (const key of SIZE_KEYS) {
         const s = selectedModel.sizes?.[key];
-        if (s?.artePath) {
-          const r = await api.readImage(s.artePath);
+        if (s?.arteFile) {
+          const r = await api.readImage({ modelId: selectedModel.id, arteFile: s.arteFile });
           if (r?.ok) out[key] = r.dataUrl;
         }
       }

@@ -111,7 +111,7 @@ export async function loadRotulosInputs(spec) {
     const s = model.sizes?.[size];
     if (!s?.artePath || !s?.textBox) continue; // tamaño que el modelo no tiene
     let arteDataUrl = null;
-    try { const r = await api.readImage(s.artePath); if (r?.ok) arteDataUrl = r.dataUrl; } catch { /* noop */ }
+    try { const r = await api.readImage({ modelId: model.id, arteFile: s.arteFile }); if (r?.ok) arteDataUrl = r.dataUrl; } catch { /* noop */ }
     const textBox = sanitizeBox(spec.boxOverrides?.[size] || s.textBox);
     sizesInput[size] = { arteDataUrl, wPx: s.wPx, hPx: s.hPx, cutMm: s.cutMm, textBox };
   }

@@ -294,6 +294,8 @@ export default function RotulosManagerModal({ open, onClose }) {
   const [models, setModels] = useState([]);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState(null); // { kind:'ok'|'err', text }
+  const [cfg, setCfg] = useState({ rotulosSharedDir: '' });
+  const [sharedDraft, setSharedDraft] = useState('');
 
   // Modelo en edición (nuevo o re-editado): { id?, nombre, slots:{grande,intermedio,chico} }
   const [draft, setDraft] = useState(null);
@@ -305,11 +307,63 @@ export default function RotulosManagerModal({ open, onClose }) {
     setModels(Array.isArray(m) ? m : []);
   }, [api]);
 
+  const loadCfg = useCallback(async () => {
+    try {
+      const c = await api?.getConfig?.();
+      if (c) { setCfg(c); setSharedDraft(c.rotulosSharedDir || ''); }
+    } catch { /* noop */ }
+  }, [api]);
+
   useEffect(() => {
     if (!open) return;
     setFeedback(null);
+    loadCfg();
     refresh();
-  }, [open, refresh]);
+  }, [open, refresh, loadCfg]);
+
+  // Guardar la carpeta compartida → recargar el catálogo desde la base nueva.
+  const saveSharedDir = useCallback(async () => {
+    try {
+      const r = await api.setConfig({ rotulosSharedDir: sharedDraft.trim() });
+      const c = r?.config || r || { rotulosSharedDir: '' };
+      setCfg(c);
+      setSharedDraft(c.rotulosSharedDir || '');
+      await refresh();
+      setFeedback({ kind: 'ok', text: c.rotulosSharedDir ? `Catálogo compartido: ${c.rotulosSharedDir}` : 'Catálogo local (solo esta PC).' });
+    } catch (e) {
+      setFeedback({ kind: 'err', text: e.message || 'No se pudo guardar la carpeta.' });
+    }
+  }, [api, sharedDraft, refresh]);
+
+  const chooseSharedDir = useCallback(async () => {
+    try {
+      const r = await api.chooseDir();
+      if (r?.ok && r.path) setSharedDraft(r.path);
+    } catch { /* noop */ }
+  }, [api]);
+
+  // Copiar el catálogo LOCAL a la carpeta compartida (one-shot, explícito).
+  const migrateToShared = useCallback(async () => {
+    if (!cfg.rotulosSharedDir) {
+      setFeedback({ kind: 'err', text: 'Primero elegí y GUARDÁ la carpeta compartida.' });
+      return;
+    }
+    try {
+      let r = await api.migrateToShared({});
+      if (r?.needsOverwrite) {
+        if (!window.confirm('La carpeta compartida ya tiene un catálogo.\n¿Pisarlo con tus modelos/fuentes locales?')) return;
+        r = await api.migrateToShared({ overwrite: true });
+      }
+      if (r?.ok) {
+        await refresh();
+        setFeedback({ kind: 'ok', text: `Copiado a la carpeta compartida: ${r.models} modelo(s) y ${r.fonts} fuente(s).` });
+      } else {
+        setFeedback({ kind: 'err', text: r?.error || 'No se pudo copiar.' });
+      }
+    } catch (e) {
+      setFeedback({ kind: 'err', text: e.message || 'No se pudo copiar.' });
+    }
+  }, [api, cfg, refresh]);
 
   const handleClose = useCallback(() => {
     setDraft(null);
@@ -355,8 +409,8 @@ export default function RotulosManagerModal({ open, onClose }) {
       const slots = { grande: null, intermedio: null, chico: null };
       for (const key of SIZE_KEYS) {
         const s = m.sizes?.[key];
-        if (s?.artePath) {
-          const r = await api.readImage(s.artePath);
+        if (s?.arteFile) {
+          const r = await api.readImage({ modelId: m.id, arteFile: s.arteFile });
           if (r?.ok) {
             slots[key] = {
               dataUrl: r.dataUrl,
@@ -490,6 +544,40 @@ export default function RotulosManagerModal({ open, onClose }) {
         </div>
 
         <div className="flex-1 overflow-y-auto p-4">
+          {/* ---------------- CARPETA COMPARTIDA ---------------- */}
+          <div className="mb-4 rounded border border-ink-700 bg-ink-950/40 p-3">
+            <span className="mb-1 block text-xs font-medium text-ink-200">Carpeta compartida del catálogo</span>
+            <div className="flex gap-2">
+              <input
+                value={sharedDraft}
+                onChange={(e) => setSharedDraft(e.target.value)}
+                placeholder={'Vacío = solo esta PC.  Ej: \\\\MARIANO\\RotulosModelos'}
+                className="w-full rounded border border-ink-700 bg-ink-800 px-3 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
+              />
+              <button type="button" onClick={chooseSharedDir}
+                className="shrink-0 rounded border border-ink-700 bg-ink-800 px-3 py-1.5 text-xs text-ink-100 hover:bg-ink-700">
+                Elegir…
+              </button>
+              <button type="button" onClick={saveSharedDir}
+                className="shrink-0 rounded bg-accent-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-accent-500">
+                Guardar
+              </button>
+            </div>
+            <span className="mt-1 block text-[10px] text-ink-500">
+              Si apunta a una carpeta de red, varias PC comparten los mismos modelos y tipografías (lectura y escritura). Vacío = solo esta PC. Podés pegar la ruta de red directo.
+            </span>
+            <div className="mt-2 flex items-center gap-2">
+              <button type="button" onClick={migrateToShared} disabled={!cfg.rotulosSharedDir}
+                title={!cfg.rotulosSharedDir ? 'Guardá primero una carpeta compartida' : ''}
+                className="rounded border border-ink-700 px-2.5 py-1 text-[11px] text-ink-200 hover:bg-ink-800 disabled:opacity-40">
+                Copiar mis modelos locales a la carpeta compartida
+              </button>
+              <span className="text-[10px] text-ink-500">
+                {cfg.rotulosSharedDir ? `Activo: ${cfg.rotulosSharedDir}` : 'Actualmente: local (esta PC).'}
+              </span>
+            </div>
+          </div>
+
           {/* ---------------- TIPOGRAFÍAS ---------------- */}
           {tab === 'fuentes' && (
             <div>

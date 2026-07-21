@@ -15,6 +15,7 @@ const workStatesStore = require('./work-states-store.cjs');
 const jobsStore = require('./jobs-store.cjs');
 const openTabsStore = require('./open-tabs-store.cjs');
 const rotulosStore = require('./rotulos-store.cjs');
+const rotulosConfig = require('./rotulos-config-store.cjs');
 const intakeService = require('./intake/service.cjs');
 const qrCutServer = require('./qrcut/server.cjs');
 const { writePdfSilent, dobblePdfFileName } = require('./intake/save-pdf.cjs');
@@ -831,8 +832,17 @@ ipcMain.handle('rotulos:font-add', async () => {
 
 ipcMain.handle('rotulos:font-remove', (_evt, id) => {
   try {
+    // PORTABILIDAD: borra reconstruyendo la ruta desde fontsDir() (no del
+    // 'archivo' absoluto guardado, que en otra PC no existe), con guarda.
     const font = rotulosStore.listFonts().find((f) => f.id === id);
-    if (font?.archivo) { try { fs.rmSync(font.archivo, { force: true }); } catch (_) { /* best-effort */ } }
+    if (font) {
+      const ext = (font.ext || 'ttf').toLowerCase();
+      const root = path.resolve(rotulosStore.rotulosDir());
+      const resolved = path.resolve(path.join(rotulosStore.fontsDir(), `${id}.${ext}`));
+      if (resolved.startsWith(root + path.sep)) {
+        try { fs.rmSync(resolved, { force: true }); } catch (_) { /* best-effort */ }
+      }
+    }
     return rotulosStore.removeFont(id);
   } catch (err) {
     return { ok: false, error: err.message };
@@ -907,11 +917,20 @@ ipcMain.handle('rotulos:model-remove', (_evt, id) => {
 });
 
 // Lee un arte ya guardado como dataURL (para el preview del listado y la edición).
-ipcMain.handle('rotulos:read-image', (_evt, filePath) => {
+// PORTABILIDAD: recibe { modelId, arteFile } y RECONSTRUYE la ruta desde la base
+// actual (rotulosDir), así el modelo es portable entre PC (la ruta absoluta
+// guardada por otra PC no existe acá). Acepta un string absoluto como legacy.
+ipcMain.handle('rotulos:read-image', (_evt, arg) => {
   try {
-    if (!filePath) return { ok: false, error: 'path requerido' };
     const root = path.resolve(rotulosStore.rotulosDir());
-    const resolved = path.resolve(filePath);
+    let resolved;
+    if (arg && typeof arg === 'object' && arg.modelId && arg.arteFile) {
+      resolved = path.resolve(path.join(rotulosStore.modelDir(arg.modelId), arg.arteFile));
+    } else if (typeof arg === 'string' && arg) {
+      resolved = path.resolve(arg); // legacy: ruta absoluta
+    } else {
+      return { ok: false, error: 'parámetros inválidos' };
+    }
     if (!resolved.startsWith(root + path.sep)) {
       return { ok: false, error: 'path fuera de rótulos' };
     }
@@ -924,17 +943,83 @@ ipcMain.handle('rotulos:read-image', (_evt, filePath) => {
   }
 });
 
-// Lee los bytes de una tipografía (dataURL) para embeberla en el PDF con pdf-lib.
+// Lee los bytes de una tipografía (dataURL). PORTABILIDAD: RECONSTRUYE la ruta
+// desde fontsDir() + <id>.<ext> (no usa el 'archivo' absoluto guardado, que en
+// otra PC no existe). Mantiene la guarda de estar dentro de rotulosDir().
 ipcMain.handle('rotulos:read-font', (_evt, id) => {
   try {
     const font = rotulosStore.listFonts().find((f) => f.id === id);
-    if (!font?.archivo || !fs.existsSync(font.archivo)) {
-      return { ok: false, error: 'Fuente no encontrada.' };
-    }
-    const buf = fs.readFileSync(font.archivo);
+    if (!font) return { ok: false, error: 'Fuente no encontrada.' };
     const ext = (font.ext || 'ttf').toLowerCase();
+    const root = path.resolve(rotulosStore.rotulosDir());
+    const resolved = path.resolve(path.join(rotulosStore.fontsDir(), `${id}.${ext}`));
+    if (!resolved.startsWith(root + path.sep)) {
+      return { ok: false, error: 'path fuera de rótulos' };
+    }
+    if (!fs.existsSync(resolved)) return { ok: false, error: 'Fuente no encontrada.' };
+    const buf = fs.readFileSync(resolved);
     const mime = ext === 'otf' ? 'font/otf' : 'font/ttf';
     return { ok: true, dataUrl: `data:${mime};base64,${buf.toString('base64')}`, ext };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// --- Config del catálogo de rótulos (carpeta compartida) ---
+ipcMain.handle('rotulos:get-config', () => rotulosConfig.load());
+ipcMain.handle('rotulos:set-config', (_evt, patch) => {
+  try {
+    return { ok: true, config: rotulosConfig.save(patch) };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+ipcMain.handle('rotulos:choose-dir', async () => {
+  try {
+    const win = BrowserWindow.getFocusedWindow();
+    const r = await dialog.showOpenDialog(win, {
+      title: 'Carpeta compartida del catálogo de rótulos',
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (r.canceled || !r.filePaths || !r.filePaths[0]) return { canceled: true };
+    return { ok: true, path: r.filePaths[0] };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// Migración one-shot: copia el catálogo LOCAL (userData/rotulos) a la carpeta
+// compartida configurada. Explícito (botón), no automático. Si el destino ya
+// tiene índice, NO pisa salvo overwrite:true (el renderer avisa antes).
+ipcMain.handle('rotulos:migrate-to-shared', (_evt, { overwrite = false } = {}) => {
+  try {
+    const localBase = path.join(app.getPath('userData'), 'rotulos');
+    const shared = rotulosConfig.load().rotulosSharedDir;
+    if (!shared) return { ok: false, error: 'No hay carpeta compartida configurada.' };
+    const dest = path.resolve(shared);
+    if (path.resolve(localBase) === dest) return { ok: false, error: 'La carpeta compartida es la misma que la local.' };
+    if (!fs.existsSync(localBase)) return { ok: false, error: 'No hay catálogo local para copiar.' };
+
+    fs.mkdirSync(dest, { recursive: true });
+    const destModelsIdx = path.join(dest, 'models-index.json');
+    const destFontsIdx = path.join(dest, 'fonts-index.json');
+    if (!overwrite && (fs.existsSync(destModelsIdx) || fs.existsSync(destFontsIdx))) {
+      return { ok: false, needsOverwrite: true, error: 'La carpeta compartida ya tiene un catálogo.' };
+    }
+
+    // Índices + carpetas completas (recursive). last-write-wins, sin locking
+    // (aceptado: no se crean 2 iguales al mismo tiempo).
+    for (const f of ['fonts-index.json', 'models-index.json']) {
+      const src = path.join(localBase, f);
+      if (fs.existsSync(src)) fs.cpSync(src, path.join(dest, f));
+    }
+    for (const d of ['fonts', 'models']) {
+      const src = path.join(localBase, d);
+      if (fs.existsSync(src)) fs.cpSync(src, path.join(dest, d), { recursive: true });
+    }
+    const models = rotulosStore.listModels().length; // ya lee de la base compartida
+    const fonts = rotulosStore.listFonts().length;
+    return { ok: true, models, fonts, dest };
   } catch (err) {
     return { ok: false, error: err.message };
   }

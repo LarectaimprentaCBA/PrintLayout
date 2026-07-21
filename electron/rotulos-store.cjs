@@ -1,6 +1,7 @@
 const { app } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
+const rotulosConfig = require('./rotulos-config-store.cjs');
 
 // Almacen local de "Rotulos escolares": dos catalogos (tipografias y modelos)
 // bajo userData/rotulos/. Solo maneja el JSON; el copiado/borrado de archivos
@@ -12,8 +13,13 @@ const path = require('node:path');
 //     models-index.json         -> [{ id, nombre, thumb, sizes:{...}, ... }]
 //     models/<id>/<size>.<ext>  -> imagenes de arte por tamanio
 
+// Base del catálogo. Si hay carpeta compartida configurada (UNC de red), se usa
+// esa; si está vacía, la local userData/rotulos (back-compat). Se recalcula por
+// llamada → cambiar la carpeta surte efecto sin reiniciar (la próxima IPC ya usa
+// la base nueva). Todas las rutas (fonts/models/índices) derivan de acá.
 function rotulosDir() {
-  return path.join(app.getPath('userData'), 'rotulos');
+  const shared = rotulosConfig.load().rotulosSharedDir;
+  return shared ? shared : path.join(app.getPath('userData'), 'rotulos');
 }
 function fontsDir() {
   return path.join(rotulosDir(), 'fonts');
