@@ -181,9 +181,61 @@ export function cellsToCircleCuts(cells, { cutMarginMm = 0, segments = 64 } = {}
   return polylines;
 }
 
-// Dispatcher: forma 'rect' (default) usa cellsToCuts, 'circle' usa cellsToCircleCuts.
+// Radio de esquina (mm) por tamaño de rótulo escolar. Única fuente de los radios
+// del CORTE redondeado (el PDF dibuja el arte a celda llena; el redondeo vive en
+// el .plt). Si cambian, hay que borrar el .plt fijo para que se regenere.
+export const ROUNDED_RADIUS_BY_SIZE = { grande: 3.15, intermedio: 1.57, chico: 1.47 };
+
+// Como cellsToCuts pero con esquinas REDONDEADAS: por celda una polilínea cerrada
+// (mm, top-left, clockwise igual que cellsToCuts) = 4 lados rectos + 4 arcos de
+// esquina, radio según cell.size (ROUNDED_RADIUS_BY_SIZE), sampleados con
+// segmentsPerCorner puntos por esquina. Pensado para la plancha de rótulos, cuyo
+// layout es fijo → el corte también.
+export function cellsToRoundedRectCuts(cells, { cutMarginMm = 0, segmentsPerCorner = 8 } = {}) {
+  const m = Math.max(0, Number(cutMarginMm) || 0);
+  const seg = Math.max(1, Math.round(segmentsPerCorner));
+  const D = Math.PI / 180;
+  const polylines = [];
+  for (const c of cells) {
+    const x0 = c.x + m;
+    const y0 = c.y + m;
+    const x1 = c.x + c.w - m;
+    const y1 = c.y + c.h - m;
+    const w = x1 - x0;
+    const h = y1 - y0;
+    if (w <= 0 || h <= 0) continue;
+    const rWanted = ROUNDED_RADIUS_BY_SIZE[c.size] || 0;
+    const r = Math.max(0, Math.min(rWanted, w / 2, h / 2));
+    const poly = [];
+    if (r <= 0) {
+      poly.push([x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]);
+      polylines.push(poly);
+      continue;
+    }
+    // Arco (centro cc, de aStart a aEnd) sampleado. En coords y-abajo el orden
+    // top→right→bottom→left resulta clockwise, igual que cellsToCuts.
+    const arc = (ccx, ccy, aStart, aEnd) => {
+      for (let i = 0; i <= seg; i++) {
+        const a = aStart + (aEnd - aStart) * (i / seg);
+        poly.push([ccx + r * Math.cos(a), ccy + r * Math.sin(a)]);
+      }
+    };
+    poly.push([x0 + r, y0]);                    // inicio del lado superior
+    arc(x1 - r, y0 + r, -90 * D, 0);            // esquina sup-derecha
+    arc(x1 - r, y1 - r, 0, 90 * D);             // esquina inf-derecha
+    arc(x0 + r, y1 - r, 90 * D, 180 * D);       // esquina inf-izquierda
+    arc(x0 + r, y0 + r, 180 * D, 270 * D);      // esquina sup-izquierda
+    poly.push([x0 + r, y0]);                    // cierre
+    polylines.push(poly);
+  }
+  return polylines;
+}
+
+// Dispatcher: forma 'rect' (default) usa cellsToCuts, 'circle' usa cellsToCircleCuts,
+// 'rounded' usa cellsToRoundedRectCuts (radio por cell.size).
 export function generateCuts(cells, { cutShape = 'rect', cutMarginMm = 0 } = {}) {
   if (cutShape === 'circle') return cellsToCircleCuts(cells, { cutMarginMm });
+  if (cutShape === 'rounded') return cellsToRoundedRectCuts(cells, { cutMarginMm });
   return cellsToCuts(cells, { cutMarginMm });
 }
 

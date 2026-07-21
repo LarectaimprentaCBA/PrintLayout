@@ -18,10 +18,19 @@ function chicoRows() {
   return rows;
 }
 
+// Margen de las marcas L (mm). ÚNICA fuente: la comparten el PDF (drawCornerMarks)
+// y el payload del .plt (ensureBaseCut). Si difieren, el corte no alinea con la
+// impresión.
+export const MARK_MARGIN_MM = 10;
+
 export const PLANCHAS = {
   estandar: {
     id: 'estandar',
     label: 'Estándar 325×500',
+    // Texto del QR de la hoja Y nombre del .plt fijo. Como el layout NUNCA
+    // cambia, el corte y el QR son siempre los mismos (id fijo). Futuros tipos de
+    // plancha → cada uno su propio qrId fijo.
+    qrId: 'rotulos-estandar',
     pageWidthMm: 325,
     pageHeightMm: 500,
     build() {
@@ -39,12 +48,13 @@ export const PLANCHAS = {
 
 export const PLANCHA_LIST = Object.values(PLANCHAS).map((p) => ({ id: p.id, label: p.label }));
 
-// Devuelve { pageWidthMm, pageHeightMm, celdas:[{x,y,w,h,size}] } (144 celdas).
+// Devuelve { pageWidthMm, pageHeightMm, qrId, celdas:[{x,y,w,h,size}] } (144 celdas).
 export function planchaCeldas(planchaId = 'estandar') {
   const p = PLANCHAS[planchaId] || PLANCHAS.estandar;
   return {
     pageWidthMm: p.pageWidthMm,
     pageHeightMm: p.pageHeightMm,
+    qrId: p.qrId,
     celdas: p.build(),
   };
 }

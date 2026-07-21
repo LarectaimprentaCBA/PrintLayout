@@ -61,7 +61,7 @@ function fitContain(cellW, cellH, imgW, imgH) {
 // El brazo de cada L apunta hacia adentro del area de corte: la esquina
 // interior de la L coincide con la esquina de la ventana de corte (es decir,
 // la posicion que el plotter espera). Brazo 10 mm, trazo 0.3 mm, color negro.
-function drawCornerMarks(page, {
+export function drawCornerMarks(page, {
   offsetXpt, offsetYpt, templateWpt, templateHpt, markMarginMm,
 }) {
   if (!markMarginMm || markMarginMm <= 0) return;
@@ -129,7 +129,7 @@ export function qrMatrix(text) {
 // cámara del cabezal lo lee y el server QR sirve <text>.plt. La posición es
 // relativa a la hoja física (pageWmm/pageHmm), NO al área de la plantilla.
 // Sin `text` → no dibuja nada (los callers actuales no pasan qr → todo igual).
-function drawQr(page, {
+export function drawQr(page, {
   text, pageWmm, sizeMm = 8, bottomMm = 9.5, centered = true, showText = false, font = null,
 }) {
   if (!text) return;

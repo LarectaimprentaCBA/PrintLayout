@@ -9,7 +9,8 @@ import { cropImageDataUrl } from '../lib/imageCrop.js';
 import { MM_TO_PT } from './vendor/fitText.js';
 import { resolveSizeLayout, zoneAsBox, effectivePad } from './textLayout.js';
 import { makeCanvasMeasure, renderOverlayPng } from './drawOverlay.js';
-import { planchaCeldas } from './planchas.js';
+import { planchaCeldas, MARK_MARGIN_MM } from './planchas.js';
+import { drawCornerMarks, drawQr } from '../lib/exportPdf.js';
 
 const SIZE_KEYS = ['grande', 'intermedio', 'chico'];
 
@@ -53,6 +54,8 @@ export async function buildRotulosPlanchaPdf({
   minPt = 3,
   maxPt = 120,
   dpi = 600,
+  markMarginMm = MARK_MARGIN_MM,
+  qr = null, // { text, sizeMm, bottomMm, centered } — QR fijo de la hoja
 }) {
   const { pageWidthMm, pageHeightMm, celdas } = planchaCeldas(planchaId);
   const pageWpt = pageWidthMm * MM_TO_PT;
@@ -113,6 +116,17 @@ export async function buildRotulosPlanchaPdf({
     const h = cell.h * MM_TO_PT;
     if (ps.arteImg) page.drawImage(ps.arteImg, { x, y: yBottom, width: w, height: h });
     if (ps.overlayImg) page.drawImage(ps.overlayImg, { x, y: yBottom, width: w, height: h });
+  }
+
+  // Marcas L de registro (mismo markMarginMm que el .plt) + QR fijo de la hoja.
+  // El QR/borde inferior es la referencia de orientación al cargar en el plotter.
+  drawCornerMarks(page, {
+    offsetXpt: 0, offsetYpt: 0, templateWpt: pageWpt, templateHpt: pageHpt, markMarginMm,
+  });
+  if (qr && qr.text) {
+    drawQr(page, {
+      text: qr.text, pageWmm: pageWidthMm, sizeMm: qr.sizeMm, bottomMm: qr.bottomMm, centered: qr.centered,
+    });
   }
 
   return doc.save();

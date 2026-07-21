@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { resolveSizeLayout, zoneAsBox, effectivePad } from '../rotulos/textLayout.js';
 import { makeCanvasMeasure, drawRotuloOverlay } from '../rotulos/drawOverlay.js';
 import { buildRotulosPlanchaPdf } from '../rotulos/exportRotulos.js';
-import { PLANCHA_LIST } from '../rotulos/planchas.js';
+import { PLANCHA_LIST, planchaCeldas, MARK_MARGIN_MM } from '../rotulos/planchas.js';
+import { cellsToRoundedRectCuts } from '../lib/grid.js';
 import { RESIZE_HANDLES, RESIZE_EDGES, moveBox, resizeBox, fullLabelBox, clampCenterRotated, sanitizeBox } from '../rotulos/boxEditing.js';
 
 // Armador de plancha de rótulos. Preview en vivo (canvas) de los 3 rótulos:
@@ -366,16 +367,52 @@ export default function RotulosPlanchaModal({ open, onClose }) {
         sizes[key] = { dataUrl: arteBySize[key] || null, wPx: s.wPx, hPx: s.hPx, textBox: effTextBox(key), cutMm: s.cutMm };
       }
 
+      // Config del corte QR (mismos valores que usa el resto del sistema) para
+      // dibujar el QR FIJO de la plancha. Si el servicio QR no está, seguimos sin QR.
+      const qrApi = window.printlayout?.qrcut;
+      const plancha = planchaCeldas(planchaId);
+      let qrCfg = null;
+      try { qrCfg = await qrApi?.getConfig?.(); } catch { qrCfg = null; }
+      const qr = (qrCfg && plancha.qrId)
+        ? { text: plancha.qrId, sizeMm: qrCfg.qrSizeMm, bottomMm: qrCfg.qrBottomMm, centered: qrCfg.qrCentered }
+        : null;
+
       const bytes = await buildRotulosPlanchaPdf({
         model: { sizes, arteIncluyeRecuadro: !!selectedModel.arteIncluyeRecuadro },
         family: fam, color: textColor, boxColor, noBox, boxPadMm, text: debouncedText, lineModes, outline, planchaId,
+        markMarginMm: MARK_MARGIN_MM, qr,
       });
 
       const firstLine = String(debouncedText).split('\n')[0].trim();
       const name = `Rotulos ${selectedModel.nombre}${firstLine ? ` - ${firstLine}` : ''}`;
       const r = await api.savePdf(name, bytes);
-      if (r?.ok) setFeedback({ kind: 'ok', text: `PDF generado y abierto.\n${r.path}` });
-      else setFeedback({ kind: 'err', text: r?.error || 'No se pudo guardar el PDF.' });
+      if (!r?.ok) { setFeedback({ kind: 'err', text: r?.error || 'No se pudo guardar el PDF.' }); return; }
+
+      // Corte .plt FIJO de la plancha (una sola vez; el layout NUNCA cambia →
+      // el .plt y el QR son siempre los mismos). ensureBaseCut NO regenera si ya
+      // existe. GOTCHA: si algún día cambian layout/tamaños/radios, hay que
+      // borrar <qrId>.plt de la carpeta de cortes para que se regenere.
+      // Best-effort: si falla, el PDF igual ya se generó.
+      let cutMsg = '';
+      if (qrApi?.ensureBaseCut && plancha.qrId) {
+        try {
+          const bladeOffsetMm = (() => {
+            const stored = parseFloat(localStorage.getItem('printlayout.bladeOffsetMm'));
+            return Number.isFinite(stored) && stored > 0 ? stored : 0.25;
+          })();
+          const cr = await qrApi.ensureBaseCut({
+            planchaId: plancha.qrId,
+            cortes: cellsToRoundedRectCuts(plancha.celdas),
+            pageWidthMm: plancha.pageWidthMm,
+            pageHeightMm: plancha.pageHeightMm,
+            markMarginMm: MARK_MARGIN_MM,
+            bladeOffsetMm,
+          });
+          if (cr?.ok) cutMsg = cr.existed ? '\nCorte QR: ya existía.' : '\nCorte QR generado.';
+          else cutMsg = `\nCorte QR no generado: ${cr?.error || 'error'}`;
+        } catch (e) { cutMsg = `\nCorte QR no generado: ${e.message || 'error'}`; }
+      }
+      setFeedback({ kind: 'ok', text: `PDF generado y abierto.\n${r.path}${cutMsg}` });
     } catch (e) {
       setFeedback({ kind: 'err', text: e.message || 'Error generando el PDF.' });
     } finally {
