@@ -67,21 +67,21 @@ export function resolveSizeLayout({
   return cand[0];
 }
 
-// Recuadro dinámico del nombre: bounding box del texto + padding, centrado en la
-// zona (textBox). Nombre corto → recuadro chico; largo → hasta el máximo de la
-// zona. Devuelve {x,y,w,h,radius} en mm (mismo sistema que el textBox).
-export function computeNameBox({ lines, fontSizePt, lineHeightFactor = 1.15, zone, measurePt }) {
-  let maxW = 0;
-  for (const ln of lines) maxW = Math.max(maxW, measurePt ? measurePt(ln, fontSizePt) : 0);
-  const textWmm = maxW / MM_TO_PT;
-  const textHmm = (lines.length * fontSizePt * lineHeightFactor) / MM_TO_PT;
-  const fsMm = fontSizePt / MM_TO_PT;
-  const padXmm = fsMm * 0.3;
-  const padYmm = fsMm * 0.12;
-  const w = Math.min(zone.w, textWmm + 2 * padXmm);
-  const h = Math.min(zone.h, textHmm + 2 * padYmm);
-  const cx = zone.x + zone.w / 2;
-  const cy = zone.y + zone.h / 2;
-  const radius = Math.min(w, h) * 0.2;
-  return { x: cx - w / 2, y: cy - h / 2, w, h, radius };
+// El recuadro del nombre ES la zona que dibujó el usuario (textBox). El nombre se
+// ajusta ADENTRO con "aire". Antes el recuadro se achicaba para "abrazar" el
+// texto y quedaba flotando; ahora "lo que dibujás es lo que ves" y el usuario
+// controla el tamaño del recuadro dibujándolo. Devuelve {x,y,w,h,radius} en mm.
+export function zoneAsBox(zone) {
+  const w = zone.w;
+  const h = zone.h;
+  return { x: zone.x, y: zone.y, w, h, radius: Math.min(w, h) * 0.2 };
+}
+
+// Aire efectivo dentro del recuadro = el aire pedido + el grosor del contorno,
+// pero ACOTADO a una fracción del lado más chico de la zona. Así en el rótulo
+// chico (zona muy baja) el margen no se come casi todo el alto y la letra crece.
+export function effectivePad(basePadMm, outlineMm, zone) {
+  const want = Math.max(0, basePadMm || 0) + Math.max(0, outlineMm || 0);
+  const cap = 0.18 * Math.min(zone.w, zone.h);
+  return Math.min(want, cap);
 }

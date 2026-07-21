@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MM_TO_PT } from '../rotulos/vendor/fitText.js';
-import { resolveSizeLayout, computeNameBox } from '../rotulos/textLayout.js';
+import { resolveSizeLayout, zoneAsBox, effectivePad } from '../rotulos/textLayout.js';
+import { makeCanvasMeasure, drawRotuloOverlay } from '../rotulos/drawOverlay.js';
 import { buildRotulosPlanchaPdf } from '../rotulos/exportRotulos.js';
 import { PLANCHA_LIST } from '../rotulos/planchas.js';
+import { RESIZE_HANDLES, RESIZE_EDGES, moveBox, resizeBox, fullLabelBox } from '../rotulos/boxEditing.js';
 
-// Armador de plancha de rótulos: modelo + tipografía + colores (texto y recuadro)
-// + texto → preview en vivo de los 3 rótulos y generación del PDF (144 rótulos).
-// Líneas por tamaño (auto/1/2) y recuadro dinámico se calculan con textLayout.js,
-// la MISMA lógica que usa el PDF → lo que ves = lo que imprimís. Sin corte ni QR.
+// Armador de plancha de rótulos. Preview en vivo (canvas) de los 3 rótulos:
+// fondo + recuadro dinámico (o sin fondo) + nombre (líneas por tamaño, contorno
+// opcional, posición/tamaño/rotación de la zona). MISMA lógica que el PDF.
 
 const SIZE_KEYS = ['grande', 'intermedio', 'chico'];
 const SIZE_LABEL = { grande: 'Grande', intermedio: 'Intermedio', chico: 'Chico' };
@@ -27,16 +27,6 @@ function loadPalette() {
   } catch { return DEFAULT_PALETTE; }
 }
 
-function makeCanvasMeasure(family) {
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
-  return (line, sizePt) => {
-    ctx.font = `${sizePt}px "${family}"`;
-    return ctx.measureText(line || '').width;
-  };
-}
-
-// Control de color reutilizable (texto / recuadro): picker + hex + paleta.
 function ColorControl({ label, value, onChange, palette, onAdd, disabled, hint }) {
   return (
     <div className={`text-xs text-ink-300 ${disabled ? 'opacity-50' : ''}`}>
@@ -47,9 +37,7 @@ function ColorControl({ label, value, onChange, palette, onAdd, disabled, hint }
         <input value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)}
           className="w-24 rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500" />
         <button type="button" disabled={disabled} onClick={onAdd}
-          className="rounded border border-ink-700 px-2 py-1.5 text-[11px] text-ink-200 hover:bg-ink-800 disabled:opacity-50">
-          + Guardar
-        </button>
+          className="rounded border border-ink-700 px-2 py-1.5 text-[11px] text-ink-200 hover:bg-ink-800 disabled:opacity-50">+ Guardar</button>
       </div>
       <div className="mt-2 flex flex-wrap gap-1.5">
         {palette.map((c) => (
@@ -63,79 +51,178 @@ function ColorControl({ label, value, onChange, palette, onAdd, disabled, hint }
   );
 }
 
-// Preview de UN tamaño: fondo (cover) → recuadro (auto-size) → nombre.
-function PlanchaSizePreview({ sizeKey, cutMm, textBox, arteDataUrl, family, textColor, boxColor, drawBox, text, mode, onModeChange }) {
+const round2 = (n) => Math.round(n * 100) / 100;
+const fmt = (n) => (Number.isFinite(n) ? Math.round(n * 100) / 100 : '?');
+
+// Campo numérico chico en mm.
+function NumMm({ label, value, onChange }) {
+  return (
+    <label className="flex flex-col items-center gap-0.5">
+      <span className="text-ink-500">{label}</span>
+      <input type="number" step="0.5" value={fmt(value)} onChange={(e) => onChange(e.target.value)}
+        onPointerDown={(e) => e.stopPropagation()}
+        className="w-14 rounded border border-ink-700 bg-ink-800 px-1.5 py-1 text-center text-[11px] text-ink-100 outline-none focus:border-accent-500" />
+    </label>
+  );
+}
+
+function PlanchaSizePreview({ sizeKey, cutMm, textBox, arteDataUrl, family, textColor, boxColor, drawBox, padMm, text, mode, onModeChange, outline, onBoxChange, onResetBox, isOverridden }) {
   const DISP_W = 280;
   const cutW = cutMm?.w || 40;
   const cutH = cutMm?.h || 20;
   const scale = DISP_W / cutW;
   const dispH = cutH * scale;
   const radiusPx = (cutMm?.radius || 0) * scale;
+  const canvasRef = useRef(null);
+  const frameRef = useRef(null);
+  const dragRef = useRef(null);
+  const [editing, setEditing] = useState(false);
+  const rot = textBox?.rotation || 0;
+
+  // Mover / redimensionar / rotar el recuadro (solo esta plancha).
+  const startDrag = (kind) => (e) => {
+    if (!textBox || !onBoxChange) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const start = { rotation: 0, ...textBox };
+    dragRef.current = { kind, sx: e.clientX, sy: e.clientY, start };
+    const onMove = (ev) => {
+      const d = dragRef.current;
+      if (!d) return;
+      if (d.kind === 'rotate') {
+        const rect = frameRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const cxS = rect.left + (d.start.x + d.start.w / 2) * scale;
+        const cyS = rect.top + (d.start.y + d.start.h / 2) * scale;
+        let deg = Math.atan2(ev.clientY - cyS, ev.clientX - cxS) * 180 / Math.PI + 90;
+        deg = ((deg % 360) + 360) % 360;
+        if (deg > 180) deg -= 360;
+        onBoxChange({ ...d.start, rotation: Math.round(deg) });
+        return;
+      }
+      const dxMm = (ev.clientX - d.sx) / scale;
+      const dyMm = (ev.clientY - d.sy) / scale;
+      if (d.kind === 'move') onBoxChange(moveBox(d.start, dxMm, dyMm, cutW, cutH));
+      else onBoxChange(resizeBox(RESIZE_EDGES[d.kind], dxMm, dyMm, d.start, cutW, cutH));
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
+  const setBoxField = (field, val) => {
+    if (!textBox || !onBoxChange) return;
+    const n = parseFloat(String(val).replace(',', '.'));
+    if (!Number.isFinite(n)) return;
+    const next = { rotation: 0, ...textBox, [field]: n };
+    next.w = Math.max(2, Math.min(next.w, cutW));
+    next.h = Math.max(1, Math.min(next.h, cutH));
+    next.x = Math.max(0, Math.min(next.x, cutW - next.w));
+    next.y = Math.max(0, Math.min(next.y, cutH - next.h));
+    onBoxChange({ x: round2(next.x), y: round2(next.y), w: round2(next.w), h: round2(next.h), rotation: next.rotation });
+  };
+
+  // El recuadro = la zona dibujada; el nombre se ajusta adentro con el aire
+  // (acotado en zonas chicas) + el grosor del contorno.
+  const outlineMm = (outline && outline.enabled && outline.widthMm > 0) ? outline.widthMm : 0;
+  const pad = textBox ? effectivePad(drawBox ? (padMm || 0) : 0, outlineMm, textBox) : 0;
 
   const measure = useMemo(() => (family ? makeCanvasMeasure(family) : null), [family]);
-
   const layout = useMemo(() => {
     if (!measure || !textBox) return null;
-    return resolveSizeLayout({
-      text, mode, boxWmm: textBox.w, boxHmm: textBox.h,
-      minPt: MIN_PT, maxPt: MAX_PT, lineHeightFactor: LINE_HEIGHT, measurePt: measure,
-    });
-  }, [measure, textBox, text, mode]);
-
+    return resolveSizeLayout({ text, mode, boxWmm: Math.max(1, textBox.w - 2 * pad), boxHmm: Math.max(1, textBox.h - 2 * pad), minPt: MIN_PT, maxPt: MAX_PT, lineHeightFactor: LINE_HEIGHT, measurePt: measure });
+  }, [measure, textBox, text, mode, pad]);
   const nameBox = useMemo(() => {
-    if (!drawBox || !layout || !measure || !textBox) return null;
-    return computeNameBox({ lines: layout.lines, fontSizePt: layout.fontSizePt, lineHeightFactor: LINE_HEIGHT, zone: textBox, measurePt: measure });
-  }, [drawBox, layout, measure, textBox]);
-
+    if (!drawBox || !textBox) return null;
+    return zoneAsBox(textBox);
+  }, [drawBox, textBox]);
   const hasText = String(text ?? '').trim().length > 0;
-  const fontSizePx = layout ? (layout.fontSizePt / MM_TO_PT) * scale : 0;
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.max(1, Math.round(DISP_W * dpr));
+    canvas.height = Math.max(1, Math.round(dispH * dpr));
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, DISP_W, dispH);
+    drawRotuloOverlay(ctx, {
+      scale, family, textColor, boxColor,
+      drawBox: drawBox && hasText, box: nameBox, zone: textBox,
+      layout: hasText ? layout : null, outline, lineHeightFactor: LINE_HEIGHT,
+    });
+  }, [dispH, scale, family, textColor, boxColor, drawBox, hasText, nameBox, textBox, layout, outline]);
 
   return (
     <div className="rounded-lg border border-ink-700 bg-ink-950/40 p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-xs font-semibold text-ink-100">
-          {SIZE_LABEL[sizeKey]} <span className="text-ink-500">· {cutW} × {cutH} mm</span>
-        </span>
-        <div className="flex overflow-hidden rounded border border-ink-700">
-          {LINE_MODES.map((m) => (
-            <button key={m.v} type="button" onClick={() => onModeChange(m.v)}
-              className={`px-2 py-0.5 text-[10px] ${mode === m.v ? 'bg-accent-600 text-white' : 'bg-ink-800 text-ink-300 hover:bg-ink-700'}`}>
-              {m.v === 'auto' && layout && mode === 'auto' ? `Auto (${layout.count})` : m.t}
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="text-xs font-semibold text-ink-100">{SIZE_LABEL[sizeKey]} <span className="text-ink-500">· {cutW} × {cutH} mm</span>{isOverridden && <span className="ml-1 text-amber-300">· ajustado</span>}</span>
+        <div className="flex items-center gap-1.5">
+          {drawBox && onBoxChange && (
+            <button type="button" onClick={() => setEditing((v) => !v)}
+              className={`rounded border px-2 py-0.5 text-[10px] ${editing ? 'border-accent-500 bg-accent-600 text-white' : 'border-ink-700 text-ink-300 hover:bg-ink-800'}`}
+              title="Ajustar el recuadro solo para esta plancha">
+              {editing ? '✓ Listo' : '✎ Ajustar recuadro'}
             </button>
-          ))}
+          )}
+          <div className="flex overflow-hidden rounded border border-ink-700">
+            {LINE_MODES.map((m) => (
+              <button key={m.v} type="button" onClick={() => onModeChange(m.v)}
+                className={`px-2 py-0.5 text-[10px] ${mode === m.v ? 'bg-accent-600 text-white' : 'bg-ink-800 text-ink-300 hover:bg-ink-700'}`}>
+                {m.v === 'auto' && layout && mode === 'auto' ? `Auto (${layout.count})` : m.t}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
-
-      <div className="relative mx-auto overflow-hidden border border-dashed border-sky-400/50 bg-white"
-        style={{ width: `${DISP_W}px`, height: `${dispH}px`, borderRadius: `${radiusPx}px` }}>
-        {arteDataUrl ? (
-          <img src={arteDataUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
-        ) : (
-          <div className="absolute inset-0 flex items-center justify-center text-[11px] text-ink-400">(sin arte)</div>
-        )}
-
-        {/* Recuadro dinámico */}
-        {hasText && nameBox && (
-          <div className="absolute"
+      <div ref={frameRef} className="relative mx-auto" style={{ width: `${DISP_W}px`, height: `${dispH}px` }}>
+        <div className="absolute inset-0 overflow-hidden border border-dashed border-sky-400/50 bg-white" style={{ borderRadius: `${radiusPx}px` }}>
+          {arteDataUrl ? <img src={arteDataUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
+            : <div className="absolute inset-0 flex items-center justify-center text-[11px] text-ink-400">(sin arte)</div>}
+        </div>
+        <canvas ref={canvasRef} className="pointer-events-none absolute inset-0" style={{ width: `${DISP_W}px`, height: `${dispH}px` }} />
+        {editing && textBox && (
+          <div onPointerDown={startDrag('move')}
+            className="absolute cursor-move border-2 border-accent-400 bg-accent-400/10"
             style={{
-              left: `${nameBox.x * scale}px`, top: `${nameBox.y * scale}px`,
-              width: `${nameBox.w * scale}px`, height: `${nameBox.h * scale}px`,
-              backgroundColor: boxColor, borderRadius: `${nameBox.radius * scale}px`,
-            }} />
-        )}
-
-        {/* Nombre */}
-        {hasText && family && layout && (
-          <div className="absolute flex flex-col items-center justify-center overflow-hidden text-center leading-none"
-            style={{ left: `${textBox.x * scale}px`, top: `${textBox.y * scale}px`, width: `${textBox.w * scale}px`, height: `${textBox.h * scale}px` }}>
-            {layout.lines.map((ln, i) => (
-              <div key={i} style={{ fontFamily: `"${family}"`, color: textColor, fontSize: `${fontSizePx}px`, lineHeight: LINE_HEIGHT, whiteSpace: 'nowrap' }}>
-                {ln || ' '}
-              </div>
+              left: `${textBox.x * scale}px`, top: `${textBox.y * scale}px`,
+              width: `${textBox.w * scale}px`, height: `${textBox.h * scale}px`,
+              borderRadius: `${Math.min(textBox.w, textBox.h) * 0.2 * scale}px`,
+              transform: `rotate(${rot}deg)`, transformOrigin: 'center',
+            }}
+            title="Arrastrá para mover; los cuadraditos cambian el tamaño; el punto verde rota">
+            {RESIZE_HANDLES.map((h) => (
+              <div key={h.dir} onPointerDown={startDrag(h.dir)}
+                className={`absolute h-2.5 w-2.5 rounded-sm border border-white bg-accent-500 ${h.pos} ${h.cur}`} />
             ))}
+            <div onPointerDown={startDrag('rotate')} title="Rotar el recuadro"
+              className="absolute h-3 w-3 cursor-grab rounded-full border border-white bg-emerald-500"
+              style={{ left: '50%', top: 0, transform: 'translate(-50%, -220%)' }} />
           </div>
         )}
       </div>
+      {editing && textBox && (
+        <div className="mt-2 space-y-1.5">
+          <div className="flex flex-wrap items-end justify-center gap-2 text-[10px] text-ink-400">
+            <NumMm label="Ancho" value={textBox.w} onChange={(v) => setBoxField('w', v)} />
+            <NumMm label="Alto" value={textBox.h} onChange={(v) => setBoxField('h', v)} />
+            <NumMm label="X" value={textBox.x} onChange={(v) => setBoxField('x', v)} />
+            <NumMm label="Y" value={textBox.y} onChange={(v) => setBoxField('y', v)} />
+            <button type="button" onClick={() => onBoxChange(fullLabelBox(cutW, cutH))}
+              className="self-end rounded border border-ink-700 px-2 py-1 text-[10px] text-ink-200 hover:bg-ink-800"
+              title="Recuadro ocupando todo el rótulo">Usar todo</button>
+            <button type="button" onClick={onResetBox} disabled={!isOverridden}
+              className="self-end rounded border border-ink-700 px-2 py-1 text-[10px] text-ink-200 hover:bg-ink-800 disabled:opacity-40"
+              title="Volver al recuadro del modelo">Restablecer</button>
+          </div>
+          <div className="text-center text-[10px] text-ink-500">Recuadro: {fmt(textBox.w)} × {fmt(textBox.h)} mm · {Math.round(rot)}° — solo para esta plancha</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -150,6 +237,9 @@ export default function RotulosPlanchaModal({ open, onClose }) {
   const [fontId, setFontId] = useState('');
   const [textColor, setTextColor] = useState('#000000');
   const [boxColor, setBoxColor] = useState('#ffffff');
+  const [noBox, setNoBox] = useState(false);
+  const [boxPadMm, setBoxPadMm] = useState(0.8);
+  const [outline, setOutline] = useState({ enabled: false, color: '#e11d2a', widthMm: 0.3, join: 'round' });
   const [palette, setPalette] = useState(DEFAULT_PALETTE);
   const [text, setText] = useState('');
   const [debouncedText, setDebouncedText] = useState('');
@@ -158,6 +248,10 @@ export default function RotulosPlanchaModal({ open, onClose }) {
   const [family, setFamily] = useState(null);
   const [generating, setGenerating] = useState(false);
   const [feedback, setFeedback] = useState(null);
+  // Ajustes del recuadro por tamaño SOLO para esta plancha (no tocan el modelo).
+  const [boxOverrides, setBoxOverrides] = useState({});
+  const setOverride = useCallback((key, box) => setBoxOverrides((p) => ({ ...p, [key]: box })), []);
+  const resetOverride = useCallback((key) => setBoxOverrides((p) => { const n = { ...p }; delete n[key]; return n; }), []);
 
   const loadedFontsRef = useRef(new Map());
 
@@ -166,7 +260,13 @@ export default function RotulosPlanchaModal({ open, onClose }) {
     () => !!selectedModel && SIZE_KEYS.every((k) => selectedModel.sizes?.[k]?.textBox && selectedModel.sizes?.[k]?.arteFile),
     [selectedModel],
   );
-  const drawBox = !selectedModel?.arteIncluyeRecuadro;
+  const drawBox = !selectedModel?.arteIncluyeRecuadro && !noBox;
+
+  // Recuadro efectivo = ajuste de la plancha o, si no hay, el del modelo.
+  const effTextBox = useCallback(
+    (key) => boxOverrides[key] || selectedModel?.sizes?.[key]?.textBox || null,
+    [boxOverrides, selectedModel],
+  );
 
   useEffect(() => {
     if (!open || !api) return;
@@ -187,6 +287,9 @@ export default function RotulosPlanchaModal({ open, onClose }) {
     return () => clearTimeout(t);
   }, [text]);
 
+  // Al cambiar de modelo se descartan los ajustes de recuadro de la plancha.
+  useEffect(() => { setBoxOverrides({}); }, [modelId]);
+
   useEffect(() => {
     if (!open || !api || !selectedModel) { setArteBySize({}); return undefined; }
     let cancelled = false;
@@ -204,26 +307,26 @@ export default function RotulosPlanchaModal({ open, onClose }) {
     return () => { cancelled = true; };
   }, [open, api, selectedModel]);
 
+  const ensureFamily = async (fid) => {
+    if (!fid || !api) return null;
+    if (loadedFontsRef.current.has(fid)) return loadedFontsRef.current.get(fid);
+    const r = await api.readFont(fid);
+    if (!r?.ok) return null;
+    const fam = `PLRot_${fid}`;
+    try {
+      const buf = await fetch(r.dataUrl).then((x) => x.arrayBuffer());
+      const face = new FontFace(fam, buf);
+      await face.load();
+      document.fonts.add(face);
+      loadedFontsRef.current.set(fid, fam);
+      return fam;
+    } catch { return null; }
+  };
+
   useEffect(() => {
     if (!open || !api || !fontId) { setFamily(null); return undefined; }
     let cancelled = false;
-    (async () => {
-      if (loadedFontsRef.current.has(fontId)) {
-        if (!cancelled) setFamily(loadedFontsRef.current.get(fontId));
-        return;
-      }
-      const r = await api.readFont(fontId);
-      if (!r?.ok) { if (!cancelled) setFamily(null); return; }
-      const fam = `PLRot_${fontId}`;
-      try {
-        const buf = await fetch(r.dataUrl).then((x) => x.arrayBuffer());
-        const face = new FontFace(fam, buf);
-        await face.load();
-        document.fonts.add(face);
-        loadedFontsRef.current.set(fontId, fam);
-        if (!cancelled) setFamily(fam);
-      } catch { if (!cancelled) setFamily(null); }
-    })();
+    ensureFamily(fontId).then((fam) => { if (!cancelled) setFamily(fam); });
     return () => { cancelled = true; };
   }, [open, api, fontId]);
 
@@ -239,9 +342,7 @@ export default function RotulosPlanchaModal({ open, onClose }) {
       const cc = String(c).toLowerCase();
       if (prev.includes(cc)) return prev;
       const next = [...prev, cc];
-      try {
-        localStorage.setItem(PALETTE_KEY, JSON.stringify(next.filter((x) => !DEFAULT_PALETTE.includes(x))));
-      } catch { /* noop */ }
+      try { localStorage.setItem(PALETTE_KEY, JSON.stringify(next.filter((x) => !DEFAULT_PALETTE.includes(x)))); } catch { /* noop */ }
       return next;
     });
   }, []);
@@ -253,25 +354,19 @@ export default function RotulosPlanchaModal({ open, onClose }) {
     setGenerating(true);
     setFeedback(null);
     try {
-      const fontRes = await api.readFont(fontId);
-      if (!fontRes?.ok) { setFeedback({ kind: 'err', text: 'No se pudo leer la tipografía.' }); return; }
-      const fontBytes = new Uint8Array(await fetch(fontRes.dataUrl).then((x) => x.arrayBuffer()));
+      const fam = family || await ensureFamily(fontId);
+      if (!fam) { setFeedback({ kind: 'err', text: 'No se pudo cargar la tipografía.' }); return; }
 
       const sizes = {};
       for (const key of SIZE_KEYS) {
         const s = selectedModel.sizes?.[key];
         if (!s) continue;
-        sizes[key] = { dataUrl: arteBySize[key] || null, wPx: s.wPx, hPx: s.hPx, textBox: s.textBox, cutMm: s.cutMm };
+        sizes[key] = { dataUrl: arteBySize[key] || null, wPx: s.wPx, hPx: s.hPx, textBox: effTextBox(key), cutMm: s.cutMm };
       }
 
       const bytes = await buildRotulosPlanchaPdf({
         model: { sizes, arteIncluyeRecuadro: !!selectedModel.arteIncluyeRecuadro },
-        fontBytes,
-        color: textColor,
-        boxColor,
-        text: debouncedText,
-        lineModes,
-        planchaId,
+        family: fam, color: textColor, boxColor, noBox, boxPadMm, text: debouncedText, lineModes, outline, planchaId,
       });
 
       const firstLine = String(debouncedText).split('\n')[0].trim();
@@ -296,12 +391,9 @@ export default function RotulosPlanchaModal({ open, onClose }) {
         <div className="flex items-center justify-between border-b border-ink-700 p-4">
           <div>
             <h3 className="text-sm font-semibold text-ink-100">Armar plancha de rótulos</h3>
-            <p className="mt-0.5 text-xs text-ink-400">
-              Elegí modelo, tipografía y colores, escribí el nombre y generá el PDF (144 rótulos). Sin corte ni QR todavía.
-            </p>
+            <p className="mt-0.5 text-xs text-ink-400">Elegí modelo, tipografía, colores y estilo del nombre, y generá el PDF (144 rótulos). Sin corte ni QR todavía.</p>
           </div>
-          <button type="button" onClick={onClose}
-            className="rounded border border-ink-700 px-3 py-1 text-xs text-ink-200 hover:bg-ink-800">Cerrar</button>
+          <button type="button" onClick={onClose} className="rounded border border-ink-700 px-3 py-1 text-xs text-ink-200 hover:bg-ink-800">Cerrar</button>
         </div>
 
         <div className="flex min-h-0 flex-1 gap-4 overflow-hidden p-4">
@@ -322,9 +414,7 @@ export default function RotulosPlanchaModal({ open, onClose }) {
                 {noModels ? <option value="">(no hay modelos)</option> : models.map((m) => <option key={m.id} value={m.id}>{m.nombre}</option>)}
               </select>
               {selectedModel && !modelComplete && (
-                <span className="mt-1 block text-[10px] text-amber-300">
-                  Este modelo no tiene los 3 tamaños con su caja de texto. Completalo en “Rótulos → Modelos”.
-                </span>
+                <span className="mt-1 block text-[10px] text-amber-300">Este modelo no tiene los 3 tamaños con su caja de texto. Completalo en “Rótulos → Modelos”.</span>
               )}
             </label>
 
@@ -336,21 +426,57 @@ export default function RotulosPlanchaModal({ open, onClose }) {
               </select>
             </label>
 
-            <ColorControl label="Color del texto" value={textColor} onChange={setTextColor}
-              palette={palette} onAdd={() => addToPalette(textColor)} />
+            <ColorControl label="Color del texto" value={textColor} onChange={setTextColor} palette={palette} onAdd={() => addToPalette(textColor)} />
 
-            <ColorControl label="Color del recuadro" value={boxColor} onChange={setBoxColor}
-              palette={palette} onAdd={() => addToPalette(boxColor)} disabled={!drawBox}
-              hint={!drawBox ? 'Este modelo ya trae el recuadro en el arte (no se dibuja uno).' : null} />
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-ink-200">
+              <input type="checkbox" checked={noBox} onChange={(e) => setNoBox(e.target.checked)} className="h-4 w-4 accent-accent-500" />
+              <span>Sin recuadro (fondo transparente)</span>
+            </label>
+            <ColorControl label="Color del recuadro" value={boxColor} onChange={setBoxColor} palette={palette} onAdd={() => addToPalette(boxColor)}
+              disabled={!drawBox}
+              hint={selectedModel?.arteIncluyeRecuadro ? 'Este modelo ya trae el recuadro en el arte.' : (noBox ? 'Sin recuadro activado.' : null)} />
+            <div className={`flex items-center gap-2 text-xs text-ink-300 ${!drawBox ? 'opacity-50' : ''}`}>
+              <span className="w-28">Aire del recuadro</span>
+              <input type="number" min="0" step="0.1" value={boxPadMm} disabled={!drawBox}
+                onChange={(e) => setBoxPadMm(parseFloat(e.target.value) || 0)}
+                className="w-20 rounded border border-ink-700 bg-ink-800 px-2 py-1 text-sm text-ink-100 disabled:opacity-50" />
+              <span>mm (espacio entre el texto y el recuadro)</span>
+            </div>
+
+            {/* Contorno del texto */}
+            <div className="rounded border border-ink-800 bg-ink-950/40 p-2">
+              <label className="flex cursor-pointer items-center gap-2 text-xs text-ink-200">
+                <input type="checkbox" checked={outline.enabled} onChange={(e) => setOutline((o) => ({ ...o, enabled: e.target.checked }))} className="h-4 w-4 accent-accent-500" />
+                <span className="font-medium">Contorno del texto</span>
+              </label>
+              {outline.enabled && (
+                <div className="mt-2 space-y-2">
+                  <ColorControl label="Color del contorno" value={outline.color} onChange={(c) => setOutline((o) => ({ ...o, color: c }))} palette={palette} onAdd={() => addToPalette(outline.color)} />
+                  <div className="flex items-center gap-2 text-xs text-ink-300">
+                    <span className="w-16">Grosor</span>
+                    <input type="number" min="0.05" step="0.05" value={outline.widthMm}
+                      onChange={(e) => setOutline((o) => ({ ...o, widthMm: parseFloat(e.target.value) || 0 }))}
+                      className="w-20 rounded border border-ink-700 bg-ink-800 px-2 py-1 text-sm text-ink-100" />
+                    <span>mm</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-ink-300">
+                    <span className="w-16">Terminación</span>
+                    <select value={outline.join} onChange={(e) => setOutline((o) => ({ ...o, join: e.target.value }))}
+                      className="rounded border border-ink-700 bg-ink-800 px-2 py-1 text-sm text-ink-100">
+                      <option value="round">Redondeada</option>
+                      <option value="miter">Punta</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+            </div>
 
             <label className="text-xs text-ink-300">
               <span className="mb-1 block">Texto (Enter = corte preferido)</span>
               <textarea value={text} onChange={(e) => setText(e.target.value)} rows={4}
                 placeholder={'Luz Martínez\n4° A T.M.'}
                 className="w-full resize-none rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500" />
-              <span className="mt-1 block text-[10px] text-ink-500">
-                Cada tamaño decide solo 1 o 2 líneas (Auto). Podés forzarlo en cada tarjeta del preview.
-              </span>
+              <span className="mt-1 block text-[10px] text-ink-500">Cada tamaño decide solo 1 o 2 líneas (Auto). Podés forzarlo en cada tarjeta del preview.</span>
             </label>
           </div>
 
@@ -358,19 +484,19 @@ export default function RotulosPlanchaModal({ open, onClose }) {
           <div className="min-w-0 flex-1 overflow-y-auto">
             <div className="mb-2 text-[11px] uppercase tracking-wide text-ink-500">Vista previa</div>
             {noModels ? (
-              <p className="rounded border border-dashed border-ink-700 py-10 text-center text-xs text-ink-500">
-                No hay modelos. Creá uno en “Rótulos → Modelos”.
-              </p>
+              <p className="rounded border border-dashed border-ink-700 py-10 text-center text-xs text-ink-500">No hay modelos. Creá uno en “Rótulos → Modelos”.</p>
             ) : (
               <div className="flex flex-col gap-3">
                 {SIZE_KEYS.map((key) => {
                   const s = selectedModel?.sizes?.[key];
                   if (!s) return null;
                   return (
-                    <PlanchaSizePreview key={key} sizeKey={key} cutMm={s.cutMm} textBox={s.textBox}
+                    <PlanchaSizePreview key={key} sizeKey={key} cutMm={s.cutMm} textBox={effTextBox(key)}
                       arteDataUrl={arteBySize[key]} family={family} textColor={textColor} boxColor={boxColor}
-                      drawBox={drawBox} text={debouncedText} mode={lineModes[key]}
-                      onModeChange={(m) => setLineModes((prev) => ({ ...prev, [key]: m }))} />
+                      drawBox={drawBox} padMm={boxPadMm} text={debouncedText} mode={lineModes[key]} outline={outline}
+                      onModeChange={(m) => setLineModes((prev) => ({ ...prev, [key]: m }))}
+                      onBoxChange={(b) => setOverride(key, b)} onResetBox={() => resetOverride(key)}
+                      isOverridden={!!boxOverrides[key]} />
                   );
                 })}
               </div>
@@ -381,8 +507,7 @@ export default function RotulosPlanchaModal({ open, onClose }) {
         <div className="flex items-center gap-2 border-t border-ink-700 p-4">
           {feedback && <p className={`mr-auto whitespace-pre-line text-[11px] ${fbColor}`}>{feedback.text}</p>}
           {!feedback && <span className="mr-auto text-[11px] text-ink-500">Plancha {planchaId} · 144 rótulos (12 + 24 + 108)</span>}
-          <button type="button" onClick={onClose}
-            className="rounded border border-ink-700 px-3 py-1 text-xs text-ink-200 hover:bg-ink-800">Cerrar</button>
+          <button type="button" onClick={onClose} className="rounded border border-ink-700 px-3 py-1 text-xs text-ink-200 hover:bg-ink-800">Cerrar</button>
           <button type="button" onClick={generate} disabled={generating || !modelComplete || !fontId}
             title={!modelComplete ? 'El modelo debe tener los 3 tamaños con su caja de texto' : (!fontId ? 'Elegí una tipografía' : '')}
             className="rounded bg-accent-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-accent-500 disabled:opacity-40">

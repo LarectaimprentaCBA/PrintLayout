@@ -49,7 +49,7 @@ function defaultBox(cutW, cutH) {
   const h = round2(Math.min(cutH * 0.35, Math.max(2.5, cutH - 2)));
   const x = round2(Math.max(0, (cutW - w) / 2));
   const y = round2(Math.max(0, cutH - h - Math.min(cutH * 0.12, 2)));
-  return { x, y, w, h };
+  return { x, y, w, h, rotation: 0 };
 }
 
 // Miniatura chica para la lista (downscale por canvas).
@@ -71,50 +71,96 @@ function makeThumb(dataUrl, maxPx = 200) {
   });
 }
 
-// Editor de UNA imagen de un tamaño, con la caja de texto encima.
+// Editor de UNA imagen de un tamaño, con la caja de texto encima (mover /
+// redimensionar por 8 tiradores / ROTAR con el punto verde). La caja guarda
+// {x,y,w,h,rotation}; el resize opera en el marco LOCAL (rotado) de la caja.
 function SizeSlotEditor({ size, slot, onPick, onChangeBox }) {
   const dragRef = useRef(null);
   const inputRef = useRef(null);
+  const frameRef = useRef(null);
   const DISP_W = 380;
   const scale = DISP_W / size.cutW;
   const dispH = size.cutH * scale;
   const radiusPx = size.radius * scale;
   const box = slot?.textBox;
+  const rot = box?.rotation || 0;
 
-  const clampMove = (x, y, w, h) => ({
-    x: round2(Math.max(0, Math.min(x, size.cutW - w))),
-    y: round2(Math.max(0, Math.min(y, size.cutH - h))),
-    w: round2(w),
-    h: round2(h),
+  const clampCenter = (cx, cy) => ({
+    cx: Math.max(0, Math.min(cx, size.cutW)),
+    cy: Math.max(0, Math.min(cy, size.cutH)),
   });
 
-  const doResize = (edges, dx, dy, s) => {
-    const minW = 2;
-    const minH = 1;
-    let left = s.x;
-    let right = s.x + s.w;
-    let top = s.y;
-    let bottom = s.y + s.h;
-    if (edges.left) left = Math.max(0, Math.min(s.x + dx, right - minW));
-    if (edges.right) right = Math.min(size.cutW, Math.max(s.x + s.w + dx, left + minW));
-    if (edges.top) top = Math.max(0, Math.min(s.y + dy, bottom - minH));
-    if (edges.bottom) bottom = Math.min(size.cutH, Math.max(s.y + s.h + dy, top + minH));
-    return { x: round2(left), y: round2(top), w: round2(right - left), h: round2(bottom - top) };
+  // Resize en el marco local: proyecta el delta de pantalla a los ejes de la
+  // caja (rotar por -rot), mueve el borde arrastrado dejando fijo el opuesto, y
+  // vuelve a componer el centro (en pantalla) con la rotación.
+  const doResize = (edges, dxMm, dyMm, s) => {
+    const rad = (s.rotation || 0) * Math.PI / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    const lx = dxMm * cos + dyMm * sin;      // pantalla -> local
+    const ly = -dxMm * sin + dyMm * cos;
+    let w = s.w;
+    let h = s.h;
+    let shiftLx = 0;
+    let shiftLy = 0;
+    if (edges.right) { w = s.w + lx; shiftLx = lx / 2; }
+    if (edges.left) { w = s.w - lx; shiftLx = lx / 2; }
+    if (edges.bottom) { h = s.h + ly; shiftLy = ly / 2; }
+    if (edges.top) { h = s.h - ly; shiftLy = ly / 2; }
+    w = Math.max(2, Math.min(w, size.cutW));
+    h = Math.max(1, Math.min(h, size.cutH));
+    const sx = shiftLx * cos - shiftLy * sin; // local -> pantalla
+    const sy = shiftLx * sin + shiftLy * cos;
+    const { cx, cy } = clampCenter(s.x + s.w / 2 + sx, s.y + s.h / 2 + sy);
+    return { x: round2(cx - w / 2), y: round2(cy - h / 2), w: round2(w), h: round2(h), rotation: s.rotation || 0 };
+  };
+
+  // Edición numérica del recuadro (mm), acotada al rótulo.
+  const setBoxField = (field, val) => {
+    if (!slot?.textBox) return;
+    const n = parseFloat(String(val).replace(',', '.'));
+    if (!Number.isFinite(n)) return;
+    const next = { rotation: 0, ...slot.textBox, [field]: n };
+    next.w = Math.max(2, Math.min(next.w, size.cutW));
+    next.h = Math.max(1, Math.min(next.h, size.cutH));
+    next.x = Math.max(0, Math.min(next.x, size.cutW - next.w));
+    next.y = Math.max(0, Math.min(next.y, size.cutH - next.h));
+    onChangeBox({ x: round2(next.x), y: round2(next.y), w: round2(next.w), h: round2(next.h), rotation: next.rotation });
+  };
+  const useFullLabel = () => {
+    if (!slot) return;
+    const m = 0.5;
+    onChangeBox({ x: m, y: m, w: round2(size.cutW - 2 * m), h: round2(size.cutH - 2 * m), rotation: 0 });
   };
 
   const startDrag = (kind) => (e) => {
     if (!slot) return;
     e.preventDefault();
     e.stopPropagation();
-    const start = { ...slot.textBox };
+    const start = { rotation: 0, ...slot.textBox };
     dragRef.current = { kind, sx: e.clientX, sy: e.clientY, start };
     const onMove = (ev) => {
       const d = dragRef.current;
       if (!d) return;
-      const dx = (ev.clientX - d.sx) / scale;
-      const dy = (ev.clientY - d.sy) / scale;
-      if (d.kind === 'move') onChangeBox(clampMove(d.start.x + dx, d.start.y + dy, d.start.w, d.start.h));
-      else onChangeBox(doResize(RESIZE_EDGES[d.kind], dx, dy, d.start));
+      if (d.kind === 'rotate') {
+        const rect = frameRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const cxS = rect.left + (d.start.x + d.start.w / 2) * scale;
+        const cyS = rect.top + (d.start.y + d.start.h / 2) * scale;
+        let deg = Math.atan2(ev.clientY - cyS, ev.clientX - cxS) * 180 / Math.PI + 90;
+        deg = ((deg % 360) + 360) % 360;
+        if (deg > 180) deg -= 360;
+        onChangeBox({ ...d.start, rotation: Math.round(deg) });
+        return;
+      }
+      const dxMm = (ev.clientX - d.sx) / scale;
+      const dyMm = (ev.clientY - d.sy) / scale;
+      if (d.kind === 'move') {
+        const { cx, cy } = clampCenter(d.start.x + d.start.w / 2 + dxMm, d.start.y + d.start.h / 2 + dyMm);
+        onChangeBox({ ...d.start, x: round2(cx - d.start.w / 2), y: round2(cy - d.start.h / 2) });
+      } else {
+        onChangeBox(doResize(RESIZE_EDGES[d.kind], dxMm, dyMm, d.start));
+      }
     };
     const onUp = () => {
       dragRef.current = null;
@@ -147,7 +193,7 @@ function SizeSlotEditor({ size, slot, onPick, onChangeBox }) {
         />
       </div>
 
-      <div className="relative mx-auto" style={{ width: `${DISP_W}px`, height: `${dispH}px` }}>
+      <div ref={frameRef} className="relative mx-auto" style={{ width: `${DISP_W}px`, height: `${dispH}px` }}>
         {/* Capa imagen: recorte redondeado = borde del rótulo */}
         <div
           className="absolute inset-0 overflow-hidden border border-dashed border-sky-400/80 bg-white"
@@ -168,7 +214,7 @@ function SizeSlotEditor({ size, slot, onPick, onChangeBox }) {
           )}
         </div>
 
-        {/* Capa caja: sin recorte, encima */}
+        {/* Capa caja: sin recorte, encima, rotada */}
         {slot && box && (
           <div
             onPointerDown={startDrag('move')}
@@ -178,8 +224,11 @@ function SizeSlotEditor({ size, slot, onPick, onChangeBox }) {
               top: `${box.y * scale}px`,
               width: `${box.w * scale}px`,
               height: `${box.h * scale}px`,
+              borderRadius: `${Math.min(box.w, box.h) * 0.2 * scale}px`,
+              transform: `rotate(${rot}deg)`,
+              transformOrigin: 'center',
             }}
-            title="Arrastrá para mover; los cuadraditos cambian el tamaño por cualquier lado"
+            title="Recuadro del nombre: arrastrá para mover; los cuadraditos cambian el tamaño; el punto verde rota"
           >
             {RESIZE_HANDLES.map((h) => (
               <div
@@ -188,16 +237,57 @@ function SizeSlotEditor({ size, slot, onPick, onChangeBox }) {
                 className={`absolute h-2.5 w-2.5 rounded-sm border border-white bg-accent-500 ${h.pos} ${h.cur}`}
               />
             ))}
+            <div
+              onPointerDown={startDrag('rotate')}
+              title="Rotar la zona del nombre"
+              className="absolute h-3 w-3 cursor-grab rounded-full border border-white bg-emerald-500"
+              style={{ left: '50%', top: 0, transform: 'translate(-50%, -220%)' }}
+            />
           </div>
         )}
       </div>
 
-      <div className="mt-2 text-center text-[10px] text-ink-400">
-        {box
-          ? <>Caja del nombre: {fmt(box.w)} × {fmt(box.h)} mm · desde arriba-izquierda x {fmt(box.x)} / y {fmt(box.y)} mm</>
-          : 'Subí la imagen del arte de este tamaño.'}
-      </div>
+      {slot && box ? (
+        <div className="mt-2 space-y-2">
+          <div className="flex flex-wrap items-end justify-center gap-2 text-[10px] text-ink-400">
+            <NumMm label="Ancho" value={box.w} onChange={(v) => setBoxField('w', v)} />
+            <NumMm label="Alto" value={box.h} onChange={(v) => setBoxField('h', v)} />
+            <NumMm label="X" value={box.x} onChange={(v) => setBoxField('x', v)} />
+            <NumMm label="Y" value={box.y} onChange={(v) => setBoxField('y', v)} />
+            <button
+              type="button"
+              onClick={useFullLabel}
+              className="self-end rounded border border-ink-700 px-2 py-1 text-[10px] text-ink-200 hover:bg-ink-800"
+              title="Poner el recuadro ocupando todo el rótulo"
+            >
+              Usar todo el rótulo
+            </button>
+          </div>
+          <div className="text-center text-[10px] text-ink-500">
+            Recuadro del nombre: {fmt(box.w)} × {fmt(box.h)} mm · {Math.round(rot)}° — el nombre se ajusta adentro
+          </div>
+        </div>
+      ) : (
+        <div className="mt-2 text-center text-[10px] text-ink-400">Subí la imagen del arte de este tamaño.</div>
+      )}
     </div>
+  );
+}
+
+// Campo numérico chico en mm.
+function NumMm({ label, value, onChange }) {
+  return (
+    <label className="flex flex-col items-center gap-0.5">
+      <span className="text-ink-500">{label}</span>
+      <input
+        type="number"
+        step="0.5"
+        value={fmt(value)}
+        onChange={(e) => onChange(e.target.value)}
+        onPointerDown={(e) => e.stopPropagation()}
+        className="w-14 rounded border border-ink-700 bg-ink-800 px-1.5 py-1 text-center text-[11px] text-ink-100 outline-none focus:border-accent-500"
+      />
+    </label>
   );
 }
 
