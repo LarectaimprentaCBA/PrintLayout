@@ -12,45 +12,78 @@ function grid(colsX, rowsY, w, h, size) {
   return out;
 }
 
-function chicoRows() {
+// Filas Y (mm) de start a end inclusive, paso step. Redondeadas a 0.1 mm.
+function rowsRange(start, end, step = 10) {
   const rows = [];
-  for (let y = 272; y <= 442; y += 10) rows.push(y); // 272,282,…,442 → 18 filas
+  for (let y = start; y <= end + 1e-9; y += step) rows.push(Math.round(y * 10) / 10);
   return rows;
 }
+
+// Columnas X fijas (mismas para grande/interm/chico según tamaño).
+const COLS_GRANDE = [38, 101, 164, 227];                 // 4
+const COLS_6 = [35, 78, 121, 164, 207, 250];             // 6 (interm y chico)
 
 // Margen de las marcas L (mm). ÚNICA fuente: la comparten el PDF (drawCornerMarks)
 // y el payload del .plt (ensureBaseCut). Si difieren, el corte no alinea con la
 // impresión.
 export const MARK_MARGIN_MM = 10;
 
+// 3 tipos de plancha FIJOS. Todas 325×500 mm, mismos tamaños de rótulo (grande
+// 60×40 / interm 40×20 / chico 40×7), gap 3 mm. Cada una: su id = qrId = texto
+// del QR = nombre del .plt fijo (el layout NUNCA cambia → corte y QR constantes).
 export const PLANCHAS = {
-  estandar: {
-    id: 'estandar',
-    label: 'Estándar 325×500',
-    // Texto del QR de la hoja Y nombre del .plt fijo. Como el layout NUNCA
-    // cambia, el corte y el QR son siempre los mismos (id fijo). Futuros tipos de
-    // plancha → cada uno su propio qrId fijo.
-    qrId: 'rotulos-estandar',
+  plancha1: {
+    id: 'plancha1',
+    label: 'Plancha 1',
+    qrId: 'plancha1',
     pageWidthMm: 325,
     pageHeightMm: 500,
     build() {
       return [
-        // GRANDE 60×40: 4 col × 3 fila = 12
-        ...grid([38, 101, 164, 227], [51, 94, 137], 60, 40, 'grande'),
-        // INTERMEDIO 40×20: 6 col × 4 fila = 24
-        ...grid([35, 78, 121, 164, 207, 250], [180, 203, 226, 249], 40, 20, 'intermedio'),
-        // CHICO 40×7: 6 col × 18 fila = 108
-        ...grid([35, 78, 121, 164, 207, 250], chicoRows(), 40, 7, 'chico'),
-      ];
+        // GRANDE: 4 col × 3 fila = 12
+        ...grid(COLS_GRANDE, [51, 94, 137], 60, 40, 'grande'),
+        // INTERMEDIO: 6 col × 4 fila = 24
+        ...grid(COLS_6, [180, 203, 226, 249], 40, 20, 'intermedio'),
+        // CHICO: 6 col × 18 fila = 108
+        ...grid(COLS_6, rowsRange(272, 442, 10), 40, 7, 'chico'),
+      ]; // 144
+    },
+  },
+  plancha2: {
+    id: 'plancha2',
+    label: 'Plancha 2',
+    qrId: 'plancha2',
+    pageWidthMm: 325,
+    pageHeightMm: 500,
+    build() {
+      return [
+        // GRANDE: 4 col × 4 fila = 16
+        ...grid(COLS_GRANDE, [50.5, 93.5, 136.5, 179.5], 60, 40, 'grande'),
+        // CHICO: 6 col × 23 fila = 138
+        ...grid(COLS_6, rowsRange(222.5, 442.5, 10), 40, 7, 'chico'),
+      ]; // 154
+    },
+  },
+  plancha3: {
+    id: 'plancha3',
+    label: 'Plancha 3',
+    qrId: 'plancha3',
+    pageWidthMm: 325,
+    pageHeightMm: 500,
+    build() {
+      return [
+        // CHICO: 6 col × 39 fila = 234
+        ...grid(COLS_6, rowsRange(56.5, 436.5, 10), 40, 7, 'chico'),
+      ]; // 234
     },
   },
 };
 
 export const PLANCHA_LIST = Object.values(PLANCHAS).map((p) => ({ id: p.id, label: p.label }));
 
-// Devuelve { pageWidthMm, pageHeightMm, qrId, celdas:[{x,y,w,h,size}] } (144 celdas).
-export function planchaCeldas(planchaId = 'estandar') {
-  const p = PLANCHAS[planchaId] || PLANCHAS.estandar;
+// Devuelve { pageWidthMm, pageHeightMm, qrId, celdas:[{x,y,w,h,size}] }.
+export function planchaCeldas(planchaId = 'plancha1') {
+  const p = PLANCHAS[planchaId] || PLANCHAS.plancha1;
   return {
     pageWidthMm: p.pageWidthMm,
     pageHeightMm: p.pageHeightMm,

@@ -49,7 +49,7 @@ export async function buildRotulosPlanchaPdf({
   lineModes = {},
   outline = null,
   boxPadMm = 0.8,
-  planchaId = 'estandar',
+  planchaId = 'plancha1',
   lineHeightFactor = 1.15,
   minPt = 3,
   maxPt = 120,

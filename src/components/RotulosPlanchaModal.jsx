@@ -232,7 +232,7 @@ export default function RotulosPlanchaModal({ open, onClose }) {
 
   const [models, setModels] = useState([]);
   const [fonts, setFonts] = useState([]);
-  const [planchaId, setPlanchaId] = useState('estandar');
+  const [planchaId, setPlanchaId] = useState('plancha1');
   const [modelId, setModelId] = useState('');
   const [fontId, setFontId] = useState('');
   const [textColor, setTextColor] = useState('#000000');
@@ -256,10 +256,25 @@ export default function RotulosPlanchaModal({ open, onClose }) {
   const loadedFontsRef = useRef(new Map());
 
   const selectedModel = useMemo(() => models.find((m) => m.id === modelId) || null, [models, modelId]);
-  const modelComplete = useMemo(
-    () => !!selectedModel && SIZE_KEYS.every((k) => selectedModel.sizes?.[k]?.textBox && selectedModel.sizes?.[k]?.arteFile),
+
+  // Plancha elegida: sus celdas, los tamaños que USA (en orden) y el conteo.
+  const plancha = useMemo(() => planchaCeldas(planchaId), [planchaId]);
+  const usedSizes = useMemo(() => {
+    const seen = new Set(); const list = [];
+    for (const c of plancha.celdas) if (!seen.has(c.size)) { seen.add(c.size); list.push(c.size); }
+    return list;
+  }, [plancha]);
+  const counts = useMemo(() => {
+    const by = {}; for (const c of plancha.celdas) by[c.size] = (by[c.size] || 0) + 1; return by;
+  }, [plancha]);
+
+  // Un tamaño que la plancha usa está OK si el modelo lo tiene con caja + arte.
+  const hasSize = useCallback(
+    (k) => !!(selectedModel?.sizes?.[k]?.textBox && selectedModel?.sizes?.[k]?.arteFile),
     [selectedModel],
   );
+  const missingSizes = useMemo(() => usedSizes.filter((k) => !hasSize(k)), [usedSizes, hasSize]);
+  const modelComplete = !!selectedModel && missingSizes.length === 0;
   const drawBox = !selectedModel?.arteIncluyeRecuadro && !noBox;
 
   // Recuadro efectivo = ajuste de la plancha o, si no hay, el del modelo (saneado).
@@ -370,7 +385,6 @@ export default function RotulosPlanchaModal({ open, onClose }) {
       // Config del corte QR (mismos valores que usa el resto del sistema) para
       // dibujar el QR FIJO de la plancha. Si el servicio QR no está, seguimos sin QR.
       const qrApi = window.printlayout?.qrcut;
-      const plancha = planchaCeldas(planchaId);
       let qrCfg = null;
       try { qrCfg = await qrApi?.getConfig?.(); } catch { qrCfg = null; }
       const qr = (qrCfg && plancha.qrId)
@@ -430,7 +444,7 @@ export default function RotulosPlanchaModal({ open, onClose }) {
         <div className="flex items-center justify-between border-b border-ink-700 p-4">
           <div>
             <h3 className="text-sm font-semibold text-ink-100">Armar plancha de rótulos</h3>
-            <p className="mt-0.5 text-xs text-ink-400">Elegí modelo, tipografía, colores y estilo del nombre, y generá el PDF (144 rótulos). Sin corte ni QR todavía.</p>
+            <p className="mt-0.5 text-xs text-ink-400">Elegí tipo de plancha, modelo, tipografía, colores y estilo del nombre, y generá el PDF con sus marcas de corte y QR.</p>
           </div>
           <button type="button" onClick={onClose} className="rounded border border-ink-700 px-3 py-1 text-xs text-ink-200 hover:bg-ink-800">Cerrar</button>
         </div>
@@ -453,7 +467,9 @@ export default function RotulosPlanchaModal({ open, onClose }) {
                 {noModels ? <option value="">(no hay modelos)</option> : models.map((m) => <option key={m.id} value={m.id}>{m.nombre}</option>)}
               </select>
               {selectedModel && !modelComplete && (
-                <span className="mt-1 block text-[10px] text-amber-300">Este modelo no tiene los 3 tamaños con su caja de texto. Completalo en “Rótulos → Modelos”.</span>
+                <span className="mt-1 block text-[10px] text-amber-300">
+                  Esta plancha usa {usedSizes.map((k) => SIZE_LABEL[k]).join(' + ')}; al modelo le falta{missingSizes.length > 1 ? 'n' : ''} {missingSizes.map((k) => SIZE_LABEL[k]).join(', ')}. Completalo en “Rótulos → Modelos”.
+                </span>
               )}
             </label>
 
@@ -526,9 +542,15 @@ export default function RotulosPlanchaModal({ open, onClose }) {
               <p className="rounded border border-dashed border-ink-700 py-10 text-center text-xs text-ink-500">No hay modelos. Creá uno en “Rótulos → Modelos”.</p>
             ) : (
               <div className="flex flex-col gap-3">
-                {SIZE_KEYS.map((key) => {
+                {usedSizes.map((key) => {
                   const s = selectedModel?.sizes?.[key];
-                  if (!s) return null;
+                  if (!s?.textBox || !s?.arteFile) {
+                    return (
+                      <div key={key} className="rounded-lg border border-dashed border-amber-500/50 bg-amber-500/5 p-3 text-[11px] text-amber-300">
+                        Esta plancha usa <b>{SIZE_LABEL[key]}</b> ({counts[key]} rótulos), pero el modelo no lo tiene cargado. Agregalo en “Rótulos → Modelos”.
+                      </div>
+                    );
+                  }
                   return (
                     <PlanchaSizePreview key={key} sizeKey={key} cutMm={s.cutMm} textBox={effTextBox(key)}
                       arteDataUrl={arteBySize[key]} family={family} textColor={textColor} boxColor={boxColor}
@@ -545,10 +567,14 @@ export default function RotulosPlanchaModal({ open, onClose }) {
 
         <div className="flex items-center gap-2 border-t border-ink-700 p-4">
           {feedback && <p className={`mr-auto whitespace-pre-line text-[11px] ${fbColor}`}>{feedback.text}</p>}
-          {!feedback && <span className="mr-auto text-[11px] text-ink-500">Plancha {planchaId} · 144 rótulos (12 + 24 + 108)</span>}
+          {!feedback && (
+            <span className="mr-auto text-[11px] text-ink-500">
+              {plancha.celdas.length} rótulos ({usedSizes.map((k) => `${counts[k]} ${SIZE_LABEL[k].toLowerCase()}`).join(' + ')})
+            </span>
+          )}
           <button type="button" onClick={onClose} className="rounded border border-ink-700 px-3 py-1 text-xs text-ink-200 hover:bg-ink-800">Cerrar</button>
           <button type="button" onClick={generate} disabled={generating || !modelComplete || !fontId}
-            title={!modelComplete ? 'El modelo debe tener los 3 tamaños con su caja de texto' : (!fontId ? 'Elegí una tipografía' : '')}
+            title={!modelComplete ? `Falta cargar en el modelo: ${missingSizes.map((k) => SIZE_LABEL[k]).join(', ')}` : (!fontId ? 'Elegí una tipografía' : '')}
             className="rounded bg-accent-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-accent-500 disabled:opacity-40">
             {generating ? 'Generando…' : 'Generar PDF'}
           </button>
