@@ -353,12 +353,17 @@ export default function RotulosManagerModal({ open, onClose }) {
     try {
       const r = await api.publishWeb();
       if (!r?.ok) { setFeedback({ kind: 'err', text: r?.error || 'No se pudo publicar.' }); return; }
-      const parts = [`${r.publicados} publicado(s)`];
+      const parts = [`${r.publicados} modelo(s)`];
       if (r.saltados?.length) parts.push(`${r.saltados.length} saltado(s) sin arte`);
       if (r.errores?.length) parts.push(`${r.errores.length} con error`);
-      const detalle = (r.errores || []).map((e) => `• ${e.nombre}: ${e.error}`).join('\n');
+      parts.push(`${r.fuentesPublicadas || 0} fuente(s)`);
+      if (r.fuentesErrores?.length) parts.push(`${r.fuentesErrores.length} fuente(s) con error`);
+      const detalle = [
+        ...(r.errores || []).map((e) => `• ${e.nombre}: ${e.error}`),
+        ...(r.fuentesErrores || []).map((e) => `• fuente ${e.familia}: ${e.error}`),
+      ].join('\n');
       setFeedback({
-        kind: r.errores?.length ? 'err' : 'ok',
+        kind: (r.errores?.length || r.fuentesErrores?.length) ? 'err' : 'ok',
         text: `Publicación a la web: ${parts.join(', ')}.${detalle ? `\n${detalle}` : ''}`,
       });
     } catch (e) {

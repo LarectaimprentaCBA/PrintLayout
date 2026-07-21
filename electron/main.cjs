@@ -1001,7 +1001,16 @@ ipcMain.handle('rotulos:publish-web', async () => {
     }
     const SIZE_KEYS = ['grande', 'intermedio', 'chico'];
     const models = rotulosStore.listModels();
-    const result = { total: models.length, publicados: 0, saltados: [], errores: [] };
+    const result = {
+      total: models.length,
+      publicados: 0,
+      saltados: [],
+      errores: [],
+      // Tipografías (bucket rotulos-fuentes + tabla tipografias_rotulos).
+      fuentesTotal: 0,
+      fuentesPublicadas: 0,
+      fuentesErrores: [],
+    };
 
     for (let i = 0; i < models.length; i++) {
       const m = models[i];
@@ -1043,6 +1052,40 @@ ipcMain.handle('rotulos:publish-web', async () => {
         result.errores.push({ nombre: m.nombre || m.id, error: e.message });
       }
     }
+
+    // --- Tipografías: bucket `rotulos-fuentes` + tabla `tipografias_rotulos`. ---
+    const fonts = rotulosStore.listFonts();
+    result.fuentesTotal = fonts.length;
+    for (let i = 0; i < fonts.length; i++) {
+      const fnt = fonts[i];
+      try {
+        const ext = (fnt.ext || 'ttf').toLowerCase();
+        // PORTABILIDAD: ruta reconstruida desde fontsDir() + <id>.<ext> (igual que
+        // rotulos:read-font), no el `archivo` absoluto guardado.
+        const filePath = path.join(rotulosStore.fontsDir(), `${fnt.id}.${ext}`);
+        if (!fs.existsSync(filePath)) {
+          result.fuentesErrores.push({ familia: fnt.familia || fnt.id, error: 'archivo no encontrado' });
+          continue;
+        }
+        const buf = fs.readFileSync(filePath);
+        const contentType = ext === 'otf' ? 'font/otf' : (ext === 'ttc' ? 'font/collection' : 'font/ttf');
+        const objectPath = `${fnt.id}.${ext}`;
+        await supabase.uploadPublicObject(cfg, 'rotulos-fuentes', objectPath, buf, contentType);
+        const row = {
+          id: fnt.id,
+          familia: fnt.familia || fnt.id,
+          archivo_url: supabase.publicObjectUrl(cfg, 'rotulos-fuentes', objectPath),
+          ext,
+          activo: true,
+          orden: Number.isFinite(fnt.orden) ? fnt.orden : i,
+        };
+        await supabase.upsertTipografiasRotulos(cfg, [row]); // por fuente → aísla fallas
+        result.fuentesPublicadas += 1;
+      } catch (e) {
+        result.fuentesErrores.push({ familia: fnt.familia || fnt.id, error: e.message });
+      }
+    }
+
     return { ok: true, ...result };
   } catch (err) {
     return { ok: false, error: err.message };

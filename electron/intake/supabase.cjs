@@ -241,6 +241,25 @@ async function upsertModelosRotulos(cfg, rows) {
   return true;
 }
 
+// Upsert de filas del catálogo de tipografías de rótulos (PK id, merge-duplicates).
+async function upsertTipografiasRotulos(cfg, rows) {
+  assertCfg(cfg);
+  const list = Array.isArray(rows) ? rows : [];
+  if (list.length === 0) return true;
+  const url = `${cfg.supabaseUrl}/rest/v1/tipografias_rotulos`;
+  const res = await net.fetch(url, {
+    method: 'POST',
+    headers: {
+      ...authHeaders(cfg),
+      'Content-Type': 'application/json',
+      Prefer: 'resolution=merge-duplicates,return=minimal',
+    },
+    body: JSON.stringify(list),
+  });
+  if (!res.ok) throw await readErr(res, 'tipografias_rotulos upsert');
+  return true;
+}
+
 // Upsert de una clave de configuración (tabla key-value `config_fotos`, PK clave).
 async function upsertConfig(cfg, clave, valor) {
   assertCfg(cfg);
@@ -270,6 +289,7 @@ module.exports = {
   uploadPublicObject,
   publicObjectUrl,
   upsertModelosRotulos,
+  upsertTipografiasRotulos,
   // Dobble
   listPendingDobble,
   downloadDobbleObject,
