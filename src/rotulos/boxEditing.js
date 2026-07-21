@@ -21,10 +21,35 @@ export const RESIZE_EDGES = {
 
 const round2 = (n) => Math.round(n * 100) / 100;
 
-// Mueve la caja dejando el centro dentro del rótulo.
+// Medias-extensiones del rectángulo ENVOLVENTE (AABB) de la caja rotada.
+function rotatedHalfExtents(w, h, rotation) {
+  const rad = ((rotation || 0) * Math.PI) / 180;
+  const c = Math.abs(Math.cos(rad));
+  const s = Math.abs(Math.sin(rad));
+  return { hx: (w / 2) * c + (h / 2) * s, hy: (w / 2) * s + (h / 2) * c };
+}
+
+// Acota el centro para que la caja ROTADA (sus 4 esquinas) quede dentro del
+// rótulo y no se recorte en el overlay. Si no entra en un eje, la centra ahí.
+export function clampCenterRotated(cx, cy, w, h, rotation, cutW, cutH) {
+  const { hx, hy } = rotatedHalfExtents(w, h, rotation);
+  const nx = hx * 2 <= cutW ? Math.max(hx, Math.min(cx, cutW - hx)) : cutW / 2;
+  const ny = hy * 2 <= cutH ? Math.max(hy, Math.min(cy, cutH - hy)) : cutH / 2;
+  return { cx: nx, cy: ny };
+}
+
+// Reemplaza x/y/w/h no finitos (NaN de datos viejos/rotos) por valores válidos.
+// Devuelve la MISMA referencia si ya estaba sana (evita renders de más).
+export function sanitizeBox(box) {
+  if (!box) return box;
+  if ([box.x, box.y, box.w, box.h].every(Number.isFinite)) return box;
+  const num = (v, d) => (Number.isFinite(v) ? v : d);
+  return { ...box, x: num(box.x, 0), y: num(box.y, 0), w: num(box.w, 2), h: num(box.h, 1) };
+}
+
+// Mueve la caja dejando la caja rotada dentro del rótulo.
 export function moveBox(start, dxMm, dyMm, cutW, cutH) {
-  const cx = Math.max(0, Math.min(start.x + start.w / 2 + dxMm, cutW));
-  const cy = Math.max(0, Math.min(start.y + start.h / 2 + dyMm, cutH));
+  const { cx, cy } = clampCenterRotated(start.x + start.w / 2 + dxMm, start.y + start.h / 2 + dyMm, start.w, start.h, start.rotation, cutW, cutH);
   return { ...start, x: round2(cx - start.w / 2), y: round2(cy - start.h / 2) };
 }
 
@@ -49,8 +74,7 @@ export function resizeBox(edges, dxMm, dyMm, s, cutW, cutH) {
   h = Math.max(1, Math.min(h, cutH));
   const sx = shiftLx * cos - shiftLy * sin;
   const sy = shiftLx * sin + shiftLy * cos;
-  const cx = Math.max(0, Math.min(s.x + s.w / 2 + sx, cutW));
-  const cy = Math.max(0, Math.min(s.y + s.h / 2 + sy, cutH));
+  const { cx, cy } = clampCenterRotated(s.x + s.w / 2 + sx, s.y + s.h / 2 + sy, w, h, s.rotation, cutW, cutH);
   return { x: round2(cx - w / 2), y: round2(cy - h / 2), w: round2(w), h: round2(h), rotation: s.rotation || 0 };
 }
 

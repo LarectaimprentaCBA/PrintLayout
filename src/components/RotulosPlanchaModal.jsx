@@ -3,7 +3,7 @@ import { resolveSizeLayout, zoneAsBox, effectivePad } from '../rotulos/textLayou
 import { makeCanvasMeasure, drawRotuloOverlay } from '../rotulos/drawOverlay.js';
 import { buildRotulosPlanchaPdf } from '../rotulos/exportRotulos.js';
 import { PLANCHA_LIST } from '../rotulos/planchas.js';
-import { RESIZE_HANDLES, RESIZE_EDGES, moveBox, resizeBox, fullLabelBox } from '../rotulos/boxEditing.js';
+import { RESIZE_HANDLES, RESIZE_EDGES, moveBox, resizeBox, fullLabelBox, clampCenterRotated, sanitizeBox } from '../rotulos/boxEditing.js';
 
 // Armador de plancha de rótulos. Preview en vivo (canvas) de los 3 rótulos:
 // fondo + recuadro dinámico (o sin fondo) + nombre (líneas por tamaño, contorno
@@ -54,12 +54,12 @@ function ColorControl({ label, value, onChange, palette, onAdd, disabled, hint }
 const round2 = (n) => Math.round(n * 100) / 100;
 const fmt = (n) => (Number.isFinite(n) ? Math.round(n * 100) / 100 : '?');
 
-// Campo numérico chico en mm.
+// Campo numérico chico en mm. Si el valor no es finito, muestra vacío (nunca '?').
 function NumMm({ label, value, onChange }) {
   return (
     <label className="flex flex-col items-center gap-0.5">
       <span className="text-ink-500">{label}</span>
-      <input type="number" step="0.5" value={fmt(value)} onChange={(e) => onChange(e.target.value)}
+      <input type="number" step="0.5" value={Number.isFinite(value) ? round2(value) : ''} onChange={(e) => onChange(e.target.value)}
         onPointerDown={(e) => e.stopPropagation()}
         className="w-14 rounded border border-ink-700 bg-ink-800 px-1.5 py-1 text-center text-[11px] text-ink-100 outline-none focus:border-accent-500" />
     </label>
@@ -121,9 +121,8 @@ function PlanchaSizePreview({ sizeKey, cutMm, textBox, arteDataUrl, family, text
     const next = { rotation: 0, ...textBox, [field]: n };
     next.w = Math.max(2, Math.min(next.w, cutW));
     next.h = Math.max(1, Math.min(next.h, cutH));
-    next.x = Math.max(0, Math.min(next.x, cutW - next.w));
-    next.y = Math.max(0, Math.min(next.y, cutH - next.h));
-    onBoxChange({ x: round2(next.x), y: round2(next.y), w: round2(next.w), h: round2(next.h), rotation: next.rotation });
+    const { cx, cy } = clampCenterRotated(next.x + next.w / 2, next.y + next.h / 2, next.w, next.h, next.rotation, cutW, cutH);
+    onBoxChange({ x: round2(cx - next.w / 2), y: round2(cy - next.h / 2), w: round2(next.w), h: round2(next.h), rotation: next.rotation });
   };
 
   // El recuadro = la zona dibujada; el nombre se ajusta adentro con el aire
@@ -262,9 +261,12 @@ export default function RotulosPlanchaModal({ open, onClose }) {
   );
   const drawBox = !selectedModel?.arteIncluyeRecuadro && !noBox;
 
-  // Recuadro efectivo = ajuste de la plancha o, si no hay, el del modelo.
+  // Recuadro efectivo = ajuste de la plancha o, si no hay, el del modelo (saneado).
   const effTextBox = useCallback(
-    (key) => boxOverrides[key] || selectedModel?.sizes?.[key]?.textBox || null,
+    (key) => {
+      const raw = boxOverrides[key] || selectedModel?.sizes?.[key]?.textBox;
+      return raw ? sanitizeBox(raw) : null;
+    },
     [boxOverrides, selectedModel],
   );
 

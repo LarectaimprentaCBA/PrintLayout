@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { clampCenterRotated, sanitizeBox } from '../rotulos/boxEditing.js';
 
 // Gestor de "Rótulos escolares" — Fase 1: CARGAR.
 //   · Tipografías: subir/validar/listar/eliminar fuentes .ttf/.otf.
@@ -82,17 +83,12 @@ function SizeSlotEditor({ size, slot, onPick, onChangeBox }) {
   const scale = DISP_W / size.cutW;
   const dispH = size.cutH * scale;
   const radiusPx = size.radius * scale;
-  const box = slot?.textBox;
+  const box = sanitizeBox(slot?.textBox);
   const rot = box?.rotation || 0;
-
-  const clampCenter = (cx, cy) => ({
-    cx: Math.max(0, Math.min(cx, size.cutW)),
-    cy: Math.max(0, Math.min(cy, size.cutH)),
-  });
 
   // Resize en el marco local: proyecta el delta de pantalla a los ejes de la
   // caja (rotar por -rot), mueve el borde arrastrado dejando fijo el opuesto, y
-  // vuelve a componer el centro (en pantalla) con la rotación.
+  // vuelve a componer el centro (en pantalla) acotando la caja ROTADA al rótulo.
   const doResize = (edges, dxMm, dyMm, s) => {
     const rad = (s.rotation || 0) * Math.PI / 180;
     const cos = Math.cos(rad);
@@ -111,7 +107,7 @@ function SizeSlotEditor({ size, slot, onPick, onChangeBox }) {
     h = Math.max(1, Math.min(h, size.cutH));
     const sx = shiftLx * cos - shiftLy * sin; // local -> pantalla
     const sy = shiftLx * sin + shiftLy * cos;
-    const { cx, cy } = clampCenter(s.x + s.w / 2 + sx, s.y + s.h / 2 + sy);
+    const { cx, cy } = clampCenterRotated(s.x + s.w / 2 + sx, s.y + s.h / 2 + sy, w, h, s.rotation, size.cutW, size.cutH);
     return { x: round2(cx - w / 2), y: round2(cy - h / 2), w: round2(w), h: round2(h), rotation: s.rotation || 0 };
   };
 
@@ -120,12 +116,11 @@ function SizeSlotEditor({ size, slot, onPick, onChangeBox }) {
     if (!slot?.textBox) return;
     const n = parseFloat(String(val).replace(',', '.'));
     if (!Number.isFinite(n)) return;
-    const next = { rotation: 0, ...slot.textBox, [field]: n };
+    const next = { rotation: 0, ...sanitizeBox(slot.textBox), [field]: n };
     next.w = Math.max(2, Math.min(next.w, size.cutW));
     next.h = Math.max(1, Math.min(next.h, size.cutH));
-    next.x = Math.max(0, Math.min(next.x, size.cutW - next.w));
-    next.y = Math.max(0, Math.min(next.y, size.cutH - next.h));
-    onChangeBox({ x: round2(next.x), y: round2(next.y), w: round2(next.w), h: round2(next.h), rotation: next.rotation });
+    const { cx, cy } = clampCenterRotated(next.x + next.w / 2, next.y + next.h / 2, next.w, next.h, next.rotation, size.cutW, size.cutH);
+    onChangeBox({ x: round2(cx - next.w / 2), y: round2(cy - next.h / 2), w: round2(next.w), h: round2(next.h), rotation: next.rotation });
   };
   const useFullLabel = () => {
     if (!slot) return;
@@ -137,7 +132,7 @@ function SizeSlotEditor({ size, slot, onPick, onChangeBox }) {
     if (!slot) return;
     e.preventDefault();
     e.stopPropagation();
-    const start = { rotation: 0, ...slot.textBox };
+    const start = { rotation: 0, ...sanitizeBox(slot.textBox) };
     dragRef.current = { kind, sx: e.clientX, sy: e.clientY, start };
     const onMove = (ev) => {
       const d = dragRef.current;
@@ -156,7 +151,7 @@ function SizeSlotEditor({ size, slot, onPick, onChangeBox }) {
       const dxMm = (ev.clientX - d.sx) / scale;
       const dyMm = (ev.clientY - d.sy) / scale;
       if (d.kind === 'move') {
-        const { cx, cy } = clampCenter(d.start.x + d.start.w / 2 + dxMm, d.start.y + d.start.h / 2 + dyMm);
+        const { cx, cy } = clampCenterRotated(d.start.x + d.start.w / 2 + dxMm, d.start.y + d.start.h / 2 + dyMm, d.start.w, d.start.h, d.start.rotation, size.cutW, size.cutH);
         onChangeBox({ ...d.start, x: round2(cx - d.start.w / 2), y: round2(cy - d.start.h / 2) });
       } else {
         onChangeBox(doResize(RESIZE_EDGES[d.kind], dxMm, dyMm, d.start));
@@ -274,7 +269,7 @@ function SizeSlotEditor({ size, slot, onPick, onChangeBox }) {
   );
 }
 
-// Campo numérico chico en mm.
+// Campo numérico chico en mm. Si el valor no es finito, muestra vacío (nunca '?').
 function NumMm({ label, value, onChange }) {
   return (
     <label className="flex flex-col items-center gap-0.5">
@@ -282,7 +277,7 @@ function NumMm({ label, value, onChange }) {
       <input
         type="number"
         step="0.5"
-        value={fmt(value)}
+        value={Number.isFinite(value) ? round2(value) : ''}
         onChange={(e) => onChange(e.target.value)}
         onPointerDown={(e) => e.stopPropagation()}
         className="w-14 rounded border border-ink-700 bg-ink-800 px-1.5 py-1 text-center text-[11px] text-ink-100 outline-none focus:border-accent-500"

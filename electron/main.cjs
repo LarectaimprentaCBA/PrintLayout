@@ -871,7 +871,7 @@ ipcMain.handle('rotulos:model-save', async (_evt, payload) => {
         wPx: s.wPx || null,
         hPx: s.hPx || null,
         cutMm: s.cutMm || null,     // {w,h,radius} fijo del tamaño
-        textBox: s.textBox || null, // {x,y,w,h} en mm, relativa al rótulo
+        textBox: s.textBox || null, // {x,y,w,h,rotation} en mm/grados, relativa al rótulo
       };
     }
     if (Object.keys(savedSizes).length === 0) {
