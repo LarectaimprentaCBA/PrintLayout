@@ -36,6 +36,7 @@ import NewTabModal from './components/NewTabModal.jsx';
 import TemplatesManagerModal from './components/TemplatesManagerModal.jsx';
 import RotulosManagerModal from './components/RotulosManagerModal.jsx';
 import RotulosPlanchaModal from './components/RotulosPlanchaModal.jsx';
+import { buildRotulosSheet, buildRotulosPdfBytes } from './rotulos/planchaJob.js';
 import PaperPresetsModal from './components/PaperPresetsModal.jsx';
 import { useTemplates } from './hooks/useTemplates.js';
 import { usePaperPresets } from './hooks/usePaperPresets.js';
@@ -74,7 +75,7 @@ import {
   buildCriterioCustomValue,
   CRITERIO_CUSTOM_KEY,
 } from './intake/catalog.js';
-import { rasterizePdfPages } from './lib/pdfPreview.js';
+import { rasterizePdfPages, renderPdfBytesToImages } from './lib/pdfPreview.js';
 import { facesBoundingBox } from './lib/faceDetection.js';
 import { cropImageDataUrl } from './lib/imageCrop.js';
 import { rotateImageDataUrl90CW, rotateFaces90CW } from './lib/imageRotate.js';
@@ -371,6 +372,9 @@ export default function App() {
   const [templatesManagerOpen, setTemplatesManagerOpen] = useState(false);
   const [rotulosOpen, setRotulosOpen] = useState(false);
   const [rotulosPlanchaOpen, setRotulosPlanchaOpen] = useState(false);
+  // Precarga del armador: { planchaId, modeloId } (nuevo) o la receta completa
+  // + { editing:true } (editar la pestaña activa).
+  const [rotulosPlanchaInit, setRotulosPlanchaInit] = useState(null);
   const [editGeometryTemplate, setEditGeometryTemplate] = useState(null);
   const [quantitiesOpen, setQuantitiesOpen] = useState(false);
   const [poseFrontBackOpen, setPoseFrontBackOpen] = useState(false);
@@ -479,6 +483,56 @@ export default function App() {
     }
     return tabId;
   }, [activeTab, updateActiveTab, createTab]);
+
+  // Rótulos: el armador confirmó una receta → arma la HOJA (template + 3 PNG por
+  // tamaño) y la vuelca en una PESTAÑA normal. Si spec.editing, re-arma la MISMA
+  // pestaña; si no, abre una nueva. El corte .plt fijo se asegura acá (idempotente).
+  const handleRotulosSubmit = useCallback(async (spec) => {
+    setRotulosPlanchaOpen(false);
+    setRotulosPlanchaInit(null);
+    setToast({ kind: 'info', text: 'Armando plancha de rótulos…' });
+    try {
+      const sheet = await buildRotulosSheet(spec);
+      try {
+        await window.printlayout.qrcut.ensureBaseCut({
+          planchaId: sheet.template.cutId,
+          cortes: sheet.template.cortes,
+          pageWidthMm: sheet.template.pageWidthMm,
+          pageHeightMm: sheet.template.pageHeightMm,
+          markMarginMm: sheet.template.markMarginMm,
+          bladeOffsetMm,
+        });
+      } catch { /* best-effort: el .plt no bloquea armar la pestaña */ }
+
+      const initialLayout = {
+        images: sheet.images,
+        assignmentsFront: sheet.assignmentsFront,
+        assignmentsBack: [],
+        minPages: 1,
+      };
+      if (spec.editing && activeTab?.id) {
+        // Re-armar EN LA MISMA pestaña: id nuevo del template → el layout se
+        // resetea limpio (soporta cambio de tipo de plancha) y luego se cargan
+        // los PNG + asignaciones nuevas.
+        const tplId = `tabtpl_${activeTab.id}_${Date.now().toString(36)}`;
+        updateActiveTab({
+          template: { ...sheet.template, id: tplId, temporal: true, tabBacked: true },
+          name: sheet.template.name,
+          isDirty: false,
+        });
+        setPendingTabLoads((prev) => [
+          ...prev.filter((p) => p.templateId !== tplId),
+          { templateId: tplId, ...initialLayout },
+        ]);
+      } else {
+        openInTab(sheet.template, { name: sheet.template.name, forceNew: true, initialLayout });
+      }
+      const n = sheet.assignmentsFront.filter(Boolean).length;
+      setToast({ kind: 'success', text: `Plancha de rótulos armada (${n} rótulos).` });
+    } catch (e) {
+      setToast({ kind: 'error', text: `No se pudo armar la plancha: ${e.message}` });
+    }
+  }, [openInTab, activeTab, updateActiveTab, bladeOffsetMm]);
 
   // === Dobble: importar mazo (recta-dobble-deck) → POSAR sobre una plantilla ===
   // Ya no arma la hoja solo: abre el modal de posado para elegir (o crear) una
@@ -2575,6 +2629,17 @@ export default function App() {
     setExporting(true);
     setToast(null);
     try {
+      // Rótulos: el PDF lo genera el MOTOR PROBADO (marcas L + QR + corte fijo),
+      // no el render normal. Mismo camino de guardado que el resto.
+      if (selected.rotulos) {
+        const bytes = await buildRotulosPdfBytes(selected.rotulos, { qr: selected.conQr === false ? null : undefined });
+        const safe = `${(selected.name || 'Rotulos').replace(/[\\/:*?"<>|]+/g, '_')}.pdf`;
+        const r = await window.printlayout.pdf.save(safe, bytes);
+        if (r?.canceled) setToast(null);
+        else if (r?.error) setToast({ kind: 'error', text: `Error al guardar: ${r.error}` });
+        else if (r?.path) setToast({ kind: 'success', text: 'PDF guardado', path: r.path });
+        return;
+      }
       // Doble faz: un solo PDF con pag 1 = frente (con marcas) y pag 2 = dorso
       // (sin marcas). Lo viewing no influye, siempre mandamos las dos caras.
       // 1-pagina: no se embebe nada del PDF original (las cajas son guias).
@@ -2672,32 +2737,51 @@ export default function App() {
       // Impresion silent: el helper recibe DEVICE+COPIES y NO abre el
       // dialogo de Windows. Si el usuario eligio un subconjunto de paginas
       // en el modal, lo pasamos como `pages` (indices 0-based).
-      const result = await printLayoutPdf(selected, assignments, layout.imageMap, {
-        layoutFitMode,
-        embedBackground: !isBack && !selected.singlePage,
-        // Cara explicita: sino buildPdf la infiere de embedBackground y, en una
-        // grilla doble faz (singlePage), el frente se tomaria como dorso y no
-        // dibujaria las marcas de corte.
-        face,
-        faceLabel: selected.doubleSided ? (isBack ? 'dorso' : 'frente') : undefined,
-        paperWidthMm: customPaper?.widthMm,
-        paperHeightMm: customPaper?.heightMm,
-        // El QR es parte de la hoja con corte: se imprime SOLO en el frente, en
-        // la misma posición que la vista previa. Solo si la hoja tiene cortes,
-        // nombre, config cargada y el interruptor "QR" prendido (conQr).
-        qr: (!isBack && (selected.conQr ?? true) && hasCuts(selected) && selected.cutId && qrConfig) ? {
-          text: selected.cutId,
-          sizeMm: qrConfig.qrSizeMm,
-          bottomMm: qrConfig.qrBottomMm,
-          centered: qrConfig.qrCentered,
-          showText: true,
-        } : undefined,
-        deviceName,
-        copies,
-        pages,
-        drawMarks: cutMarks !== false,
-        showDialog: false,
-      });
+      let result;
+      if (selected.rotulos) {
+        // Rótulos: el PDF lo genera el MOTOR PROBADO; lo rasterizamos y lo
+        // mandamos por el MISMO camino de impresión silent que el resto.
+        const bytes = await buildRotulosPdfBytes(selected.rotulos, { qr: selected.conQr === false ? null : undefined });
+        const allImages = await renderPdfBytesToImages(bytes, 240);
+        let images = allImages;
+        if (Array.isArray(pages) && pages.length > 0) images = pages.map((i) => allImages[i]).filter(Boolean);
+        result = await window.printlayout.pdf.print({
+          defaultName: `${(selected.name || 'Rotulos').replace(/[\\/:*?"<>|]+/g, '_')}.pdf`,
+          images,
+          pageWidthMm: selected.pageWidthMm,
+          pageHeightMm: selected.pageHeightMm,
+          deviceName,
+          copies,
+          showDialog: false,
+        });
+      } else {
+        result = await printLayoutPdf(selected, assignments, layout.imageMap, {
+          layoutFitMode,
+          embedBackground: !isBack && !selected.singlePage,
+          // Cara explicita: sino buildPdf la infiere de embedBackground y, en una
+          // grilla doble faz (singlePage), el frente se tomaria como dorso y no
+          // dibujaria las marcas de corte.
+          face,
+          faceLabel: selected.doubleSided ? (isBack ? 'dorso' : 'frente') : undefined,
+          paperWidthMm: customPaper?.widthMm,
+          paperHeightMm: customPaper?.heightMm,
+          // El QR es parte de la hoja con corte: se imprime SOLO en el frente, en
+          // la misma posición que la vista previa. Solo si la hoja tiene cortes,
+          // nombre, config cargada y el interruptor "QR" prendido (conQr).
+          qr: (!isBack && (selected.conQr ?? true) && hasCuts(selected) && selected.cutId && qrConfig) ? {
+            text: selected.cutId,
+            sizeMm: qrConfig.qrSizeMm,
+            bottomMm: qrConfig.qrBottomMm,
+            centered: qrConfig.qrCentered,
+            showText: true,
+          } : undefined,
+          deviceName,
+          copies,
+          pages,
+          drawMarks: cutMarks !== false,
+          showDialog: false,
+        });
+      }
       if (result?.canceled) {
         setToast(null);
       } else if (result?.ok) {
@@ -2995,6 +3079,7 @@ export default function App() {
           onOpenJob={handleOpenJobsList}
           onOpenTemplates={() => setTemplatesManagerOpen(true)}
           onOpenRotulos={() => setRotulosOpen(true)}
+          onEditRotulos={selected?.rotulos ? () => { setRotulosPlanchaInit({ ...selected.rotulos, editing: true }); setRotulosPlanchaOpen(true); } : null}
           onOpenPdfToImage={() => setPdfToImageOpen(true)}
           onRepairPdf={handleRepairPdf}
           onOpenIntake={isLaRecta ? () => setIntakePanelOpen(true) : undefined}
@@ -3220,12 +3305,13 @@ export default function App() {
         <RotulosManagerModal
           open={rotulosOpen}
           onClose={() => setRotulosOpen(false)}
-          onArmarPlancha={() => { setRotulosOpen(false); setRotulosPlanchaOpen(true); }}
         />
 
         <RotulosPlanchaModal
           open={rotulosPlanchaOpen}
-          onClose={() => setRotulosPlanchaOpen(false)}
+          init={rotulosPlanchaInit}
+          onSubmit={handleRotulosSubmit}
+          onClose={() => { setRotulosPlanchaOpen(false); setRotulosPlanchaInit(null); }}
         />
 
         {editGeometryTemplate && (
@@ -3460,6 +3546,7 @@ export default function App() {
           onUploadPdf={() => blankPdfInputRef.current?.click()}
           onOpenJobsList={() => setJobsListOpen(true)}
           onImportDobble={() => { setNewTabModalOpen(false); handleImportDobble(); }}
+          onCreateRotulos={(init) => { setNewTabModalOpen(false); setRotulosPlanchaInit(init); setRotulosPlanchaOpen(true); }}
         />
 
         <DobblePoseModal

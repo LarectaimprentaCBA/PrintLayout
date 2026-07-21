@@ -294,6 +294,7 @@ export default function TopBar({
   // Utilidades globales
   onOpenTemplates,
   onOpenRotulos,
+  onEditRotulos,
   onOpenPdfToImage,
   onRepairPdf,
 }) {
@@ -412,6 +413,16 @@ export default function TopBar({
                 className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:bg-ink-700"
               >
                 Rótulos
+              </button>
+            )}
+            {onEditRotulos && (
+              <button
+                type="button"
+                onClick={onEditRotulos}
+                title="Editar esta plancha de rótulos (nombre, tipografía, colores…)"
+                className="rounded-md border border-accent-500/50 bg-accent-500/10 px-2.5 py-1 text-xs text-accent-200 hover:bg-accent-500/20"
+              >
+                Editar rótulos
               </button>
             )}
             {onOpenPdfToImage && (

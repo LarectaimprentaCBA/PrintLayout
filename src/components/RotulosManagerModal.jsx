@@ -286,7 +286,7 @@ function NumMm({ label, value, onChange }) {
   );
 }
 
-export default function RotulosManagerModal({ open, onClose, onArmarPlancha }) {
+export default function RotulosManagerModal({ open, onClose }) {
   const api = typeof window !== 'undefined' ? window.printlayout?.rotulos : null;
 
   const [tab, setTab] = useState('fuentes');
@@ -540,15 +540,6 @@ export default function RotulosManagerModal({ open, onClose, onArmarPlancha }) {
                   Un modelo = 3 imágenes (grande, intermedio, chico) con la zona del nombre marcada a mano.
                 </span>
                 <div className="flex items-center gap-2">
-                  {onArmarPlancha && (
-                    <button
-                      type="button"
-                      onClick={onArmarPlancha}
-                      className="rounded border border-accent-500/50 px-3 py-1.5 text-xs font-medium text-accent-200 hover:bg-accent-500/10"
-                    >
-                      Armar plancha
-                    </button>
-                  )}
                   <button
                     type="button"
                     onClick={newModel}

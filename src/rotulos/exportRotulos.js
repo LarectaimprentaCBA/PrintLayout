@@ -28,7 +28,7 @@ function detectMime(dataUrl, fallback = 'image/png') {
   return m ? m[1].toLowerCase() : fallback;
 }
 
-function centerCoverRect(iw, ih, cellW, cellH) {
+export function centerCoverRect(iw, ih, cellW, cellH) {
   const cellAr = cellW / cellH;
   const imgAr = iw / ih;
   let cw;

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { describeCells, hasCuts } from '../lib/templates.js';
+import { PLANCHA_LIST } from '../rotulos/planchas.js';
 
 const SIN_CARPETA = 'General';
 const TODAS = '__todas__';
@@ -31,10 +32,16 @@ export default function NewTabModal({
   onUploadPdf,
   onOpenJobsList,
   onImportDobble,
+  onCreateRotulos,
   onClose,
 }) {
-  const [view, setView] = useState('main'); // 'main' | 'templates'
+  const [view, setView] = useState('main'); // 'main' | 'templates' | 'rotulos'
   const [query, setQuery] = useState('');
+  // Sub-vista Rótulos: plancha elegida + buscador de modelo.
+  const [rotPlancha, setRotPlancha] = useState(PLANCHA_LIST[0]?.id || 'plancha1');
+  const [rotModels, setRotModels] = useState([]);
+  const [rotQuery, setRotQuery] = useState('');
+  const [rotModelId, setRotModelId] = useState('');
   const [selectedCarpeta, setSelectedCarpeta] = useState(() => {
     try {
       return localStorage.getItem(SELECTED_KEY) || TODAS;
@@ -52,14 +59,29 @@ export default function NewTabModal({
     if (!open) {
       setView('main');
       setQuery('');
+      setRotQuery('');
+      setRotModelId('');
     }
   }, [open]);
+
+  // Cargar los modelos de rótulos al entrar a la sub-vista.
+  useEffect(() => {
+    if (!open || view !== 'rotulos') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const m = await window.printlayout?.rotulos?.modelsList?.();
+        if (!cancelled) setRotModels(Array.isArray(m) ? m : []);
+      } catch { if (!cancelled) setRotModels([]); }
+    })();
+    return () => { cancelled = true; };
+  }, [open, view]);
 
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e) => {
       if (e.key === 'Escape') {
-        if (view === 'templates') setView('main');
+        if (view !== 'main') setView('main');
         else onClose?.();
       }
     };
@@ -122,7 +144,7 @@ export default function NewTabModal({
       <div className="flex max-h-[85vh] w-[640px] max-w-[95vw] flex-col rounded-lg border border-ink-700 bg-ink-900 shadow-2xl">
         <div className="flex items-center justify-between border-b border-ink-700 px-4 py-3">
           <div className="flex items-center gap-2">
-            {view === 'templates' && (
+            {view !== 'main' && (
               <button
                 type="button"
                 onClick={() => setView('main')}
@@ -135,7 +157,7 @@ export default function NewTabModal({
               </button>
             )}
             <h3 className="text-sm font-semibold text-ink-100">
-              {view === 'templates' ? 'Elegir plantilla' : 'Nuevo trabajo'}
+              {view === 'templates' ? 'Elegir plantilla' : view === 'rotulos' ? 'Rótulos escolares' : 'Nuevo trabajo'}
             </h3>
           </div>
           <button
@@ -234,6 +256,87 @@ export default function NewTabModal({
                 onClick={handleOption(onImportDobble)}
               />
             )}
+            {onCreateRotulos && (
+              <OptionCard
+                title="Rótulos escolares"
+                subtitle="Plancha de etiquetas con nombre (elegí plancha + modelo)"
+                icon={(
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+                    <rect x="3" y="5" width="18" height="5" rx="1.2" />
+                    <rect x="3" y="14" width="8" height="5" rx="1.2" />
+                    <rect x="13" y="14" width="8" height="5" rx="1.2" />
+                  </svg>
+                )}
+                onClick={() => setView('rotulos')}
+              />
+            )}
+          </div>
+        ) : view === 'rotulos' ? (
+          <div className="flex flex-col gap-4 p-4">
+            <label className="text-xs text-ink-300">
+              <span className="mb-1 block">Tipo de plancha</span>
+              <select
+                value={rotPlancha}
+                onChange={(e) => setRotPlancha(e.target.value)}
+                className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
+              >
+                {PLANCHA_LIST.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+              </select>
+            </label>
+
+            <div className="text-xs text-ink-300">
+              <span className="mb-1 block">Número de modelo</span>
+              <input
+                value={rotQuery}
+                onChange={(e) => { setRotQuery(e.target.value); setRotModelId(''); }}
+                placeholder="Escribí el número o nombre del modelo…"
+                className="w-full rounded border border-ink-700 bg-ink-800 px-3 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
+                autoFocus
+              />
+              <div className="mt-2 max-h-56 overflow-y-auto rounded border border-ink-800">
+                {rotModels.length === 0 ? (
+                  <p className="px-3 py-6 text-center text-[11px] text-ink-500">No hay modelos cargados. Cargá uno en “Rótulos → Modelos”.</p>
+                ) : (
+                  rotModels
+                    .filter((m) => {
+                      const q = rotQuery.trim().toLowerCase();
+                      return !q || String(m.nombre || '').toLowerCase().includes(q);
+                    })
+                    .map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => { setRotModelId(m.id); setRotQuery(m.nombre || ''); }}
+                        className={`flex w-full items-center gap-3 border-b border-ink-800 px-3 py-2 text-left last:border-b-0 hover:bg-ink-800 ${rotModelId === m.id ? 'bg-accent-600/20' : ''}`}
+                      >
+                        {m.thumb
+                          ? <img src={m.thumb} alt="" className="h-8 w-12 shrink-0 rounded object-cover" />
+                          : <div className="h-8 w-12 shrink-0 rounded bg-ink-800" />}
+                        <span className="text-sm text-ink-100">{m.nombre || '(sin nombre)'}</span>
+                        {rotModelId === m.id && <span className="ml-auto text-[11px] text-accent-300">✓ elegido</span>}
+                      </button>
+                    ))
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setView('main')}
+                className="rounded border border-ink-700 px-3 py-1.5 text-xs text-ink-200 hover:bg-ink-800"
+              >
+                Volver
+              </button>
+              <button
+                type="button"
+                disabled={!rotPlancha || !rotModelId}
+                onClick={() => onCreateRotulos?.({ planchaId: rotPlancha, modeloId: rotModelId })}
+                className="rounded bg-accent-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-accent-500 disabled:opacity-40"
+              >
+                Continuar
+              </button>
+            </div>
           </div>
         ) : (
           <>

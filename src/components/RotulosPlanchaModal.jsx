@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { resolveSizeLayout, zoneAsBox, effectivePad } from '../rotulos/textLayout.js';
 import { makeCanvasMeasure, drawRotuloOverlay } from '../rotulos/drawOverlay.js';
-import { buildRotulosPlanchaPdf } from '../rotulos/exportRotulos.js';
-import { PLANCHA_LIST, planchaCeldas, MARK_MARGIN_MM } from '../rotulos/planchas.js';
-import { cellsToRoundedRectCuts } from '../lib/grid.js';
+import { PLANCHA_LIST, planchaCeldas } from '../rotulos/planchas.js';
 import { RESIZE_HANDLES, RESIZE_EDGES, moveBox, resizeBox, fullLabelBox, clampCenterRotated, sanitizeBox } from '../rotulos/boxEditing.js';
 
 // Armador de plancha de rótulos. Preview en vivo (canvas) de los 3 rótulos:
@@ -227,8 +225,9 @@ function PlanchaSizePreview({ sizeKey, cutMm, textBox, arteDataUrl, family, text
   );
 }
 
-export default function RotulosPlanchaModal({ open, onClose }) {
+export default function RotulosPlanchaModal({ open, init = null, onSubmit, onClose }) {
   const api = typeof window !== 'undefined' ? window.printlayout?.rotulos : null;
+  const editing = !!init?.editing;
 
   const [models, setModels] = useState([]);
   const [fonts, setFonts] = useState([]);
@@ -246,7 +245,6 @@ export default function RotulosPlanchaModal({ open, onClose }) {
   const [lineModes, setLineModes] = useState({ grande: 'auto', intermedio: 'auto', chico: 'auto' });
   const [arteBySize, setArteBySize] = useState({});
   const [family, setFamily] = useState(null);
-  const [generating, setGenerating] = useState(false);
   const [feedback, setFeedback] = useState(null);
   // Ajustes del recuadro por tamaño SOLO para esta plancha (no tocan el modelo).
   const [boxOverrides, setBoxOverrides] = useState({});
@@ -286,27 +284,43 @@ export default function RotulosPlanchaModal({ open, onClose }) {
     [boxOverrides, selectedModel],
   );
 
+  // Precarga al abrir: desde `init` (Nuevo trabajo: {planchaId, modeloId}; o la
+  // receta completa + editing:true al re-editar la pestaña).
   useEffect(() => {
     if (!open || !api) return;
     setFeedback(null);
     setPalette(loadPalette());
+    if (init?.planchaId) setPlanchaId(init.planchaId);
+    setBoxOverrides(init?.boxOverrides || {});
+    if (init?.editing) {
+      if (init.color) setTextColor(init.color);
+      if (init.boxColor) setBoxColor(init.boxColor);
+      setNoBox(!!init.noBox);
+      if (init.boxPadMm != null) setBoxPadMm(init.boxPadMm);
+      if (init.outline) setOutline(init.outline);
+      setText(init.text || '');
+      if (init.lineModes) setLineModes(init.lineModes);
+    } else {
+      // Trabajo nuevo: no arrastrar el nombre del armado anterior.
+      setText('');
+    }
     Promise.all([api.modelsList(), api.fontsList()]).then(([m, f]) => {
       const ms = Array.isArray(m) ? m : [];
       const fs = Array.isArray(f) ? f : [];
       setModels(ms);
       setFonts(fs);
-      setModelId((prev) => prev || ms[0]?.id || '');
-      setFontId((prev) => prev || fs[0]?.id || '');
+      const wantModel = init?.modeloId || init?.modelId;
+      const wantFont = init?.fontId;
+      setModelId(wantModel || ms[0]?.id || '');
+      setFontId((prev) => wantFont || prev || fs[0]?.id || '');
     });
-  }, [open, api]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, api, init]);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedText(text), 220);
     return () => clearTimeout(t);
   }, [text]);
-
-  // Al cambiar de modelo se descartan los ajustes de recuadro de la plancha.
-  useEffect(() => { setBoxOverrides({}); }, [modelId]);
 
   useEffect(() => {
     if (!open || !api || !selectedModel) { setArteBySize({}); return undefined; }
@@ -367,71 +381,30 @@ export default function RotulosPlanchaModal({ open, onClose }) {
 
   if (!open) return null;
 
-  const generate = async () => {
-    if (!selectedModel || !fontId || !modelComplete) return;
-    setGenerating(true);
-    setFeedback(null);
-    try {
-      const fam = family || await ensureFamily(fontId);
-      if (!fam) { setFeedback({ kind: 'err', text: 'No se pudo cargar la tipografía.' }); return; }
-
-      const sizes = {};
-      for (const key of SIZE_KEYS) {
-        const s = selectedModel.sizes?.[key];
-        if (!s) continue;
-        sizes[key] = { dataUrl: arteBySize[key] || null, wPx: s.wPx, hPx: s.hPx, textBox: effTextBox(key), cutMm: s.cutMm };
-      }
-
-      // Config del corte QR (mismos valores que usa el resto del sistema) para
-      // dibujar el QR FIJO de la plancha. Si el servicio QR no está, seguimos sin QR.
-      const qrApi = window.printlayout?.qrcut;
-      let qrCfg = null;
-      try { qrCfg = await qrApi?.getConfig?.(); } catch { qrCfg = null; }
-      const qr = (qrCfg && plancha.qrId)
-        ? { text: plancha.qrId, sizeMm: qrCfg.qrSizeMm, bottomMm: qrCfg.qrBottomMm, centered: qrCfg.qrCentered }
-        : null;
-
-      const bytes = await buildRotulosPlanchaPdf({
-        model: { sizes, arteIncluyeRecuadro: !!selectedModel.arteIncluyeRecuadro },
-        family: fam, color: textColor, boxColor, noBox, boxPadMm, text: debouncedText, lineModes, outline, planchaId,
-        markMarginMm: MARK_MARGIN_MM, qr,
-      });
-
-      const firstLine = String(debouncedText).split('\n')[0].trim();
-      const name = `Rotulos ${selectedModel.nombre}${firstLine ? ` - ${firstLine}` : ''}`;
-      const r = await api.savePdf(name, bytes);
-      if (!r?.ok) { setFeedback({ kind: 'err', text: r?.error || 'No se pudo guardar el PDF.' }); return; }
-
-      // Corte .plt FIJO de la plancha (una sola vez; el layout NUNCA cambia →
-      // el .plt y el QR son siempre los mismos). ensureBaseCut NO regenera si ya
-      // existe. GOTCHA: si algún día cambian layout/tamaños/radios, hay que
-      // borrar <qrId>.plt de la carpeta de cortes para que se regenere.
-      // Best-effort: si falla, el PDF igual ya se generó.
-      let cutMsg = '';
-      if (qrApi?.ensureBaseCut && plancha.qrId) {
-        try {
-          const bladeOffsetMm = (() => {
-            const stored = parseFloat(localStorage.getItem('printlayout.bladeOffsetMm'));
-            return Number.isFinite(stored) && stored > 0 ? stored : 0.25;
-          })();
-          const cr = await qrApi.ensureBaseCut({
-            planchaId: plancha.qrId,
-            cortes: cellsToRoundedRectCuts(plancha.celdas),
-            pageWidthMm: plancha.pageWidthMm,
-            pageHeightMm: plancha.pageHeightMm,
-            markMarginMm: MARK_MARGIN_MM,
-            bladeOffsetMm,
-          });
-          if (cr?.ok) cutMsg = cr.existed ? '\nCorte QR: ya existía.' : '\nCorte QR generado.';
-          else cutMsg = `\nCorte QR no generado: ${cr?.error || 'error'}`;
-        } catch (e) { cutMsg = `\nCorte QR no generado: ${e.message || 'error'}`; }
-      }
-      setFeedback({ kind: 'ok', text: `PDF generado y abierto.\n${r.path}${cutMsg}` });
-    } catch (e) {
-      setFeedback({ kind: 'err', text: e.message || 'Error generando el PDF.' });
-    } finally {
-      setGenerating(false);
-    }
+  // Arma la "receta" (spec) y la manda a App, que crea/actualiza la PESTAÑA y
+  // deja el PDF impreso al motor probado. El modal NO genera PDF suelto.
+  const handleSubmit = () => {
+    if (!selectedModel || !fontId || !modelComplete || !onSubmit) return;
+    const firstLine = String(text).split('\n')[0].trim();
+    const planchaLabel = PLANCHA_LIST.find((p) => p.id === planchaId)?.label || 'Plancha';
+    const name = `Rótulos ${selectedModel.nombre} · ${planchaLabel}${firstLine ? ` — ${firstLine}` : ''}`;
+    const spec = {
+      planchaId,
+      modeloId: modelId,
+      nombre: selectedModel.nombre,
+      fontId,
+      color: textColor,
+      boxColor,
+      noBox,
+      boxPadMm,
+      text,
+      lineModes,
+      outline,
+      boxOverrides,
+      name,
+      editing,
+    };
+    onSubmit(spec);
   };
 
   const fbColor = feedback?.kind === 'ok' ? 'text-green-300' : feedback?.kind === 'err' ? 'text-red-300' : 'text-sky-300';
@@ -444,7 +417,7 @@ export default function RotulosPlanchaModal({ open, onClose }) {
         <div className="flex items-center justify-between border-b border-ink-700 p-4">
           <div>
             <h3 className="text-sm font-semibold text-ink-100">Armar plancha de rótulos</h3>
-            <p className="mt-0.5 text-xs text-ink-400">Elegí tipo de plancha, modelo, tipografía, colores y estilo del nombre, y generá el PDF con sus marcas de corte y QR.</p>
+            <p className="mt-0.5 text-xs text-ink-400">Elegí tipo de plancha, modelo, tipografía, colores y estilo del nombre. Al confirmar se crea una pestaña con la plancha lista para imprimir.</p>
           </div>
           <button type="button" onClick={onClose} className="rounded border border-ink-700 px-3 py-1 text-xs text-ink-200 hover:bg-ink-800">Cerrar</button>
         </div>
@@ -462,7 +435,7 @@ export default function RotulosPlanchaModal({ open, onClose }) {
 
             <label className="text-xs text-ink-300">
               <span className="mb-1 block">Modelo</span>
-              <select value={modelId} onChange={(e) => setModelId(e.target.value)} disabled={noModels}
+              <select value={modelId} onChange={(e) => { setModelId(e.target.value); setBoxOverrides({}); }} disabled={noModels}
                 className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500 disabled:opacity-50">
                 {noModels ? <option value="">(no hay modelos)</option> : models.map((m) => <option key={m.id} value={m.id}>{m.nombre}</option>)}
               </select>
@@ -573,10 +546,10 @@ export default function RotulosPlanchaModal({ open, onClose }) {
             </span>
           )}
           <button type="button" onClick={onClose} className="rounded border border-ink-700 px-3 py-1 text-xs text-ink-200 hover:bg-ink-800">Cerrar</button>
-          <button type="button" onClick={generate} disabled={generating || !modelComplete || !fontId}
+          <button type="button" onClick={handleSubmit} disabled={!modelComplete || !fontId}
             title={!modelComplete ? `Falta cargar en el modelo: ${missingSizes.map((k) => SIZE_LABEL[k]).join(', ')}` : (!fontId ? 'Elegí una tipografía' : '')}
             className="rounded bg-accent-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-accent-500 disabled:opacity-40">
-            {generating ? 'Generando…' : 'Generar PDF'}
+            {editing ? 'Guardar cambios' : 'Crear trabajo'}
           </button>
         </div>
       </div>
