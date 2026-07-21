@@ -197,6 +197,50 @@ async function upsertCatalog(cfg, rows) {
   return true;
 }
 
+// ---- Rótulos: catálogo de modelos (tabla `modelos_rotulos` + bucket público
+// `rotulos-modelos`). PrintLayout es la fuente de verdad; la web /rotulos lo lee.
+
+// Sube (o pisa, x-upsert) un objeto a un bucket. objectPath = '<modelId>/<size>.<ext>'.
+async function uploadPublicObject(cfg, bucket, objectPath, buffer, contentType) {
+  assertCfg(cfg);
+  const url = `${cfg.supabaseUrl}/storage/v1/object/${bucket}/${encodeObjectPath(objectPath)}`;
+  const res = await net.fetch(url, {
+    method: 'POST',
+    headers: {
+      ...authHeaders(cfg),
+      'Content-Type': contentType || 'application/octet-stream',
+      'x-upsert': 'true',
+    },
+    body: buffer,
+  });
+  if (!res.ok) throw await readErr(res, `Storage upload (${objectPath})`);
+  return true;
+}
+
+// URL pública de un objeto de un bucket público.
+function publicObjectUrl(cfg, bucket, objectPath) {
+  return `${cfg.supabaseUrl}/storage/v1/object/public/${bucket}/${encodeObjectPath(objectPath)}`;
+}
+
+// Upsert de filas del catálogo de modelos de rótulos (PK id, merge-duplicates).
+async function upsertModelosRotulos(cfg, rows) {
+  assertCfg(cfg);
+  const list = Array.isArray(rows) ? rows : [];
+  if (list.length === 0) return true;
+  const url = `${cfg.supabaseUrl}/rest/v1/modelos_rotulos`;
+  const res = await net.fetch(url, {
+    method: 'POST',
+    headers: {
+      ...authHeaders(cfg),
+      'Content-Type': 'application/json',
+      Prefer: 'resolution=merge-duplicates,return=minimal',
+    },
+    body: JSON.stringify(list),
+  });
+  if (!res.ok) throw await readErr(res, 'modelos_rotulos upsert');
+  return true;
+}
+
 // Upsert de una clave de configuración (tabla key-value `config_fotos`, PK clave).
 async function upsertConfig(cfg, clave, valor) {
   assertCfg(cfg);
@@ -222,6 +266,10 @@ module.exports = {
   removeObjects,
   upsertCatalog,
   upsertConfig,
+  // Rótulos
+  uploadPublicObject,
+  publicObjectUrl,
+  upsertModelosRotulos,
   // Dobble
   listPendingDobble,
   downloadDobbleObject,

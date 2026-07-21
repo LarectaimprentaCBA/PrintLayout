@@ -296,6 +296,7 @@ export default function RotulosManagerModal({ open, onClose }) {
   const [feedback, setFeedback] = useState(null); // { kind:'ok'|'err', text }
   const [cfg, setCfg] = useState({ rotulosSharedDir: '' });
   const [sharedDraft, setSharedDraft] = useState('');
+  const [publishing, setPublishing] = useState(false);
 
   // Modelo en edición (nuevo o re-editado): { id?, nombre, slots:{grande,intermedio,chico} }
   const [draft, setDraft] = useState(null);
@@ -341,6 +342,31 @@ export default function RotulosManagerModal({ open, onClose }) {
       if (r?.ok && r.path) setSharedDraft(r.path);
     } catch { /* noop */ }
   }, [api]);
+
+  // Publicar el catálogo de modelos a la web (Supabase). Todo el trabajo con la
+  // service key vive en el main; acá sólo disparamos y mostramos el resumen.
+  const publishWeb = useCallback(async () => {
+    if (models.length === 0) { setFeedback({ kind: 'err', text: 'No hay modelos para publicar.' }); return; }
+    if (!window.confirm(`Vas a subir ${models.length} modelo(s) al catálogo web. ¿Continuar?`)) return;
+    setPublishing(true);
+    setFeedback({ kind: 'ok', text: 'Publicando a la web…' });
+    try {
+      const r = await api.publishWeb();
+      if (!r?.ok) { setFeedback({ kind: 'err', text: r?.error || 'No se pudo publicar.' }); return; }
+      const parts = [`${r.publicados} publicado(s)`];
+      if (r.saltados?.length) parts.push(`${r.saltados.length} saltado(s) sin arte`);
+      if (r.errores?.length) parts.push(`${r.errores.length} con error`);
+      const detalle = (r.errores || []).map((e) => `• ${e.nombre}: ${e.error}`).join('\n');
+      setFeedback({
+        kind: r.errores?.length ? 'err' : 'ok',
+        text: `Publicación a la web: ${parts.join(', ')}.${detalle ? `\n${detalle}` : ''}`,
+      });
+    } catch (e) {
+      setFeedback({ kind: 'err', text: e.message || 'No se pudo publicar.' });
+    } finally {
+      setPublishing(false);
+    }
+  }, [api, models]);
 
   // Copiar el catálogo LOCAL a la carpeta compartida (one-shot, explícito).
   const migrateToShared = useCallback(async () => {
@@ -574,6 +600,16 @@ export default function RotulosManagerModal({ open, onClose }) {
               </button>
               <span className="text-[10px] text-ink-500">
                 {cfg.rotulosSharedDir ? `Activo: ${cfg.rotulosSharedDir}` : 'Actualmente: local (esta PC).'}
+              </span>
+            </div>
+            <div className="mt-2 flex items-center gap-2 border-t border-ink-800 pt-2">
+              <button type="button" onClick={publishWeb} disabled={publishing || models.length === 0}
+                title="Subir el catálogo de modelos a la web (catálogo online de rótulos)"
+                className="rounded bg-emerald-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-emerald-500 disabled:opacity-40">
+                {publishing ? 'Publicando…' : 'Publicar a la web'}
+              </button>
+              <span className="text-[10px] text-ink-500">
+                Sube los {models.length} modelo(s) al catálogo online para que los vean los clientes.
               </span>
             </div>
           </div>

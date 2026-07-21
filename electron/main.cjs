@@ -17,6 +17,7 @@ const openTabsStore = require('./open-tabs-store.cjs');
 const rotulosStore = require('./rotulos-store.cjs');
 const rotulosConfig = require('./rotulos-config-store.cjs');
 const intakeService = require('./intake/service.cjs');
+const supabase = require('./intake/supabase.cjs');
 const qrCutServer = require('./qrcut/server.cjs');
 const { writePdfSilent, dobblePdfFileName } = require('./intake/save-pdf.cjs');
 
@@ -983,6 +984,66 @@ ipcMain.handle('rotulos:choose-dir', async () => {
     });
     if (r.canceled || !r.filePaths || !r.filePaths[0]) return { canceled: true };
     return { ok: true, path: r.filePaths[0] };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// Publica el catálogo de modelos a la web (Supabase: tabla modelos_rotulos +
+// bucket público rotulos-modelos). Reusa la config Supabase del intake. TODO en
+// main: la service key NUNCA sale al renderer ni se loguea. Idempotente (upsert
+// por id, x-upsert en Storage). No corta si un modelo falla: sigue y reporta.
+ipcMain.handle('rotulos:publish-web', async () => {
+  try {
+    const cfg = intakeService.getConfig();
+    if (!cfg?.supabaseUrl || !cfg?.serviceKey) {
+      return { ok: false, error: 'Configurá Supabase (URL + service key) en el panel de entrada de pedidos.' };
+    }
+    const SIZE_KEYS = ['grande', 'intermedio', 'chico'];
+    const models = rotulosStore.listModels();
+    const result = { total: models.length, publicados: 0, saltados: [], errores: [] };
+
+    for (let i = 0; i < models.length; i++) {
+      const m = models[i];
+      try {
+        const sizes = {};
+        let anyArt = false;
+        for (const key of SIZE_KEYS) {
+          const s = m.sizes?.[key];
+          if (!s?.arteFile) continue;
+          const ext = (s.ext || 'png').toLowerCase();
+          // PORTABILIDAD: ruta reconstruida desde la base actual (local o compartida).
+          const filePath = path.join(rotulosStore.modelDir(m.id), s.arteFile);
+          if (!fs.existsSync(filePath)) continue;
+          const buf = fs.readFileSync(filePath);
+          const contentType = (ext === 'jpg' || ext === 'jpeg') ? 'image/jpeg' : 'image/png';
+          const objectPath = `${m.id}/${key}.${ext}`;
+          await supabase.uploadPublicObject(cfg, 'rotulos-modelos', objectPath, buf, contentType);
+          sizes[key] = {
+            arte_url: supabase.publicObjectUrl(cfg, 'rotulos-modelos', objectPath),
+            textBox: s.textBox || null,
+            cutMm: s.cutMm || null,
+          };
+          anyArt = true;
+        }
+        if (!anyArt) { result.saltados.push({ nombre: m.nombre || m.id, motivo: 'sin arte' }); continue; }
+
+        // numero = con el que el cliente busca en "Nuevo trabajo" (hoy = nombre).
+        const row = {
+          id: m.id,
+          numero: m.numero || m.nombre || '',
+          nombre: m.nombre || '',
+          sizes,
+          activo: true,
+          orden: Number.isFinite(m.orden) ? m.orden : i,
+        };
+        await supabase.upsertModelosRotulos(cfg, [row]); // por modelo → aísla fallas
+        result.publicados += 1;
+      } catch (e) {
+        result.errores.push({ nombre: m.nombre || m.id, error: e.message });
+      }
+    }
+    return { ok: true, ...result };
   } catch (err) {
     return { ok: false, error: err.message };
   }

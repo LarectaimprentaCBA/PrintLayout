@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('printlayout', {
     setConfig: (patch) => ipcRenderer.invoke('rotulos:set-config', patch),
     chooseDir: () => ipcRenderer.invoke('rotulos:choose-dir'),
     migrateToShared: (opts) => ipcRenderer.invoke('rotulos:migrate-to-shared', opts),
+    publishWeb: () => ipcRenderer.invoke('rotulos:publish-web'),
   },
   workStates: {
     list: () => ipcRenderer.invoke('work-states:list'),
