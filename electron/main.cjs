@@ -1043,6 +1043,7 @@ ipcMain.handle('rotulos:publish-web', async () => {
           numero: m.numero || m.nombre || '',
           nombre: m.nombre || '',
           sizes,
+          arte_incluye_recuadro: !!m.arteIncluyeRecuadro,
           activo: true,
           orden: Number.isFinite(m.orden) ? m.orden : i,
         };
