@@ -2,7 +2,8 @@
 // QRFileCut.exe). Vive SOLO en userData/qrcut-config.json (no en el repo/bundle),
 // así persiste entre reinicios y no se pierde como pasaba con el programa chino.
 //
-// Forma: { plotterIP, plotterPort, cortesDir, activo }.
+// Forma: { plotterIP, plotterPort, cortesDir, activo, qrSizeMm, qrBottomMm,
+//          qrCentered, cutPrefix, relayActivo, relayPort, relayAllowlistCidr }.
 //
 // plotterIP/plotterPort son la ÚNICA fuente de verdad de la IP del plotter: la
 // usa tanto este servidor como el envío directo de cortes (send_to_plotter.py),
@@ -31,6 +32,16 @@ const DEFAULTS = {
   // Prefijo opcional para el nombre del corte (por PC/turno). Vacío = solo el
   // timestamp. Se sanea igual que el nombre (QR/filesystem-safe).
   cutPrefix: '',
+  // --- Portero / relay de cortes (multiplexar el plotter desde varias PC) ---
+  // Esta PC (la conectada al plotter) escucha en 0.0.0.0:relayPort y reenvía los
+  // cortes de emisores externos (otra PC / Corel / otro software) al plotter,
+  // coordinando con el server QR + el envío directo por el candado único. En las
+  // PC emisoras se DESTILDA (igual que `activo`): ellas apuntan su IP destino a
+  // esta PC y no hacen de portero.
+  relayActivo: true,
+  relayPort: 8080,
+  // Solo se aceptan conexiones de estas IP (loopback siempre permitido).
+  relayAllowlistCidr: '192.168.100.0/24',
 };
 
 function getFilePath() {
@@ -63,6 +74,15 @@ function sanitize(cfg) {
     cutPrefix: typeof c.cutPrefix === 'string'
       ? c.cutPrefix.trim().replace(/[^A-Za-z0-9_-]/g, '')
       : DEFAULTS.cutPrefix,
+    relayActivo: c.relayActivo === undefined ? DEFAULTS.relayActivo : !!c.relayActivo,
+    relayPort: (() => {
+      let p = Number(c.relayPort);
+      if (!Number.isInteger(p) || p <= 0 || p > 65535) p = DEFAULTS.relayPort;
+      return p;
+    })(),
+    relayAllowlistCidr: typeof c.relayAllowlistCidr === 'string' && c.relayAllowlistCidr.trim()
+      ? c.relayAllowlistCidr.trim()
+      : DEFAULTS.relayAllowlistCidr,
   };
 }
 

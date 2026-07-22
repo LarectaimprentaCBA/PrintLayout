@@ -10,6 +10,7 @@ const EMPTY = {
   plotterIP: '192.168.100.250', plotterPort: 8080,
   cortesDir: '', activo: true,
   qrSizeMm: 8, qrBottomMm: 9.5, qrCentered: true, cutPrefix: '',
+  relayActivo: true, relayPort: 8080, relayAllowlistCidr: '192.168.100.0/24',
 };
 
 export default function QrCutPanelModal({ open, onClose }) {
@@ -17,6 +18,7 @@ export default function QrCutPanelModal({ open, onClose }) {
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
+  const [releasing, setReleasing] = useState(false);
   const [feedback, setFeedback] = useState(null); // { kind, text }
   const [status, setStatus] = useState(null); // { connected, activo, lastServed, ... }
   const [logs, setLogs] = useState([]);
@@ -98,6 +100,21 @@ export default function QrCutPanelModal({ open, onClose }) {
     }
   };
 
+  const forceRelease = async () => {
+    setReleasing(true);
+    setFeedback(null);
+    try {
+      const r = await api.forceRelease?.();
+      setFeedback(
+        r?.ok
+          ? { kind: 'ok', text: 'Candado liberado. Reconectando el server QR…' }
+          : { kind: 'err', text: r?.error || 'No se pudo liberar.' },
+      );
+    } finally {
+      setReleasing(false);
+    }
+  };
+
   const fbColor = feedback?.kind === 'ok'
     ? 'text-green-300'
     : feedback?.kind === 'err'
@@ -106,6 +123,8 @@ export default function QrCutPanelModal({ open, onClose }) {
 
   const connected = !!status?.connected;
   const activo = status?.activo ?? cfg.activo;
+  const busyOwner = status?.paused ? (status?.lockOwner || 'envío') : null;
+  const relayOn = !!status?.relayListening;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -133,13 +152,29 @@ export default function QrCutPanelModal({ open, onClose }) {
                 ) : (
                   <span className="font-medium text-red-400">🔴 Desconectado</span>
                 )}
-                {status?.paused && <span className="text-[11px] text-amber-300">(pausado por envío directo)</span>}
+                {busyOwner && <span className="text-[11px] text-amber-300">(plotter ocupado · {busyOwner})</span>}
                 {status?.lastServed && (
                   <span className="ml-auto text-[11px] text-ink-400">
                     Último corte: <b className="text-ink-200">{status.lastServed.name}</b>{' '}
                     · {new Date(status.lastServed.ts).toLocaleTimeString()}
                   </span>
                 )}
+              </div>
+
+              {/* Estado del portero / relay */}
+              <div className="mb-3 flex flex-wrap items-center gap-3 rounded border border-ink-700 bg-ink-950/40 px-3 py-2 text-[11px]">
+                {relayOn ? (
+                  <span className="font-medium text-green-400">🟢 Portero escuchando en :{status?.relayPort ?? cfg.relayPort}</span>
+                ) : (
+                  <span className="font-medium text-ink-500">⚪ Portero apagado</span>
+                )}
+                {status?.relayClient && (
+                  <span className="text-amber-300">Sirviendo a <b className="text-ink-200">{status.relayClient}</b></span>
+                )}
+                {status?.relayQueue > 0 && (
+                  <span className="text-ink-400">En cola: <b className="text-ink-200">{status.relayQueue}</b></span>
+                )}
+                <span className="ml-auto text-ink-500">Otras PC apuntan su corte a esta PC (esta IP) : {cfg.relayPort}</span>
               </div>
 
               <label className="mb-3 flex cursor-pointer items-center gap-2 rounded border border-ink-700 bg-ink-950/40 px-3 py-2 text-xs text-ink-200">
@@ -233,6 +268,41 @@ export default function QrCutPanelModal({ open, onClose }) {
                 </label>
               </div>
 
+              {/* Portero / relay de cortes (multiplexar el plotter) */}
+              <div className="mt-3 rounded border border-ink-700 bg-ink-950/40 px-3 py-2">
+                <label className="flex cursor-pointer items-center gap-2 text-xs text-ink-200">
+                  <input
+                    type="checkbox"
+                    checked={!!cfg.relayActivo}
+                    onChange={(e) => patch({ relayActivo: e.target.checked })}
+                    className="h-4 w-4 accent-accent-500"
+                  />
+                  <span>
+                    <span className="font-medium text-ink-100">Portero de cortes (recibir de otras PC)</span>
+                    <span className="block text-[11px] text-ink-400">
+                      Esta PC recibe cortes de otras PC / Corel / otro software y los reenvía al plotter, turnándose con el corte por QR y el envío directo. Tildado solo en la PC conectada al plotter.
+                    </span>
+                  </span>
+                </label>
+                <div className="mt-2 grid grid-cols-3 gap-2 text-xs text-ink-300">
+                  <label>
+                    <span className="mb-1 block">Puerto de escucha</span>
+                    <input value={cfg.relayPort} onChange={(e) => patch({ relayPort: e.target.value })}
+                      placeholder="8080"
+                      className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500" />
+                  </label>
+                  <label className="col-span-2">
+                    <span className="mb-1 block">Red permitida (CIDR)</span>
+                    <input value={cfg.relayAllowlistCidr} onChange={(e) => patch({ relayAllowlistCidr: e.target.value })}
+                      placeholder="192.168.100.0/24"
+                      className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500" />
+                  </label>
+                </div>
+                <span className="mt-1 block text-[10px] text-ink-500">
+                  Solo se aceptan cortes de esa red (loopback siempre permitido). Las PC emisoras apuntan su corte a la IP de esta PC en ese puerto.
+                </span>
+              </div>
+
               {/* Log */}
               <div
                 ref={logBoxRef}
@@ -262,9 +332,18 @@ export default function QrCutPanelModal({ open, onClose }) {
             type="button"
             onClick={reconnect}
             disabled={reconnecting || !loaded}
-            className="mr-auto rounded border border-ink-700 px-3 py-1 text-xs text-ink-200 hover:bg-ink-800 disabled:opacity-40"
+            className="rounded border border-ink-700 px-3 py-1 text-xs text-ink-200 hover:bg-ink-800 disabled:opacity-40"
           >
             {reconnecting ? 'Reconectando…' : 'Reconectar'}
+          </button>
+          <button
+            type="button"
+            onClick={forceRelease}
+            disabled={releasing || !loaded}
+            title="Cierra el corte en curso del portero y libera el plotter; reconecta el corte por QR."
+            className="mr-auto rounded border border-ink-700 px-3 py-1 text-xs text-ink-200 hover:bg-ink-800 disabled:opacity-40"
+          >
+            {releasing ? 'Liberando…' : 'Forzar liberar'}
           </button>
           <button
             type="button"

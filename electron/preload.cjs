@@ -174,6 +174,7 @@ contextBridge.exposeInMainWorld('printlayout', {
     getStatus: () => ipcRenderer.invoke('qrcut:get-status'),
     setConfig: (patch) => ipcRenderer.invoke('qrcut:set-config', patch),
     reconnect: () => ipcRenderer.invoke('qrcut:reconnect'),
+    forceRelease: () => ipcRenderer.invoke('qrcut:force-release'),
     chooseDir: () => ipcRenderer.invoke('qrcut:choose-dir'),
     // Asegura el corte base <planchaId>.plt en la carpeta QR (lo genera si falta).
     ensureBaseCut: (payload) => ipcRenderer.invoke('qrcut:ensure-base-cut', payload),

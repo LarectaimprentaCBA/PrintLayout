@@ -13,10 +13,11 @@
 //      CUAL en el socket (el .plt ya termina en @ @, sin framing extra).
 //   6) Reconectamos solo si se cae (backoff).
 //
-// Coexistencia con el envío directo (send_to_plotter.py, que abre su propia
-// conexión al mismo :8080): antes de un envío directo el main llama a
-// pauseForDirectSend() (soltamos el socket) y al terminar resumeAfterDirectSend()
-// (reconectamos). Así nunca hay dos conexiones peleando por el plotter.
+// Coexistencia con el envío directo (send_to_plotter.py) y con el portero/relay
+// (cortes de otras PC): todos pasan por un CANDADO ÚNICO (acquirePlotter/
+// releasePlotter). Mientras alguien lo tiene, este server suelta el socket y NO
+// reconecta; al liberar el último de la cola, se reconecta solo. Así nunca hay
+// dos conexiones peleando por el plotter.
 
 const net = require('node:net');
 const fs = require('node:fs');
@@ -28,14 +29,32 @@ let sock = null;
 let hb = null;              // interval del latido (0x20 cada 1s)
 let reconnectTimer = null;
 let connected = false;
-let paused = false;         // true mientras corre un envío directo
 let reconnectDelay = 0;     // backoff actual (ms)
 let lastServed = null;      // { name, bytes, ts }
 let lastError = null;
 
+// ---- Candado único del plotter (:8080) --------------------------------------
+// El plotter es un dispositivo serie: solo UN productor puede escribirle a la
+// vez (dos conexiones se corromperían). Por él pasan los 3 productores:
+//   (a) server QR (dueño por defecto: mantiene la conexión y sirve por QR),
+//   (b) plotter:send-cut local (envío directo),
+//   (c) cada conexión del relay (cortes de otras PC).
+// Mientras alguien tiene el candado, el server QR SUELTA el socket y NO
+// reconecta; al liberar el último de la cola, el server QR se reconecta solo.
+// currentToken = objeto único del dueño actual (null = libre). La pausa se
+// SOSTIENE durante todo el drenado de la cola (no se reconecta entre jobs).
+let currentToken = null;
+const waiters = [];        // [{ token, resolve }]
+let lockWatchdog = null;   // backstop si un dueño no libera
+// Estado del relay (lo empuja relay.cjs) para publicarlo en el mismo status.
+let relayState = { relayListening: false, relayPort: null, relayClient: null, relayQueue: 0 };
+
 const HEARTBEAT_MS = 1000;
 const RECONNECT_MIN_MS = 2000;
 const RECONNECT_MAX_MS = 30000;
+// Tope absoluto que un productor puede retener el plotter (backstop del
+// watchdog). Un poco mayor que el tope por-cliente del relay (~3 min).
+const LOCK_ABSOLUTE_MAX_MS = 3 * 60 * 1000 + 20000;
 
 function emit(channel, payload) {
   try {
@@ -49,33 +68,42 @@ function log(message, level = 'info') {
   emit('qrcut:log', { ts: new Date().toISOString(), level, message });
 }
 
-function status(extra) {
-  const cfg = configStore.load();
-  emit('qrcut:status', {
-    connected,
-    paused,
-    activo: cfg.activo,
-    plotterIP: cfg.plotterIP,
-    plotterPort: cfg.plotterPort,
-    cortesDir: cfg.cortesDir,
-    lastServed,
-    lastError,
-    ...(extra || {}),
-  });
+// Lo usa relay.cjs para loguear en el mismo panel (canal qrcut:log).
+function emitLog(message, level = 'info') {
+  log(message, level);
 }
 
-function getStatus() {
+function snapshot(extra) {
   const cfg = configStore.load();
   return {
     connected,
-    paused,
+    // `paused` = hay un productor con el candado (compat con el panel viejo).
+    paused: !!currentToken,
+    lockOwner: currentToken ? currentToken.owner : null,
+    plotterQueue: waiters.length,
     activo: cfg.activo,
     plotterIP: cfg.plotterIP,
     plotterPort: cfg.plotterPort,
     cortesDir: cfg.cortesDir,
     lastServed,
     lastError,
+    ...relayState,
+    ...(extra || {}),
   };
+}
+
+function status(extra) {
+  emit('qrcut:status', snapshot(extra));
+}
+
+function getStatus() {
+  return snapshot();
+}
+
+// relay.cjs empuja su estado; se publica en el mismo status del panel.
+function setRelayStatus(patch) {
+  relayState = { ...relayState, ...(patch || {}) };
+  status();
 }
 
 // Cierra socket + latido + reconexión pendiente, sin cambiar `paused`/`activo`.
@@ -103,7 +131,7 @@ function scheduleReconnect() {
 function connect() {
   const cfg = configStore.load();
   if (!cfg.activo) { status(); return; }
-  if (paused) return; // hay un envío directo en curso: no competimos por el puerto
+  if (currentToken) return; // el candado está tomado: no competimos por el puerto
 
   teardown();
   const { plotterIP, plotterPort } = cfg;
@@ -146,7 +174,7 @@ function connect() {
     sock = null;
     status();
     const cfgNow = configStore.load();
-    if (cfgNow.activo && !paused) {
+    if (cfgNow.activo && !currentToken) {
       if (wasConnected) log('Conexión con el plotter cerrada. Reintentando…', 'warn');
       scheduleReconnect();
     }
@@ -227,7 +255,7 @@ function setConfig(patch) {
   const cfg = configStore.save(patch);
   reconnectDelay = 0;
   teardown();
-  if (cfg.activo && !paused) connect();
+  if (cfg.activo && !currentToken) connect();
   else status();
   return cfg;
 }
@@ -237,25 +265,82 @@ function reconnectNow() {
   reconnectDelay = 0;
   teardown();
   const cfg = configStore.load();
-  if (cfg.activo && !paused) { connect(); return { ok: true }; }
+  if (cfg.activo && !currentToken) { connect(); return { ok: true }; }
   status();
+  if (currentToken) return { ok: false, error: 'El plotter está ocupado por un envío en curso.' };
   return { ok: false, error: 'El servidor está en pausa (activá el servidor de corte QR).' };
 }
 
-// El main va a hacer un ENVÍO DIRECTO al plotter: soltamos el socket para no
-// competir por el puerto. Se reconecta con resumeAfterDirectSend().
-function pauseForDirectSend() {
-  paused = true;
-  teardown();
-  status();
+// ---- Candado del plotter ----------------------------------------------------
+
+function clearWatchdog() {
+  if (lockWatchdog) { clearTimeout(lockWatchdog); lockWatchdog = null; }
 }
 
-function resumeAfterDirectSend() {
-  paused = false;
+function armWatchdog(token) {
+  clearWatchdog();
+  lockWatchdog = setTimeout(() => {
+    if (currentToken === token) {
+      log('El candado del plotter quedó tomado demasiado tiempo; se libera a la fuerza.', 'warn');
+      releasePlotter(token);
+    }
+  }, LOCK_ABSOLUTE_MAX_MS);
+}
+
+// Otorga el candado al próximo de la cola; si no hay nadie, reconecta el server
+// QR (dueño por defecto). Mantiene la pausa durante todo el drenado.
+function pump() {
+  if (currentToken) return;
+  const next = waiters.shift();
+  if (next) {
+    currentToken = next.token;
+    teardown();            // soltar el socket del server QR mientras dura el uso
+    armWatchdog(next.token);
+    status();
+    next.resolve(next.token);
+    return;
+  }
+  // Cola vacía y candado libre → el server QR vuelve a tomar el plotter.
+  clearWatchdog();
   reconnectDelay = 0;
   const cfg = configStore.load();
   if (cfg.activo) connect();
   else status();
+}
+
+// Pide el plotter. Resuelve con un TOKEN cuando el :8080 queda libre (encola si
+// está tomado). Hay que devolverlo con releasePlotter(token).
+function acquirePlotter(owner = 'directo') {
+  return new Promise((resolve) => {
+    waiters.push({ token: { owner, at: Date.now() }, resolve });
+    pump();
+  });
+}
+
+// Libera el candado. Solo actúa si el token es el del dueño actual (un release
+// viejo/duplicado es no-op). Pasa el turno al siguiente o reconecta el QR.
+function releasePlotter(token) {
+  if (!token || token !== currentToken) return;
+  currentToken = null;
+  clearWatchdog();
+  pump();
+}
+
+// Botón "Forzar liberar / reconectar": suelta al dueño actual (si hay) y
+// reconecta el server QR. La cola se drena sola si quedan pedidos legítimos.
+function forcePlotterRelease() {
+  if (currentToken) {
+    log('Liberación forzada del plotter.', 'warn');
+    const t = currentToken;
+    currentToken = null;
+    clearWatchdog();
+    // ignorar el release del dueño viejo si llega tarde (t !== currentToken).
+    void t;
+    pump();
+  } else {
+    reconnectNow();
+  }
+  return { ok: true };
 }
 
 module.exports = {
@@ -264,6 +349,9 @@ module.exports = {
   setConfig,
   reconnectNow,
   getStatus,
-  pauseForDirectSend,
-  resumeAfterDirectSend,
+  emitLog,
+  setRelayStatus,
+  acquirePlotter,
+  releasePlotter,
+  forcePlotterRelease,
 };

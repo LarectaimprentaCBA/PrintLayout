@@ -19,6 +19,7 @@ const rotulosConfig = require('./rotulos-config-store.cjs');
 const intakeService = require('./intake/service.cjs');
 const supabase = require('./intake/supabase.cjs');
 const qrCutServer = require('./qrcut/server.cjs');
+const qrCutRelay = require('./qrcut/relay.cjs');
 const { writePdfSilent, dobblePdfFileName, rotuloPdfFileName } = require('./intake/save-pdf.cjs');
 
 autoUpdater.autoDownload = true;
@@ -1156,11 +1157,12 @@ ipcMain.handle('plotter:send-cut', async (_evt, payload) => {
     ip: payload?.ip || qrCfg.plotterIP,
     puerto: payload?.puerto || qrCfg.plotterPort,
   };
-  // Coexistencia: soltamos la conexión persistente del Servidor QR mientras dura
-  // el envío directo (así no compiten por el :8080) y la reconectamos después.
-  let pausedQr = false;
+  // Coexistencia: tomamos el CANDADO ÚNICO del plotter (encola si el server QR o
+  // el relay lo tienen) mientras dura el envío directo, y lo liberamos al final.
+  // Así el envío directo local nunca se solapa con el relay ni con el QR.
+  let plotterToken = null;
   if (!merged.dryRun) {
-    try { qrCutServer.pauseForDirectSend(); pausedQr = true; } catch (_) { /* best-effort */ }
+    try { plotterToken = await qrCutServer.acquirePlotter('directo-local'); } catch (_) { /* best-effort */ }
   }
   try {
     const stdin = JSON.stringify(merged);
@@ -1175,8 +1177,9 @@ ipcMain.handle('plotter:send-cut', async (_evt, payload) => {
   } catch (err) {
     return { ok: false, error: err.message };
   } finally {
-    if (pausedQr) {
-      try { qrCutServer.resumeAfterDirectSend(); } catch (_) { /* best-effort */ }
+    if (plotterToken) {
+      try { qrCutServer.releasePlotter(plotterToken); } catch (_) { /* best-effort */ }
+      plotterToken = null;
     }
   }
 });
@@ -1831,7 +1834,10 @@ ipcMain.handle('qrcut:get-config', () => qrCutServer.getConfig());
 ipcMain.handle('qrcut:get-status', () => qrCutServer.getStatus());
 ipcMain.handle('qrcut:set-config', (_evt, patch) => {
   try {
-    return { ok: true, config: qrCutServer.setConfig(patch) };
+    const config = qrCutServer.setConfig(patch);
+    // Reaplicar la config del portero/relay (activar/desactivar, puerto, allowlist).
+    try { qrCutRelay.applyConfig(config); } catch (_) { /* best-effort */ }
+    return { ok: true, config };
   } catch (err) {
     return { ok: false, error: err.message };
   }
@@ -1839,6 +1845,16 @@ ipcMain.handle('qrcut:set-config', (_evt, patch) => {
 ipcMain.handle('qrcut:reconnect', () => {
   try {
     return qrCutServer.reconnectNow();
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+// Botón "Forzar liberar / reconectar": cierra el cliente del relay que esté
+// piping y vacía el candado, y reconecta el server QR.
+ipcMain.handle('qrcut:force-release', () => {
+  try { qrCutRelay.dropActiveClients(); } catch (_) { /* best-effort */ }
+  try {
+    return qrCutServer.forcePlotterRelease();
   } catch (err) {
     return { ok: false, error: err.message };
   }
@@ -1866,6 +1882,7 @@ app.whenReady().then(() => {
   setupAutoUpdate(mainWindow);
   intakeService.start(mainWindow);
   qrCutServer.start(mainWindow);
+  qrCutRelay.start();   // portero: escucha en 0.0.0.0:relayPort si relayActivo
 
   app.on('activate', () => {
     // macOS (dock): si no hay ventana, la creamos; si está oculta, la mostramos.
