@@ -354,7 +354,9 @@ async function processRotuloOrder(cfg, order) {
     modelo_id: order.modelo_id || null,
     nombre: order.nombre || '',
     tipografia_id: order.tipografia_id || null,
-    color: order.color || null,
+    // color se transporta tal cual; el default ('#000000') lo pone el renderer
+    // al armar la spec (App.jsx), para no tener dos defaults del mismo campo.
+    color: order.color ?? null,
     overrides: order.overrides ?? null,
   });
   log(`Pedido de rótulos ${order.numero_presupuesto || id}: enviado a armar.`);
@@ -389,7 +391,7 @@ async function tickRotulos(manual = false) {
         log(`Error preparando el pedido de rótulos ${order.numero_presupuesto || id}: ${err.message}`, 'error');
       }
     }
-    if (orders.length > 0) log(`${orders.length} pedido(s) de rótulos pendiente(s).`);
+    if (found > 0) log(`${found} pedido(s) de rótulos a procesar.`);
     return { ok: true, found, pending: orders.length };
   } catch (err) {
     log(`Error consultando pedidos de rótulos: ${err.message}`, 'error');
