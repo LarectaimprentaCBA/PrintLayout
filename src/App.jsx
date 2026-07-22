@@ -36,7 +36,7 @@ import NewTabModal from './components/NewTabModal.jsx';
 import TemplatesManagerModal from './components/TemplatesManagerModal.jsx';
 import RotulosManagerModal from './components/RotulosManagerModal.jsx';
 import RotulosPlanchaModal from './components/RotulosPlanchaModal.jsx';
-import { buildRotulosSheet, buildRotulosPdfBytes } from './rotulos/planchaJob.js';
+import { buildRotulosSheet, buildRotulosPdfBytes, buildRotulosTemplate } from './rotulos/planchaJob.js';
 import PaperPresetsModal from './components/PaperPresetsModal.jsx';
 import { useTemplates } from './hooks/useTemplates.js';
 import { usePaperPresets } from './hooks/usePaperPresets.js';
@@ -2083,6 +2083,22 @@ export default function App() {
       if (!spec.modeloId) throw new Error('El pedido no trae modelo_id.');
       if (!spec.fontId) throw new Error('El pedido no trae tipografia_id.');
 
+      // Asegurar el corte base .plt de la plancha (idempotente), igual que el
+      // flujo manual (handleRotulosSubmit): así cada pedido que entra deja el
+      // .plt garantizado en la carpeta Cortes QR, sin depender de haber armado
+      // esa plancha a mano. best-effort: no bloquea generar el PDF.
+      try {
+        const tpl = buildRotulosTemplate(spec.planchaId, spec);
+        await window.printlayout.qrcut.ensureBaseCut({
+          planchaId: tpl.cutId,
+          cortes: tpl.cortes,
+          pageWidthMm: tpl.pageWidthMm,
+          pageHeightMm: tpl.pageHeightMm,
+          markMarginMm: tpl.markMarginMm,
+          bladeOffsetMm,
+        });
+      } catch { /* best-effort: el .plt no bloquea generar el PDF */ }
+
       // Genera con el motor probado. Si el modelo/fuente no están en el catálogo
       // local, buildRotulosPdfBytes lanza → cae al catch → NO se marca procesado
       // (se reintenta cuando el modelo se publique/copie a esta PC). El QR queda
@@ -2110,7 +2126,7 @@ export default function App() {
       } catch (_) { /* ignore */ }
       setToast({ kind: 'error', text: `Error procesando el pedido de rótulos ${label}: ${err.message}` });
     }
-  }, []);
+  }, [bladeOffsetMm]);
 
   useEffect(() => {
     const api = window.printlayout?.intake;
