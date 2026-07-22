@@ -540,6 +540,13 @@ export default function ImageCropModal({ open, image, onApply, onApplyAll, sheet
     return poly.map((p) => `${p.x},${p.y}`).join(' ');
   }, [poly]);
 
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') onClose?.(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
   if (!open || !image) return null;
 
   // Estilo del rect overlay (con mascara "hueco" via clipPath/fill-rule).

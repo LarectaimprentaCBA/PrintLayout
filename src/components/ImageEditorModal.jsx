@@ -245,6 +245,13 @@ export default function ImageEditorModal({
     return () => debounceRef.current && clearTimeout(debounceRef.current);
   }, [open, image, aw, ah, tw, th, method, stripPx, color, shrinkPercent, shrinkFillMode, centerRectMm, cropPercent, radialStyle, edgeGrowStyle, imageOffsetMm]);
 
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') onClose?.(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
   if (!open || !image) return null;
 
   const apply = async () => {
