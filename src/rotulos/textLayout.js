@@ -85,3 +85,13 @@ export function effectivePad(basePadMm, outlineMm, zone) {
   const cap = 0.18 * Math.min(zone.w, zone.h);
   return Math.min(want, cap);
 }
+
+// Aire base del recuadro por tamaño. `boxPadMm` puede ser un objeto
+// {grande,intermedio,chico} (nuevo) o un número (specs viejas / global). Default 0.8.
+export const DEFAULT_BOX_PAD_MM = 0.8;
+export function padForSize(boxPadMm, size) {
+  if (boxPadMm && typeof boxPadMm === 'object') {
+    return Number.isFinite(boxPadMm[size]) ? boxPadMm[size] : DEFAULT_BOX_PAD_MM;
+  }
+  return Number.isFinite(boxPadMm) ? boxPadMm : DEFAULT_BOX_PAD_MM;
+}

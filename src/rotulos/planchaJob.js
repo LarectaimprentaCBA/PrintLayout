@@ -14,7 +14,7 @@
 
 import { planchaCeldas, MARK_MARGIN_MM } from './planchas.js';
 import { cellsToRoundedRectCuts } from '../lib/grid.js';
-import { resolveSizeLayout, zoneAsBox, effectivePad } from './textLayout.js';
+import { resolveSizeLayout, zoneAsBox, effectivePad, padForSize } from './textLayout.js';
 import { makeCanvasMeasure, drawRotuloOverlay } from './drawOverlay.js';
 import { cropImageDataUrl } from '../lib/imageCrop.js';
 import { buildRotulosPlanchaPdf, centerCoverRect } from './exportRotulos.js';
@@ -121,7 +121,7 @@ export async function loadRotulosInputs(spec) {
 // Resuelve líneas + tamaño de fuente para un tamaño (igual que el preview 2C).
 function layoutFor(spec, size, textBox, drawBox, measurePt) {
   const outlineMm = (spec.outline?.enabled && spec.outline.widthMm > 0) ? spec.outline.widthMm : 0;
-  const pad = effectivePad(drawBox ? (spec.boxPadMm ?? 0.8) : 0, outlineMm, textBox);
+  const pad = effectivePad(drawBox ? padForSize(spec.boxPadMm, size) : 0, outlineMm, textBox);
   return resolveSizeLayout({
     text: spec.text,
     mode: spec.lineModes?.[size] || 'auto',

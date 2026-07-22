@@ -7,7 +7,7 @@
 import { PDFDocument } from 'pdf-lib';
 import { cropImageDataUrl } from '../lib/imageCrop.js';
 import { MM_TO_PT } from './vendor/fitText.js';
-import { resolveSizeLayout, zoneAsBox, effectivePad } from './textLayout.js';
+import { resolveSizeLayout, zoneAsBox, effectivePad, padForSize } from './textLayout.js';
 import { makeCanvasMeasure, renderOverlayPng } from './drawOverlay.js';
 import { planchaCeldas, MARK_MARGIN_MM } from './planchas.js';
 import { drawCornerMarks, drawQr } from '../lib/exportPdf.js';
@@ -48,7 +48,7 @@ export async function buildRotulosPlanchaPdf({
   text,
   lineModes = {},
   outline = null,
-  boxPadMm = 0.8,
+  boxPadMm = 0.8, // número (global) u objeto {grande,intermedio,chico}
   planchaId = 'plancha1',
   lineHeightFactor = 1.15,
   minPt = 3,
@@ -90,7 +90,7 @@ export async function buildRotulosPlanchaPdf({
       const outlineMm = (outline && outline.enabled && outline.widthMm > 0) ? outline.widthMm : 0;
       // El recuadro = la zona dibujada; el nombre se ajusta adentro con el aire
       // (acotado en zonas chicas) + el grosor del contorno.
-      const pad = effectivePad(drawBox ? boxPadMm : 0, outlineMm, s.textBox);
+      const pad = effectivePad(drawBox ? padForSize(boxPadMm, key) : 0, outlineMm, s.textBox);
       const layout = resolveSizeLayout({
         text, mode: lineModes[key] || 'auto',
         boxWmm: Math.max(1, s.textBox.w - 2 * pad), boxHmm: Math.max(1, s.textBox.h - 2 * pad),

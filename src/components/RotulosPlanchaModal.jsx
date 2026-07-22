@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { resolveSizeLayout, zoneAsBox, effectivePad } from '../rotulos/textLayout.js';
+import { resolveSizeLayout, zoneAsBox, effectivePad, DEFAULT_BOX_PAD_MM, padForSize } from '../rotulos/textLayout.js';
 import { makeCanvasMeasure, drawRotuloOverlay } from '../rotulos/drawOverlay.js';
 import { PLANCHA_LIST, planchaCeldas } from '../rotulos/planchas.js';
 import { RESIZE_HANDLES, RESIZE_EDGES, moveBox, resizeBox, fullLabelBox, clampCenterRotated, sanitizeBox } from '../rotulos/boxEditing.js';
@@ -10,6 +10,14 @@ import { RESIZE_HANDLES, RESIZE_EDGES, moveBox, resizeBox, fullLabelBox, clampCe
 
 const SIZE_KEYS = ['grande', 'intermedio', 'chico'];
 const SIZE_LABEL = { grande: 'Grande', intermedio: 'Intermedio', chico: 'Chico' };
+const DEFAULT_PADS = { grande: DEFAULT_BOX_PAD_MM, intermedio: DEFAULT_BOX_PAD_MM, chico: DEFAULT_BOX_PAD_MM };
+
+// Normaliza el aire a objeto por tamaño (specs viejas lo traían como número).
+function normalizePads(v) {
+  if (v && typeof v === 'object') return { ...DEFAULT_PADS, ...v };
+  const n = Number.isFinite(v) ? v : DEFAULT_BOX_PAD_MM;
+  return { grande: n, intermedio: n, chico: n };
+}
 const LINE_HEIGHT = 1.15;
 const MIN_PT = 3;
 const MAX_PT = 120;
@@ -65,7 +73,7 @@ function NumMm({ label, value, onChange }) {
   );
 }
 
-function PlanchaSizePreview({ sizeKey, cutMm, textBox, arteDataUrl, family, textColor, boxColor, drawBox, padMm, text, mode, onModeChange, outline, onBoxChange, onResetBox, isOverridden }) {
+function PlanchaSizePreview({ sizeKey, cutMm, textBox, arteDataUrl, family, textColor, boxColor, drawBox, padMm, onPadChange, text, mode, onModeChange, outline, onBoxChange, onResetBox, isOverridden }) {
   const DISP_W = 280;
   const cutW = cutMm?.w || 40;
   const cutH = cutMm?.h || 20;
@@ -161,6 +169,15 @@ function PlanchaSizePreview({ sizeKey, cutMm, textBox, arteDataUrl, family, text
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="text-xs font-semibold text-ink-100">{SIZE_LABEL[sizeKey]} <span className="text-ink-500">· {cutW} × {cutH} mm</span>{isOverridden && <span className="ml-1 text-amber-300">· ajustado</span>}</span>
         <div className="flex items-center gap-1.5">
+          {drawBox && onPadChange && (
+            <label className="flex items-center gap-1 text-[10px] text-ink-400" title="Espacio entre el texto y el recuadro (solo este tamaño)">
+              <span>Aire</span>
+              <input type="number" min="0" step="0.1" value={Number.isFinite(padMm) ? padMm : ''}
+                onChange={(e) => onPadChange(parseFloat(e.target.value) || 0)}
+                className="w-12 rounded border border-ink-700 bg-ink-800 px-1 py-0.5 text-center text-[10px] text-ink-100 outline-none focus:border-accent-500" />
+              <span className="text-ink-500">mm</span>
+            </label>
+          )}
           {drawBox && onBoxChange && (
             <button type="button" onClick={() => setEditing((v) => !v)}
               className={`rounded border px-2 py-0.5 text-[10px] ${editing ? 'border-accent-500 bg-accent-600 text-white' : 'border-ink-700 text-ink-300 hover:bg-ink-800'}`}
@@ -237,7 +254,7 @@ export default function RotulosPlanchaModal({ open, init = null, onSubmit, onClo
   const [textColor, setTextColor] = useState('#000000');
   const [boxColor, setBoxColor] = useState('#ffffff');
   const [noBox, setNoBox] = useState(false);
-  const [boxPadMm, setBoxPadMm] = useState(0.8);
+  const [boxPadMm, setBoxPadMm] = useState(DEFAULT_PADS);
   const [outline, setOutline] = useState({ enabled: false, color: '#e11d2a', widthMm: 0.3, join: 'round' });
   const [palette, setPalette] = useState(DEFAULT_PALETTE);
   const [text, setText] = useState('');
@@ -296,7 +313,7 @@ export default function RotulosPlanchaModal({ open, init = null, onSubmit, onClo
       if (init.color) setTextColor(init.color);
       if (init.boxColor) setBoxColor(init.boxColor);
       setNoBox(!!init.noBox);
-      if (init.boxPadMm != null) setBoxPadMm(init.boxPadMm);
+      setBoxPadMm(init.boxPadMm != null ? normalizePads(init.boxPadMm) : DEFAULT_PADS);
       if (init.outline) setOutline(init.outline);
       setText(init.text || '');
       if (init.lineModes) setLineModes(init.lineModes);
@@ -463,13 +480,7 @@ export default function RotulosPlanchaModal({ open, init = null, onSubmit, onClo
             <ColorControl label="Color del recuadro" value={boxColor} onChange={setBoxColor} palette={palette} onAdd={() => addToPalette(boxColor)}
               disabled={!drawBox}
               hint={selectedModel?.arteIncluyeRecuadro ? 'Este modelo ya trae el recuadro en el arte.' : (noBox ? 'Sin recuadro activado.' : null)} />
-            <div className={`flex items-center gap-2 text-xs text-ink-300 ${!drawBox ? 'opacity-50' : ''}`}>
-              <span className="w-28">Aire del recuadro</span>
-              <input type="number" min="0" step="0.1" value={boxPadMm} disabled={!drawBox}
-                onChange={(e) => setBoxPadMm(parseFloat(e.target.value) || 0)}
-                className="w-20 rounded border border-ink-700 bg-ink-800 px-2 py-1 text-sm text-ink-100 disabled:opacity-50" />
-              <span>mm (espacio entre el texto y el recuadro)</span>
-            </div>
+            {drawBox && <p className="text-[10px] text-ink-500">El “Aire” (espacio entre el texto y el recuadro) se ajusta por tamaño en cada tarjeta del preview.</p>}
 
             {/* Contorno del texto */}
             <div className="rounded border border-ink-800 bg-ink-950/40 p-2">
@@ -527,7 +538,9 @@ export default function RotulosPlanchaModal({ open, init = null, onSubmit, onClo
                   return (
                     <PlanchaSizePreview key={key} sizeKey={key} cutMm={s.cutMm} textBox={effTextBox(key)}
                       arteDataUrl={arteBySize[key]} family={family} textColor={textColor} boxColor={boxColor}
-                      drawBox={drawBox} padMm={boxPadMm} text={debouncedText} mode={lineModes[key]} outline={outline}
+                      drawBox={drawBox} padMm={padForSize(boxPadMm, key)}
+                      onPadChange={(v) => setBoxPadMm((prev) => ({ ...normalizePads(prev), [key]: v }))}
+                      text={debouncedText} mode={lineModes[key]} outline={outline}
                       onModeChange={(m) => setLineModes((prev) => ({ ...prev, [key]: m }))}
                       onBoxChange={(b) => setOverride(key, b)} onResetBox={() => resetOverride(key)}
                       isOverridden={!!boxOverrides[key]} />
