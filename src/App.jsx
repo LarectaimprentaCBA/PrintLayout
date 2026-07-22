@@ -2042,6 +2042,82 @@ export default function App() {
     return api.onDobbleOrderReady((order) => { handleDobbleIntakeOrder(order); });
   }, [handleDobbleIntakeOrder]);
 
+  // Entrada automática de RÓTULOS (sin clic). La receta viene INLINE en la fila
+  // (no baja nada del bucket): el arte y la fuente ya están en el catálogo
+  // local/compartido de esta PC. Mapeamos la receta web → la spec del escritorio
+  // y generamos el PDF con el MISMO motor probado (buildRotulosPdfBytes: raster
+  // 600dpi, marcas L, QR, corte fijo) → guardamos en la carpeta sin diálogo → al
+  // confirmar, el main marca procesado.
+  const handleRotuloIntakeOrder = useCallback(async (order) => {
+    const id = order?.id;
+    const label = `PR-${order?.numero_presupuesto || id}`;
+    try {
+      setToast({ kind: 'info', text: `Procesando pedido de rótulos ${label}…` });
+      const cfg = await window.printlayout.intake.getConfig().catch(() => null);
+      const outDir = (cfg?.rotulosOutputDir || '').replace(/[\\/]+$/, '');
+      if (!outDir) throw new Error('No hay carpeta de salida de rótulos configurada (elegila en Pedidos).');
+
+      // overrides puede venir como objeto jsonb o como string JSON.
+      let ov = order?.overrides ?? {};
+      if (typeof ov === 'string') { try { ov = JSON.parse(ov); } catch { ov = {}; } }
+      if (!ov || typeof ov !== 'object') ov = {};
+
+      // Receta web → spec del escritorio (la MISMA que arma RotulosPlanchaModal y
+      // que consume buildRotulosPdfBytes). Claves: planchaId/modeloId/fontId/text/
+      // color + (de overrides) noBox/boxColor/boxPadMm/outline/lineModes/boxOverrides.
+      const spec = {
+        planchaId: order.plancha_id,
+        modeloId: order.modelo_id,
+        fontId: order.tipografia_id,
+        text: order.nombre || '',
+        color: order.color || '#000000',
+        noBox: !!ov.noBox,
+        boxColor: ov.boxColor || '#ffffff',
+        // objeto {grande,intermedio,chico} o número; padForSize maneja ambos + default 0.8.
+        boxPadMm: ov.boxPadMm ?? undefined,
+        outline: ov.outline || null,
+        lineModes: ov.lineModes || {},
+        boxOverrides: ov.boxOverrides || {},
+      };
+      if (!spec.planchaId) throw new Error('El pedido no trae plancha_id.');
+      if (!spec.modeloId) throw new Error('El pedido no trae modelo_id.');
+      if (!spec.fontId) throw new Error('El pedido no trae tipografia_id.');
+
+      // Genera con el motor probado. Si el modelo/fuente no están en el catálogo
+      // local, buildRotulosPdfBytes lanza → cae al catch → NO se marca procesado
+      // (se reintenta cuando el modelo se publique/copie a esta PC). El QR queda
+      // en automático (config del server QR + qrId de la plancha), igual que a mano.
+      const bytes = await buildRotulosPdfBytes(spec);
+
+      const saved = await window.printlayout.intake.saveRotuloPdf(
+        outDir, order.numero_presupuesto, order.nombre, bytes,
+      );
+      if (!saved?.ok) throw new Error(saved?.error || 'No se pudo guardar el PDF.');
+      const fileName = saved.fileName || 'PDF';
+
+      await window.printlayout.intake.rotuloOrderBuilt({ id, ok: true });
+      try {
+        // eslint-disable-next-line no-new
+        new Notification('Pedido de rótulos procesado', {
+          body: `${label}: PDF guardado en la carpeta (${fileName}).`,
+        });
+      } catch (_) { /* sin permiso de notificaciones */ }
+      setToast({ kind: 'success', text: `${label}: PDF de rótulos guardado (${fileName}).` });
+    } catch (err) {
+      console.error('[intake-rotulos] armado falló:', err);
+      try {
+        await window.printlayout.intake.rotuloOrderBuilt({ id, ok: false, error: err.message });
+      } catch (_) { /* ignore */ }
+      setToast({ kind: 'error', text: `Error procesando el pedido de rótulos ${label}: ${err.message}` });
+    }
+  }, []);
+
+  useEffect(() => {
+    const api = window.printlayout?.intake;
+    if (!api?.onRotuloOrderReady) return undefined;
+    return api.onRotuloOrderReady((order) => { handleRotuloIntakeOrder(order); });
+  }, [handleRotuloIntakeOrder]);
+
   // Estado del modo La Recta + atajo OCULTO para la configuración inicial (en
   // las demás PCs el botón "Pedidos" no se muestra). Ctrl+Shift+L abre el panel.
   useEffect(() => {

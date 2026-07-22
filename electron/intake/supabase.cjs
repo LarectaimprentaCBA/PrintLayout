@@ -173,6 +173,48 @@ async function removeDobbleObjects(cfg, paths) {
   return true;
 }
 
+// ---- Rótulos: tabla `pedido_rotulo` (receta INLINE, sin bucket) ----
+// El cliente no sube archivos: la receta viene en la propia fila. El arte y la
+// fuente ya están en el catálogo local/compartido de esta PC. Sólo listamos los
+// pendientes y marcamos procesado — no hay descarga ni borrado de Storage.
+
+// Pedidos de rótulos pendientes: no procesados Y con número de presupuesto
+// asignado (esperamos al CRM, igual que fotos/dobble). Orden por presupuesto.
+async function listPendingRotulos(cfg, { limit } = {}) {
+  assertCfg(cfg);
+  const q = new URLSearchParams();
+  q.set('procesado_printlayout', 'is.false');
+  q.set('numero_presupuesto', 'not.is.null');
+  q.set('order', 'numero_presupuesto.asc');
+  q.set('select', '*');
+  if (limit) q.set('limit', String(limit));
+  const url = `${cfg.supabaseUrl}/rest/v1/pedido_rotulo?${q.toString()}`;
+  const res = await net.fetch(url, {
+    method: 'GET',
+    headers: { ...authHeaders(cfg), Accept: 'application/json' },
+  });
+  if (!res.ok) throw await readErr(res, 'REST list rotulo');
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
+}
+
+// Marca el pedido de rótulos como procesado. Idempotente.
+async function markProcessedRotulos(cfg, id) {
+  assertCfg(cfg);
+  const url = `${cfg.supabaseUrl}/rest/v1/pedido_rotulo?id=eq.${encodeURIComponent(id)}`;
+  const res = await net.fetch(url, {
+    method: 'PATCH',
+    headers: {
+      ...authHeaders(cfg),
+      'Content-Type': 'application/json',
+      Prefer: 'return=minimal',
+    },
+    body: JSON.stringify({ procesado_printlayout: true }),
+  });
+  if (!res.ok) throw await readErr(res, 'REST patch rotulo');
+  return true;
+}
+
 // Upsert del catálogo de planchas (PrintLayout es la fuente de verdad). La tabla
 // `planchas_catalogo` tiene `id` como PK; merge-duplicates = insertar o pisar.
 // Cada row la arma `catalogRowForTemplate` (renderer) y va tal cual: además del
@@ -295,4 +337,7 @@ module.exports = {
   downloadDobbleObject,
   markProcessedDobble,
   removeDobbleObjects,
+  // Rótulos (pedidos con receta inline)
+  listPendingRotulos,
+  markProcessedRotulos,
 };

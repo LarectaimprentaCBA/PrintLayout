@@ -131,6 +131,11 @@ contextBridge.exposeInMainWorld('printlayout', {
     readFile: (localPath) => ipcRenderer.invoke('intake:read-file', localPath),
     orderBuilt: (payload) => ipcRenderer.invoke('intake:order-built', payload),
     dobbleOrderBuilt: (payload) => ipcRenderer.invoke('intake:dobble-order-built', payload),
+    rotuloOrderBuilt: (payload) => ipcRenderer.invoke('intake:rotulo-order-built', payload),
+    // Guarda silencioso el PDF de un pedido de rótulos. El main arma el nombre
+    // "PR-<presupuesto> - <nombre>.pdf".
+    saveRotuloPdf: (dir, numeroPresupuesto, nombre, bytes) =>
+      ipcRenderer.invoke('intake:save-rotulo-pdf', { dir, numeroPresupuesto, nombre, bytes }),
     // Guarda silencioso el PDF listo-para-imprimir de un pedido de fotos.
     savePhotoPdf: (filePath, bytes) =>
       ipcRenderer.invoke('intake:save-photo-pdf', { filePath, bytes }),
@@ -146,6 +151,11 @@ contextBridge.exposeInMainWorld('printlayout', {
       const handler = (_evt, payload) => cb(payload);
       ipcRenderer.on('intake:dobble-order-ready', handler);
       return () => ipcRenderer.removeListener('intake:dobble-order-ready', handler);
+    },
+    onRotuloOrderReady: (cb) => {
+      const handler = (_evt, payload) => cb(payload);
+      ipcRenderer.on('intake:rotulo-order-ready', handler);
+      return () => ipcRenderer.removeListener('intake:rotulo-order-ready', handler);
     },
     onStatus: (cb) => {
       const handler = (_evt, payload) => cb(payload);

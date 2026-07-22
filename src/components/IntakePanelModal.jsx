@@ -9,6 +9,7 @@ const EMPTY = {
   supabaseUrl: '', serviceKey: '', pollSeconds: 60, outputDir: '', activo: false, modoEntrega: 'carpeta',
   dobbleActive: false, dobbleComboTemplateId: '', dobbleOutputDir: '', dobbleMazoPdfMap: {},
   dobbleBackMirror: 'x', dobbleBackRotate180: false,
+  rotulosActive: false, rotulosOutputDir: '',
 };
 
 export default function IntakePanelModal({ open, onClose, onPublishCatalog }) {
@@ -111,6 +112,11 @@ export default function IntakePanelModal({ open, onClose, onPublishCatalog }) {
   const chooseDobbleDir = async () => {
     const r = await api.chooseDir?.();
     if (r?.ok && r.path) patch({ dobbleOutputDir: r.path });
+  };
+
+  const chooseRotulosDir = async () => {
+    const r = await api.chooseDir?.();
+    if (r?.ok && r.path) patch({ rotulosOutputDir: r.path });
   };
 
   const testConnection = async () => {
@@ -401,6 +407,46 @@ export default function IntakePanelModal({ open, onClose, onPublishCatalog }) {
                     + Agregar mazo
                   </button>
                 </div>
+              </div>
+
+              {/* Pedidos de rótulos (exportador automático, receta inline) */}
+              <div className="mt-3 rounded border border-accent-500/30 bg-accent-500/5 px-3 py-2 text-xs text-ink-300">
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={!!cfg.rotulosActive}
+                    onChange={(e) => patch({ rotulosActive: e.target.checked })}
+                    className="h-4 w-4 accent-accent-500"
+                  />
+                  <span>
+                    <span className="font-medium text-ink-100">Procesar pedidos de rótulos</span>
+                    <span className="block text-[11px] text-ink-400">
+                      Toma la receta del pedido (modelo, nombre, tipografía, colores) y genera el PDF de la plancha con el modelo y la fuente ya cargados en esta PC. Lo deja en la carpeta y marca procesado, sin intervención.
+                    </span>
+                  </span>
+                </label>
+
+                <label className="mt-3 block">
+                  <span className="mb-1 block text-ink-300">Carpeta de salida de los PDF de rótulos</span>
+                  <div className="flex gap-2">
+                    <input
+                      value={cfg.rotulosOutputDir || ''}
+                      onChange={(e) => patch({ rotulosOutputDir: e.target.value })}
+                      placeholder="Ej: D:\Pedidos rótulos"
+                      className="w-full rounded border border-ink-700 bg-ink-800 px-3 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={chooseRotulosDir}
+                      className="shrink-0 rounded border border-ink-700 bg-ink-800 px-3 py-1.5 text-xs text-ink-100 hover:bg-ink-700"
+                    >
+                      Elegir…
+                    </button>
+                  </div>
+                  <span className="mt-1 block text-[10px] text-ink-500">
+                    El PDF se guarda como <b>PR-&lt;presupuesto&gt; - &lt;nombre&gt;.pdf</b>, sin abrir ni preguntar nada. El modelo y la tipografía tienen que estar cargados/publicados en esta PC.
+                  </span>
+                </label>
               </div>
 
               <div className="mt-3 flex items-center gap-4">

@@ -19,7 +19,7 @@ const rotulosConfig = require('./rotulos-config-store.cjs');
 const intakeService = require('./intake/service.cjs');
 const supabase = require('./intake/supabase.cjs');
 const qrCutServer = require('./qrcut/server.cjs');
-const { writePdfSilent, dobblePdfFileName } = require('./intake/save-pdf.cjs');
+const { writePdfSilent, dobblePdfFileName, rotuloPdfFileName } = require('./intake/save-pdf.cjs');
 
 autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
@@ -1770,6 +1770,20 @@ ipcMain.handle('intake:poll-now', () => intakeService.pollNow());
 ipcMain.handle('intake:read-file', (_evt, localPath) => intakeService.readFile(localPath));
 ipcMain.handle('intake:order-built', (_evt, payload) => intakeService.orderBuilt(payload));
 ipcMain.handle('intake:dobble-order-built', (_evt, payload) => intakeService.dobbleOrderBuilt(payload));
+ipcMain.handle('intake:rotulo-order-built', (_evt, payload) => intakeService.rotuloOrderBuilt(payload));
+// Guardado SILENCIOSO del PDF de un pedido de rótulos (sin diálogo): lo deja
+// directo en la carpeta configurada, nombrado "PR-<presupuesto> - <nombre>.pdf".
+ipcMain.handle('intake:save-rotulo-pdf', (_evt, { dir, numeroPresupuesto, nombre, bytes }) => {
+  try {
+    if (!dir) return { ok: false, error: 'Falta la carpeta de salida.' };
+    const fileName = rotuloPdfFileName(numeroPresupuesto, nombre);
+    const filePath = path.join(dir, fileName);
+    writePdfSilent(filePath, bytes);
+    return { ok: true, path: filePath, fileName };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
 // Elegir el PDF ya armado de un mazo de catálogo (mapa mazo_id → PDF).
 ipcMain.handle('dobble:choose-pdf', async () => {
   try {

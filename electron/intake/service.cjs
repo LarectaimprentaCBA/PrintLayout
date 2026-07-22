@@ -22,12 +22,16 @@ let win = null;
 let timer = null;
 let busy = false;
 let busyDobble = false;
+let busyRotulos = false;
 // id → { sentAt, paths: [objectPath], tmpDir }. Evita reenviar un pedido que ya
 // mandamos al renderer y todavía no confirmó. Se auto-expira (STALE_MS) por si
 // el evento se perdió (p.ej. ventana recargada) para que se reintente.
 const inFlight = new Map();
 // Igual que inFlight pero para pedidos Dobble (tabla pedido_dobble).
 const inFlightDobble = new Map();
+// Igual que inFlight pero para pedidos de Rótulos (tabla pedido_rotulo). No hay
+// paths de bucket (receta inline): solo { sentAt, numero }.
+const inFlightRotulos = new Map();
 
 const INITIAL_DELAY_MS = 4000; // dar tiempo a que el renderer monte y suscriba
 const STALE_MS = 5 * 60 * 1000;
@@ -333,16 +337,80 @@ async function tickDobble(manual = false) {
   }
 }
 
-// Un ciclo completo: fotos + Dobble (cada uno gateado por su propio flag). Es lo
-// que dispara el timer y el botón "Buscar ahora".
+// ---- Pedidos de Rótulos (exportador automático, receta INLINE) ----
+// MÁS SIMPLE que Dobble: el cliente no sube archivos → no hay que bajar nada del
+// bucket. La receta viaja en la propia fila; el arte y la fuente ya están en el
+// catálogo local/compartido (publicados desde esta PC). Emitimos
+// `intake:rotulo-order-ready` con la fila; el renderer mapea a la spec, genera
+// el PDF con el MOTOR PROBADO (buildRotulosPdfBytes), lo guarda en la carpeta y
+// confirma con `intake:rotulo-order-built` → recién ahí marcamos procesado.
+async function processRotuloOrder(cfg, order) {
+  const id = String(order.id);
+  inFlightRotulos.set(id, { sentAt: Date.now(), numero: order.numero_presupuesto || null });
+  emit('intake:rotulo-order-ready', {
+    id: order.id,
+    numero_presupuesto: order.numero_presupuesto || null,
+    plancha_id: order.plancha_id || null,
+    modelo_id: order.modelo_id || null,
+    nombre: order.nombre || '',
+    tipografia_id: order.tipografia_id || null,
+    color: order.color || null,
+    overrides: order.overrides ?? null,
+  });
+  log(`Pedido de rótulos ${order.numero_presupuesto || id}: enviado a armar.`);
+}
+
+// Un ciclo de poll de pedidos de Rótulos. Molde de tickDobble pero SIN descarga
+// de bucket; gateado por `rotulosActive` (toggle propio). `manual` ignora el
+// flag activo.
+async function tickRotulos(manual = false) {
+  if (busyRotulos) return { ok: false, error: 'Ya hay un ciclo de rótulos en curso.' };
+  const cfg = getConfig();
+  if (!configStore.isLaRecta(cfg)) return { ok: false, error: 'Esta PC no está en modo La Recta.' };
+  if (!manual && !cfg.activo) return { ok: false, error: 'Servicio en pausa.' };
+  if (!cfg.rotulosActive) return { ok: false, skipped: true };
+  if (!cfg.supabaseUrl || !cfg.serviceKey) return { ok: false, error: 'Falta URL o service key.' };
+
+  busyRotulos = true;
+  let found = 0;
+  try {
+    const orders = await supabase.listPendingRotulos(cfg);
+    const now = Date.now();
+    for (const order of orders) {
+      const id = String(order.id);
+      if (shouldSkip(id, now)) continue; // en error o esperando backoff
+      const entry = inFlightRotulos.get(id);
+      if (entry && now - entry.sentAt < STALE_MS) continue; // ya en vuelo
+      found += 1;
+      try {
+        await processRotuloOrder(cfg, order);
+      } catch (err) {
+        recordFailure(id, order.numero_presupuesto, err.message);
+        log(`Error preparando el pedido de rótulos ${order.numero_presupuesto || id}: ${err.message}`, 'error');
+      }
+    }
+    if (orders.length > 0) log(`${orders.length} pedido(s) de rótulos pendiente(s).`);
+    return { ok: true, found, pending: orders.length };
+  } catch (err) {
+    log(`Error consultando pedidos de rótulos: ${err.message}`, 'error');
+    return { ok: false, error: err.message };
+  } finally {
+    busyRotulos = false;
+  }
+}
+
+// Un ciclo completo: fotos + Dobble + Rótulos (cada uno gateado por su propio
+// flag). Es lo que dispara el timer y el botón "Buscar ahora".
 async function pollBoth(manual = false) {
   const photos = await tick(manual).catch((e) => ({ ok: false, error: e.message }));
   const dobble = await tickDobble(manual).catch((e) => ({ ok: false, error: e.message }));
+  const rotulos = await tickRotulos(manual).catch((e) => ({ ok: false, error: e.message }));
   return {
-    ok: photos.ok || dobble.ok,
-    found: (photos.found || 0) + (dobble.found || 0),
+    ok: photos.ok || dobble.ok || rotulos.ok,
+    found: (photos.found || 0) + (dobble.found || 0) + (rotulos.found || 0),
     photos,
     dobble,
+    rotulos,
   };
 }
 
@@ -536,6 +604,34 @@ async function dobbleOrderBuilt(payload) {
   return { ok: true };
 }
 
+// El renderer confirma el resultado del armado del pedido de Rótulos:
+//   { id, ok: true }  → marcar procesado (no hay bucket ni temp que limpiar).
+//   { id, ok: false } → no marcar (se reintenta con backoff), liberar in-flight.
+async function rotuloOrderBuilt(payload) {
+  const id = payload && payload.id != null ? String(payload.id) : null;
+  if (!id) return { ok: false, error: 'Falta id.' };
+  const entry = inFlightRotulos.get(id);
+
+  if (payload.ok === false) {
+    inFlightRotulos.delete(id);
+    recordFailure(id, entry?.numero, payload.error || 'sin detalle');
+    log(`El armado del pedido de rótulos ${id} falló: ${payload.error || 'sin detalle'}.`, 'error');
+    return { ok: true };
+  }
+
+  const cfg = getConfig();
+  try {
+    await supabase.markProcessedRotulos(cfg, id);
+  } catch (err) {
+    log(`No se pudo marcar procesado el pedido de rótulos ${id}: ${err.message}`, 'error');
+    return { ok: false, error: err.message };
+  }
+  inFlightRotulos.delete(id);
+  recordSuccess(id);
+  log(`Pedido de rótulos ${id} procesado.`);
+  return { ok: true };
+}
+
 // Publica/quita el catálogo de planchas oficiales (solo modo La Recta).
 async function publishCatalog(rows) {
   const cfg = getConfig();
@@ -574,6 +670,7 @@ module.exports = {
   readFile,
   orderBuilt,
   dobbleOrderBuilt,
+  rotuloOrderBuilt,
   publishCatalog,
   publishConfig,
 };

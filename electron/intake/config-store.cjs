@@ -7,7 +7,8 @@
 //
 // Forma: { supabaseUrl, serviceKey, pollSeconds, outputDir, activo, laRecta,
 //          modoEntrega, dobbleActive, dobbleComboTemplateId, dobbleOutputDir,
-//          dobbleBackMirror, dobbleBackRotate180 }.
+//          dobbleBackMirror, dobbleBackRotate180, rotulosActive,
+//          rotulosOutputDir }.
 
 const { app } = require('electron');
 const fs = require('node:fs');
@@ -45,6 +46,14 @@ const DEFAULTS = {
   // El combo guardado puede no traer estos campos → se estampan al posar.
   dobbleBackMirror: 'x',
   dobbleBackRotate180: false,
+  // --- Pedidos Rótulos (exportador automático) ---
+  // Toggle "Procesar pedidos de rótulos". Independiente del intake de fotos y de
+  // Dobble: se pollea en el mismo ciclo pero sólo si está activo. La receta viene
+  // INLINE en la fila (no baja nada del bucket): el arte y la fuente ya están en
+  // el catálogo local/compartido (se publicaron desde esta PC).
+  rotulosActive: false,
+  // Carpeta donde se deja el PDF de cada pedido de rótulos.
+  rotulosOutputDir: '',
 };
 
 function getFilePath() {
@@ -77,6 +86,8 @@ function sanitize(cfg) {
       : {},
     dobbleBackMirror: c.dobbleBackMirror === 'y' ? 'y' : 'x',
     dobbleBackRotate180: !!c.dobbleBackRotate180,
+    rotulosActive: !!c.rotulosActive,
+    rotulosOutputDir: typeof c.rotulosOutputDir === 'string' ? c.rotulosOutputDir : '',
   };
 }
 

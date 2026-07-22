@@ -29,4 +29,16 @@ function dobblePdfFileName(numeroPresupuesto, nombreMazo) {
   return `PR-${pr} - ${nombre}.pdf`.slice(0, 180);
 }
 
-module.exports = { writePdfSilent, dobblePdfFileName };
+// Nombre de archivo del PDF de un pedido de rótulos: "PR-<numero> - <nombre>.pdf"
+// (mismo formato que Dobble; sólo cambia el fallback del nombre).
+function rotuloPdfFileName(numeroPresupuesto, nombre) {
+  const clean = (s, fallback) => {
+    const t = String(s == null ? '' : s).replace(INVALID_WIN, '_').replace(/\s+/g, ' ').trim();
+    return t || fallback;
+  };
+  const pr = clean(numeroPresupuesto, 'sin-presupuesto');
+  const nom = clean(nombre, 'Rotulos');
+  return `PR-${pr} - ${nom}.pdf`.slice(0, 180);
+}
+
+module.exports = { writePdfSilent, dobblePdfFileName, rotuloPdfFileName };
