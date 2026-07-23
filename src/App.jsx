@@ -385,6 +385,10 @@ export default function App() {
   // Extraccion de imagenes desde PDF.
   const [extractingPdf, setExtractingPdf] = useState(false);
   const [pdfExtract, setPdfExtract] = useState(null); // { fileName, tmpDir, images }
+  // Destino de las imagenes elegidas en el modal de PDF: null = panel Fotos (como
+  // siempre); 'autopack'/'countpack' = alimentan el acomodar (mismo modal de PDF).
+  const [pdfExtractDest, setPdfExtractDest] = useState(null);
+  const [pdfExtractPending, setPdfExtractPending] = useState([]); // imagenes sueltas junto al PDF
   // Auto-acomodar imagenes.
   const [autoPackFiles, setAutoPackFiles] = useState(null);
   // Cache de contornos por imagen+tolerancia (modo corte "Contorno"): ajustar
@@ -1431,9 +1435,19 @@ export default function App() {
   const submitPdfExtract = async (chosen) => {
     const ctx = pdfExtract;
     setPdfExtract(null);
+    const dest = pdfExtractDest;
+    const pending = pdfExtractPending;
     if (!ctx || !chosen?.length) {
+      setPdfExtractDest(null);
+      setPdfExtractPending([]);
       if (ctx?.tmpDir) {
         try { await window.printlayout.pdf.cleanupExtracted(ctx.tmpDir); } catch {}
+      }
+      // Si el PDF era para el acomodar y había imágenes sueltas en el lote, abrí
+      // el pack igual con esas (el usuario canceló solo la parte del PDF).
+      if (dest && pending.length) {
+        if (dest === 'autopack') setAutoPackFiles(pending);
+        else setCountPackFiles(pending);
       }
       return;
     }
@@ -1475,6 +1489,19 @@ export default function App() {
       }
       if (filesWithMeta.length === 0) {
         setToast({ kind: 'error', text: 'No se pudo leer ninguna imagen extraída.' });
+        return;
+      }
+      // Destino = acomodar: las imágenes del PDF (+ las sueltas del lote) van al
+      // pack, no al panel Fotos. Mismo modal/params que la importación normal.
+      if (dest) {
+        setPdfExtractDest(null);
+        setPdfExtractPending([]);
+        if (ctx?.tmpDir) {
+          try { await window.printlayout.pdf.cleanupExtracted(ctx.tmpDir); } catch {}
+        }
+        const packFiles = [...pending, ...filesWithMeta.map((m) => m.file)];
+        if (dest === 'autopack') setAutoPackFiles(packFiles);
+        else setCountPackFiles(packFiles);
         return;
       }
       const loaded = [];
@@ -1522,17 +1549,31 @@ export default function App() {
     return out;
   };
 
-  const handleStartAutoPack = async (files) => {
+  const isPdfFile = (f) => (f?.type || '').toLowerCase().includes('pdf') || /\.pdf$/i.test(f?.name || '');
+
+  // Arranca el acomodar (por tamaño o por cantidad). Si entre los archivos hay un
+  // PDF, lo mandamos al MISMO modal de importar PDF (elegir páginas/imágenes,
+  // "usar páginas enteras", copias); lo que el usuario elija alimenta el pack.
+  // Las imágenes sueltas del mismo lote se juntan con lo que salga del PDF.
+  const startPack = async (files, dest, setFiles) => {
     if (!files?.length) return;
-    const prepared = await convertHeicWithToast(files);
-    if (prepared.length) setAutoPackFiles(prepared);
+    const pdfs = files.filter(isPdfFile);
+    const imgs = files.filter((f) => !isPdfFile(f));
+    const prepared = imgs.length ? await convertHeicWithToast(imgs) : [];
+    if (pdfs.length === 0) {
+      if (prepared.length) setFiles(prepared);
+      return;
+    }
+    if (pdfs.length > 1) {
+      setToast({ kind: 'info', text: 'Se procesa un PDF por vez; cargá los demás después.' });
+    }
+    setPdfExtractDest(dest);
+    setPdfExtractPending(prepared);
+    await handleImportPdfImages(pdfs[0]);
   };
 
-  const handleStartCountPack = async (files) => {
-    if (!files?.length) return;
-    const prepared = await convertHeicWithToast(files);
-    if (prepared.length) setCountPackFiles(prepared);
-  };
+  const handleStartAutoPack = (files) => startPack(files, 'autopack', setAutoPackFiles);
+  const handleStartCountPack = (files) => startPack(files, 'countpack', setCountPackFiles);
 
   const submitCountPack = async ({
     paperWidthMm, paperHeightMm, pages, files, cellMapping,
@@ -2160,9 +2201,18 @@ export default function App() {
 
   const cancelPdfExtract = async () => {
     const ctx = pdfExtract;
+    const dest = pdfExtractDest;
+    const pending = pdfExtractPending;
     setPdfExtract(null);
+    setPdfExtractDest(null);
+    setPdfExtractPending([]);
     if (ctx?.tmpDir) {
       try { await window.printlayout.pdf.cleanupExtracted(ctx.tmpDir); } catch {}
+    }
+    // Acomodar con imágenes sueltas del lote aunque se cancele la parte del PDF.
+    if (dest && pending.length) {
+      if (dest === 'autopack') setAutoPackFiles(pending);
+      else setCountPackFiles(pending);
     }
   };
 
@@ -3663,7 +3713,7 @@ export default function App() {
         <input
           ref={newTabAutoPickerRef}
           type="file"
-          accept="image/jpeg,image/png,image/jpg,image/heic,image/heif,.heic,.heif"
+          accept="image/jpeg,image/png,image/jpg,image/heic,image/heif,.heic,.heif,application/pdf,.pdf"
           multiple
           className="hidden"
           onChange={(e) => {
@@ -3675,7 +3725,7 @@ export default function App() {
         <input
           ref={newTabCountPickerRef}
           type="file"
-          accept="image/jpeg,image/png,image/jpg,image/heic,image/heif,.heic,.heif"
+          accept="image/jpeg,image/png,image/jpg,image/heic,image/heif,.heic,.heif,application/pdf,.pdf"
           multiple
           className="hidden"
           onChange={(e) => {

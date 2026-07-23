@@ -201,7 +201,7 @@ export default function NewTabModal({
             />
             <OptionCard
               title="Acomodar por tamano"
-              subtitle="Subis imagenes y fijas alto o ancho en mm"
+              subtitle="Subis imagenes o PDF y fijas alto o ancho en mm"
               icon={(
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
                   <path d="M4 7 L20 7 M4 12 L20 12 M4 17 L20 17" strokeLinecap="round" />
@@ -212,7 +212,7 @@ export default function NewTabModal({
             />
             <OptionCard
               title="Acomodar por cantidad"
-              subtitle="N copias por hoja al maximo tamano posible"
+              subtitle="N copias (imagen o PDF) al maximo tamano posible"
               icon={(
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
                   <text x="12" y="16" textAnchor="middle" fontSize="11" fill="currentColor" stroke="none">N</text>
