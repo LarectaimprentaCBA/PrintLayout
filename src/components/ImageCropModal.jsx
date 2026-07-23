@@ -5,12 +5,34 @@ import {
   cropEllipseFromDataUrl,
   detectUniformBorder,
 } from '../lib/imageCropTools.js';
+import { computeStickerContour } from '../lib/stickerContour.js';
+import ContourTolerancePreview from './ContourTolerancePreview.jsx';
 
 // Modal de recorte manual de una imagen del sidebar. Modos:
 //   - Rectangular: bbox con handles + boton "Detectar borde".
 //   - Circulo: elipse inscrita en el bbox (cuadrado = circulo, rect = ovalo).
 //   - Libre (poligonal): poligono con vertices arrastrables.
+//   - Contorno: recorta el PNG por la silueta detectada (transparente afuera),
+//     con el mismo motor de contorno del corte por contorno del plotter.
 // Al aplicar se reemplaza dataUrl/width/height de la imagen (no reversible).
+
+// Convierte un dataUrl a Blob (lo que come computeStickerContour).
+async function dataUrlToBlob(dataUrl) {
+  const res = await fetch(dataUrl);
+  return res.blob();
+}
+
+// Set de contornos (fracciones 0..1) → polígonos en px de la imagen (W×H) para
+// cropPolygonFromDataUrl. Con includeHoles=false solo los exteriores (huecos
+// rellenos); con true, todos → evenodd deja los huecos transparentes (calado).
+function contourPolysToPx(contours, W, H, includeHoles) {
+  return (contours || [])
+    .filter((c) => (includeHoles ? true : c.isOuter))
+    .map((c) => c.points.map(([fx, fy]) => ({ x: fx * W, y: fy * H })))
+    .filter((p) => p.length >= 3);
+}
+
+const CONTOUR_TOL_DEFAULT = 32;
 
 // Solo las esquinas tienen handles visibles (resize 2D). Los lados se
 // agarran desde cualquier punto del borde via barras invisibles (resize 1D).
@@ -27,10 +49,13 @@ export default function ImageCropModal({ open, image, onApply, onApplyAll, sheet
   // Cantidad de imagenes en la hoja (para "aplicar a todas"). Incluye la actual.
   const sheetCount = Array.isArray(sheetImages) ? sheetImages.length : 0;
 
-  const [mode, setMode] = useState('rect'); // 'rect' | 'poly'
+  const [mode, setMode] = useState('rect'); // 'rect' | 'circle' | 'poly' | 'contour'
   const [rect, setRect] = useState(null); // {x,y,w,h} en px de la imagen
   const [poly, setPoly] = useState([]); // [{x,y}, ...] en px
   const [polyClosed, setPolyClosed] = useState(false);
+  // Modo "Contorno": params del quita-fondo/silueta (mismos que el corte por contorno).
+  const [contourTol, setContourTol] = useState(CONTOUR_TOL_DEFAULT); // 0..128
+  const [contourHoles, setContourHoles] = useState(false); // incluir huecos (calado)
   const [busy, setBusy] = useState(false);
   const [detectResult, setDetectResult] = useState(null); // 'ok' | 'fail' | null
   const [error, setError] = useState(null);
@@ -62,6 +87,8 @@ export default function ImageCropModal({ open, image, onApply, onApplyAll, sheet
       { x: 0, y: H },
     ]);
     setPolyClosed(true);
+    setContourTol(CONTOUR_TOL_DEFAULT);
+    setContourHoles(false);
     setDetectResult(null);
     setError(null);
     setZoom(1);
@@ -377,6 +404,9 @@ export default function ImageCropModal({ open, image, onApply, onApplyAll, sheet
       setDetectResult(null);
     } else if (mode === 'circle') {
       setRect(centeredSquare());
+    } else if (mode === 'contour') {
+      setContourTol(CONTOUR_TOL_DEFAULT);
+      setContourHoles(false);
     } else {
       setPoly([
         { x: 0, y: 0 },
@@ -414,6 +444,14 @@ export default function ImageCropModal({ open, image, onApply, onApplyAll, sheet
           throw new Error('El círculo es demasiado chico.');
         }
         result = await cropEllipseFromDataUrl(image.dataUrl, rect);
+      } else if (mode === 'contour') {
+        const blob = await dataUrlToBlob(image.dataUrl);
+        const sc = await computeStickerContour(blob, { tolerance: contourTol });
+        const polys = contourPolysToPx(sc.contours, W, H, contourHoles);
+        if (polys.length === 0) {
+          throw new Error('No se detectó una silueta. Probá ajustando la tolerancia.');
+        }
+        result = await cropPolygonFromDataUrl(image.dataUrl, polys, { evenOdd: true });
       } else {
         if (!polyClosed || poly.length < 3) {
           throw new Error('Cerrá el polígono antes de aplicar.');
@@ -470,6 +508,10 @@ export default function ImageCropModal({ open, image, onApply, onApplyAll, sheet
         mode,
         nx: rect.x / W, ny: rect.y / H, nw: rect.w / W, nh: rect.h / H,
       };
+    } else if (mode === 'contour') {
+      // Cada imagen se recorta por SU PROPIA silueta con los mismos params
+      // (tolerancia + huecos). En un lote de imágenes iguales da el mismo recorte.
+      recipe = { mode: 'contour', tolerance: contourTol, includeHoles: contourHoles };
     } else {
       if (!polyClosed || poly.length < 3) {
         setError('Cerrá el polígono antes de aplicar.');
@@ -498,6 +540,15 @@ export default function ImageCropModal({ open, image, onApply, onApplyAll, sheet
         } else if (recipe.mode === 'circle') {
           const r = { x: recipe.nx * sw, y: recipe.ny * sh, w: recipe.nw * sw, h: recipe.nh * sh };
           result = await cropEllipseFromDataUrl(img.dataUrl, r);
+        } else if (recipe.mode === 'contour') {
+          const blob = await dataUrlToBlob(img.dataUrl);
+          const sc = await computeStickerContour(blob, { tolerance: recipe.tolerance });
+          const polys = contourPolysToPx(sc.contours, sw, sh, recipe.includeHoles);
+          if (polys.length === 0) {
+            setBulkProgress({ done: entries.length, total: targets.length });
+            continue;
+          }
+          result = await cropPolygonFromDataUrl(img.dataUrl, polys, { evenOdd: true });
         } else {
           const pts = recipe.pts.map((p) => ({ x: p.nx * sw, y: p.ny * sh }));
           result = await cropPolygonFromDataUrl(img.dataUrl, pts);
@@ -604,6 +655,17 @@ export default function ImageCropModal({ open, image, onApply, onApplyAll, sheet
             >
               Forma libre
             </button>
+            <button
+              type="button"
+              onClick={() => setMode('contour')}
+              className={`rounded px-3 py-1 ${
+                mode === 'contour'
+                  ? 'bg-accent-600 text-white'
+                  : 'text-ink-300 hover:bg-ink-800'
+              }`}
+            >
+              Contorno
+            </button>
           </div>
           <button
             type="button"
@@ -644,7 +706,7 @@ export default function ImageCropModal({ open, image, onApply, onApplyAll, sheet
               <span className="text-ink-400">
                 Arrastrá y redimensioná. Cuadrado = círculo perfecto; rectángulo = óvalo. <b>Shift</b> = proporcional · <b>Alt</b> = desde el centro. Lo de afuera queda transparente.
               </span>
-            ) : (
+            ) : mode === 'poly' ? (
               <>
                 <button
                   type="button"
@@ -661,6 +723,34 @@ export default function ImageCropModal({ open, image, onApply, onApplyAll, sheet
                       : poly.length < 3
                         ? `Faltan ${3 - poly.length} punto${3 - poly.length === 1 ? '' : 's'} para poder cerrar.`
                         : 'Click cerca del primer punto (o doble click) para cerrar.'}
+                </span>
+              </>
+            ) : (
+              <>
+                <label className="flex items-center gap-2 text-ink-300">
+                  <span>Tolerancia</span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="128"
+                    step="1"
+                    value={contourTol}
+                    onChange={(e) => setContourTol(Number(e.target.value))}
+                    className="h-1.5 w-40 cursor-pointer accent-accent-500"
+                  />
+                  <span className="w-8 tabular-nums text-ink-400">{contourTol}</span>
+                </label>
+                <label className="flex cursor-pointer items-center gap-1.5 text-ink-300">
+                  <input
+                    type="checkbox"
+                    checked={contourHoles}
+                    onChange={(e) => setContourHoles(e.target.checked)}
+                    className="h-3.5 w-3.5 accent-accent-500"
+                  />
+                  <span>Calado (huecos transparentes)</span>
+                </label>
+                <span className="text-ink-400">
+                  Recorta por la silueta (rojo). Subí la tolerancia si come partes del diseño; bajala si deja fondo.
                 </span>
               </>
             )}
@@ -735,6 +825,15 @@ export default function ImageCropModal({ open, image, onApply, onApplyAll, sheet
                 className="block max-h-[calc(100vh-220px)] max-w-[calc(100vw-100px)] object-contain"
                 style={{ userSelect: 'none' }}
               />
+              {/* Preview en vivo de la silueta (modo Contorno) — rojo sobre lo que queda. */}
+              {mode === 'contour' && (
+                <ContourTolerancePreview
+                  imageUrl={image.dataUrl}
+                  tolerance={contourTol}
+                  includeHoles={contourHoles}
+                  style={{ left: 0, top: 0, width: '100%', height: '100%' }}
+                />
+              )}
               <svg
                 ref={svgRef}
                 viewBox={`0 0 ${W} ${H}`}
@@ -770,15 +869,17 @@ export default function ImageCropModal({ open, image, onApply, onApplyAll, sheet
                     )}
                   </mask>
                 </defs>
-                <rect
-                  x="0"
-                  y="0"
-                  width={W}
-                  height={H}
-                  fill="rgba(0,0,0,0.55)"
-                  mask="url(#cropMask)"
-                  style={{ pointerEvents: 'none' }}
-                />
+                {mode !== 'contour' && (
+                  <rect
+                    x="0"
+                    y="0"
+                    width={W}
+                    height={H}
+                    fill="rgba(0,0,0,0.55)"
+                    mask="url(#cropMask)"
+                    style={{ pointerEvents: 'none' }}
+                  />
+                )}
 
                 {/* Modo rectangulo / circulo (mismo bbox con handles) */}
                 {(mode === 'rect' || mode === 'circle') && rect && (() => {
@@ -965,6 +1066,9 @@ export default function ImageCropModal({ open, image, onApply, onApplyAll, sheet
             )}
             {mode === 'poly' && (
               <>Polígono: {poly.length} {poly.length === 1 ? 'punto' : 'puntos'}{polyClosed ? ' (cerrado)' : ' (abierto)'}</>
+            )}
+            {mode === 'contour' && (
+              <>Contorno: recorta por la silueta · tolerancia {contourTol}{contourHoles ? ' · calado' : ''}</>
             )}
             {bulkProgress && (
               <span className="ml-3 text-accent-300">Aplicando a todas… {bulkProgress.done}/{bulkProgress.total}</span>

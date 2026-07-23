@@ -38,22 +38,35 @@ export async function cropRectFromDataUrl(dataUrl, rectPx) {
   return { dataUrl: canvas.toDataURL('image/png'), width: w, height: h };
 }
 
-// Crop poligonal. pointsPx es array de {x,y} en pixeles de la imagen original.
-// Devuelve PNG con alpha=0 afuera del poligono, recortado al bounding box.
-export async function cropPolygonFromDataUrl(dataUrl, pointsPx) {
-  if (!Array.isArray(pointsPx) || pointsPx.length < 3) {
+// Crop poligonal. `pointsPx` puede ser:
+//   - un solo polígono: array de {x,y} en px de la imagen original (legacy), o
+//   - un SET de contornos: array de polígonos (cada uno array de {x,y}) — para el
+//     modo "Contorno" (varios exteriores + huecos). Con `evenOdd` en el clip los
+//     huecos quedan transparentes (calado) y las formas separadas se recortan todas.
+// Devuelve PNG con alpha=0 afuera de la silueta, recortado al bounding box común.
+export async function cropPolygonFromDataUrl(dataUrl, pointsPx, { evenOdd = false } = {}) {
+  // Normalizar a lista de polígonos. Un solo polígono llega como [{x,y}, ...]
+  // (pointsPx[0] es un objeto); un set llega como [[{x,y}...], [{x,y}...]].
+  const polys = (Array.isArray(pointsPx) && Array.isArray(pointsPx[0]))
+    ? pointsPx
+    : [pointsPx];
+  const shapes = polys.filter((p) => Array.isArray(p) && p.length >= 3);
+  if (shapes.length === 0) {
     throw new Error('El polígono necesita al menos 3 puntos.');
   }
   const img = await loadImage(dataUrl);
   const W = img.naturalWidth;
   const H = img.naturalHeight;
 
+  // Bounding box común a TODOS los polígonos.
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const p of pointsPx) {
-    if (p.x < minX) minX = p.x;
-    if (p.y < minY) minY = p.y;
-    if (p.x > maxX) maxX = p.x;
-    if (p.y > maxY) maxY = p.y;
+  for (const shape of shapes) {
+    for (const p of shape) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
   }
   const bx = Math.max(0, Math.floor(minX));
   const by = Math.max(0, Math.floor(minY));
@@ -69,14 +82,16 @@ export async function cropPolygonFromDataUrl(dataUrl, pointsPx) {
 
   ctx.save();
   ctx.beginPath();
-  for (let i = 0; i < pointsPx.length; i++) {
-    const px = pointsPx[i].x - bx;
-    const py = pointsPx[i].y - by;
-    if (i === 0) ctx.moveTo(px, py);
-    else ctx.lineTo(px, py);
+  for (const shape of shapes) {
+    for (let i = 0; i < shape.length; i++) {
+      const px = shape[i].x - bx;
+      const py = shape[i].y - by;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
   }
-  ctx.closePath();
-  ctx.clip();
+  ctx.clip(evenOdd ? 'evenodd' : 'nonzero');
   ctx.drawImage(img, -bx, -by);
   ctx.restore();
 
