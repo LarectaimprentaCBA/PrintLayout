@@ -161,8 +161,13 @@ function handleClient(socket) {
       finish('sin candado');
       return;
     }
-    if (released) { // el cliente ya cerró mientras esperaba el candado
-      finish('cliente cerró esperando');
+    if (released) {
+      // El cliente ya cerró mientras esperaba el candado. finish() YA corrió (con
+      // token=null → no liberó) y es idempotente, así que NO libera si lo llamamos
+      // de nuevo. Soltamos el token directo para que el server QR reconecte ya
+      // (sin esperar al watchdog ~3min).
+      try { qrServer.releasePlotter(token); } catch (_) { /* ignore */ }
+      token = null;
       return;
     }
     // Pasó de "esperando" a "activo".
@@ -179,7 +184,14 @@ function handleClient(socket) {
       finish('plotter no conecta');
       return;
     }
-    if (released) { try { plotter.end(); } catch (_) { /* ignore */ } finish('cerrado antes de piping'); return; }
+    if (released) {
+      // Mismo caso que arriba pero el cliente cerró durante openPlotter: finish()
+      // ya corrió sin liberar el token → lo soltamos directo (y cerramos el plotter).
+      try { plotter.end(); } catch (_) { /* ignore */ }
+      try { qrServer.releasePlotter(token); } catch (_) { /* ignore */ }
+      token = null;
+      return;
+    }
 
     qrServer.emitLog(`Relay: sirviendo corte de ${ip} → plotter ${cfg2.plotterIP}:${cfg2.plotterPort}.`);
     absoluteTimer = setTimeout(() => finish('tope absoluto'), ABSOLUTE_MAX_MS);
