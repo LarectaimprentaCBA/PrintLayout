@@ -101,6 +101,28 @@ export function contoursToCellCortes(contours, cell, imgW, imgH, { bleedMm = 0, 
   return merged.map(poly => closePoly(poly.map(p => [p.X / CLIPPER_SCALE, p.Y / CLIPPER_SCALE])))
 }
 
+/**
+ * Contornos (fracciones 0..1) → polilíneas en PÍXELES de la imagen (imgW×imgH),
+ * con offset/sangría (afuera>0, adentro<0) + huecos, reusando el MISMO motor que
+ * el corte por contorno del plotter (mergeContours: offset Clipper + unión +
+ * clasificación exterior/hueco). Lo usa el modo "Contorno" del recorte de imagen:
+ * la misma geometría se dibuja como línea roja (preview) y se usa como clip al
+ * hornear el PNG → lo que ves es lo que recorta.
+ *
+ * @returns {Array<Array<[number,number]>>} polilíneas cerradas en px
+ */
+export function contoursToPixelPolys(contours, imgW, imgH, { offsetPx = 0, includeHoles = false, joinType = 'round', smoothPx = 0 } = {}) {
+  if (!contours?.length || !imgW || !imgH) return []
+  const clip = contours.map(c => c.points.map(([fx, fy]) => ({
+    X: Math.round(fx * imgW * CLIPPER_SCALE),
+    Y: Math.round(fy * imgH * CLIPPER_SCALE),
+  })))
+  // deltaPx/simplifyMm de mergeContours están en las MISMAS unidades sin escalar
+  // que los polígonos → acá son PÍXELES (no mm).
+  const merged = mergeContours(clip, offsetPx, { joinType, includeHoles, simplifyMm: smoothPx })
+  return merged.map(poly => closePoly(poly.map(p => [p.X / CLIPPER_SCALE, p.Y / CLIPPER_SCALE])))
+}
+
 function closePoly(poly) {
   if (poly.length < 2) return poly
   const a = poly[0]

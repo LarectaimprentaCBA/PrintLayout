@@ -5,7 +5,7 @@ import {
   cropEllipseFromDataUrl,
   detectUniformBorder,
 } from '../lib/imageCropTools.js';
-import { computeStickerContour } from '../lib/stickerContour.js';
+import { computeStickerContour, contoursToPixelPolys } from '../lib/stickerContour.js';
 import ContourTolerancePreview from './ContourTolerancePreview.jsx';
 
 // Modal de recorte manual de una imagen del sidebar. Modos:
@@ -22,13 +22,11 @@ async function dataUrlToBlob(dataUrl) {
   return res.blob();
 }
 
-// Set de contornos (fracciones 0..1) → polígonos en px de la imagen (W×H) para
-// cropPolygonFromDataUrl. Con includeHoles=false solo los exteriores (huecos
-// rellenos); con true, todos → evenodd deja los huecos transparentes (calado).
-function contourPolysToPx(contours, W, H, includeHoles) {
-  return (contours || [])
-    .filter((c) => (includeHoles ? true : c.isOuter))
-    .map((c) => c.points.map(([fx, fy]) => ({ x: fx * W, y: fy * H })))
+// Contornos (fracciones) → polígonos {x,y} en px (W×H) con offset/huecos, vía el
+// motor del corte por contorno (mergeContours). Para cropPolygonFromDataUrl.
+function contourClipPolys(contours, W, H, { offsetPx, includeHoles }) {
+  return contoursToPixelPolys(contours, W, H, { offsetPx, includeHoles })
+    .map((poly) => poly.map(([x, y]) => ({ x, y })))
     .filter((p) => p.length >= 3);
 }
 
@@ -56,6 +54,12 @@ export default function ImageCropModal({ open, image, onApply, onApplyAll, sheet
   // Modo "Contorno": params del quita-fondo/silueta (mismos que el corte por contorno).
   const [contourTol, setContourTol] = useState(CONTOUR_TOL_DEFAULT); // 0..128
   const [contourHoles, setContourHoles] = useState(false); // incluir huecos (calado)
+  const [contourOffset, setContourOffset] = useState(0); // offset en px (+ afuera / − adentro)
+  // Silueta trazada (fracciones) para la tolerancia actual — se re-mapea al toque
+  // al mover offset/huecos (mergeContours), sin re-trazar (potrace es lo caro).
+  const [tracedContours, setTracedContours] = useState(null);
+  const [contourTracing, setContourTracing] = useState(false);
+  const [contourErr, setContourErr] = useState(null);
   const [busy, setBusy] = useState(false);
   const [detectResult, setDetectResult] = useState(null); // 'ok' | 'fail' | null
   const [error, setError] = useState(null);
@@ -89,11 +93,53 @@ export default function ImageCropModal({ open, image, onApply, onApplyAll, sheet
     setPolyClosed(true);
     setContourTol(CONTOUR_TOL_DEFAULT);
     setContourHoles(false);
+    setContourOffset(0);
+    setTracedContours(null);
+    setContourErr(null);
     setDetectResult(null);
     setError(null);
     setZoom(1);
     setPan({ x: 0, y: 0 });
   }, [open, image?.id, W, H]);
+
+  // Modo Contorno: trazar la silueta (potrace) al abrir / cambiar tolerancia.
+  // Debounced: el trazado es lo caro; el offset/huecos NO re-traza (re-mapea).
+  useEffect(() => {
+    if (!open || !image || mode !== 'contour') return undefined;
+    let cancelled = false;
+    setContourTracing(true);
+    const timer = setTimeout(async () => {
+      try {
+        const blob = await dataUrlToBlob(image.dataUrl);
+        const sc = await computeStickerContour(blob, { tolerance: contourTol });
+        if (cancelled) return;
+        setTracedContours(sc.contours);
+        setContourErr(null);
+      } catch (err) {
+        if (cancelled) return;
+        console.error('Contorno (trazado) falló:', err);
+        setTracedContours(null);
+        setContourErr('No se pudo detectar la silueta.');
+      } finally {
+        if (!cancelled) setContourTracing(false);
+      }
+    }, 260);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [open, image?.id, mode, contourTol]);
+
+  // Línea roja del corte = silueta trazada + offset/huecos (re-mapeo instantáneo).
+  const contourLines = useMemo(() => {
+    if (mode !== 'contour' || !tracedContours || W < 1 || H < 1) return [];
+    try {
+      return contoursToPixelPolys(tracedContours, W, H, { offsetPx: contourOffset, includeHoles: contourHoles });
+    } catch (err) {
+      console.error('Contorno (mapeo) falló:', err);
+      return [];
+    }
+  }, [mode, tracedContours, contourOffset, contourHoles, W, H]);
+
+  // Rango del slider de offset, proporcional al tamaño de la imagen.
+  const contourMaxOff = Math.max(8, Math.round(Math.min(W, H) * 0.12));
 
   // Wheel = zoom centrado en el cursor. Limitamos zoom a [1, 8].
   // Con transform-origin: center, las formulas usan offsets relativos al
@@ -407,6 +453,7 @@ export default function ImageCropModal({ open, image, onApply, onApplyAll, sheet
     } else if (mode === 'contour') {
       setContourTol(CONTOUR_TOL_DEFAULT);
       setContourHoles(false);
+      setContourOffset(0);
     } else {
       setPoly([
         { x: 0, y: 0 },
@@ -445,9 +492,10 @@ export default function ImageCropModal({ open, image, onApply, onApplyAll, sheet
         }
         result = await cropEllipseFromDataUrl(image.dataUrl, rect);
       } else if (mode === 'contour') {
-        const blob = await dataUrlToBlob(image.dataUrl);
-        const sc = await computeStickerContour(blob, { tolerance: contourTol });
-        const polys = contourPolysToPx(sc.contours, W, H, contourHoles);
+        // Reusar la silueta ya trazada si es la de la tolerancia actual; si no
+        // (p.ej. click antes de que termine el debounce), trazar fresco.
+        const contours = tracedContours || (await computeStickerContour(await dataUrlToBlob(image.dataUrl), { tolerance: contourTol })).contours;
+        const polys = contourClipPolys(contours, W, H, { offsetPx: contourOffset, includeHoles: contourHoles });
         if (polys.length === 0) {
           throw new Error('No se detectó una silueta. Probá ajustando la tolerancia.');
         }
@@ -510,8 +558,12 @@ export default function ImageCropModal({ open, image, onApply, onApplyAll, sheet
       };
     } else if (mode === 'contour') {
       // Cada imagen se recorta por SU PROPIA silueta con los mismos params
-      // (tolerancia + huecos). En un lote de imágenes iguales da el mismo recorte.
-      recipe = { mode: 'contour', tolerance: contourTol, includeHoles: contourHoles };
+      // (tolerancia + huecos + offset). En un lote de iguales da el mismo recorte.
+      // El offset se normaliza al tamaño de cada imagen (fracción del lado menor).
+      recipe = {
+        mode: 'contour', tolerance: contourTol, includeHoles: contourHoles,
+        offsetFrac: contourOffset / Math.max(1, Math.min(W, H)),
+      };
     } else {
       if (!polyClosed || poly.length < 3) {
         setError('Cerrá el polígono antes de aplicar.');
@@ -543,7 +595,8 @@ export default function ImageCropModal({ open, image, onApply, onApplyAll, sheet
         } else if (recipe.mode === 'contour') {
           const blob = await dataUrlToBlob(img.dataUrl);
           const sc = await computeStickerContour(blob, { tolerance: recipe.tolerance });
-          const polys = contourPolysToPx(sc.contours, sw, sh, recipe.includeHoles);
+          const offPx = (recipe.offsetFrac || 0) * Math.min(sw, sh);
+          const polys = contourClipPolys(sc.contours, sw, sh, { offsetPx: offPx, includeHoles: recipe.includeHoles });
           if (polys.length === 0) {
             setBulkProgress({ done: entries.length, total: targets.length });
             continue;
@@ -740,6 +793,21 @@ export default function ImageCropModal({ open, image, onApply, onApplyAll, sheet
                   />
                   <span className="w-8 tabular-nums text-ink-400">{contourTol}</span>
                 </label>
+                <label className="flex items-center gap-2 text-ink-300">
+                  <span>Margen</span>
+                  <input
+                    type="range"
+                    min={-contourMaxOff}
+                    max={contourMaxOff}
+                    step="1"
+                    value={clamp(contourOffset, -contourMaxOff, contourMaxOff)}
+                    onChange={(e) => setContourOffset(Number(e.target.value))}
+                    className="h-1.5 w-40 cursor-pointer accent-accent-500"
+                  />
+                  <span className="w-16 tabular-nums text-ink-400">
+                    {contourOffset > 0 ? `+${contourOffset}` : contourOffset}px
+                  </span>
+                </label>
                 <label className="flex cursor-pointer items-center gap-1.5 text-ink-300">
                   <input
                     type="checkbox"
@@ -749,9 +817,15 @@ export default function ImageCropModal({ open, image, onApply, onApplyAll, sheet
                   />
                   <span>Calado (huecos transparentes)</span>
                 </label>
-                <span className="text-ink-400">
-                  Recorta por la silueta (rojo). Subí la tolerancia si come partes del diseño; bajala si deja fondo.
-                </span>
+                {contourTracing ? (
+                  <span className="text-accent-300">Detectando silueta…</span>
+                ) : contourErr ? (
+                  <span className="text-red-300">{contourErr}</span>
+                ) : (
+                  <span className="text-ink-400">
+                    La línea roja es el corte. Tolerancia: silueta. Margen: − adentro / + afuera.
+                  </span>
+                )}
               </>
             )}
           </div>
@@ -1050,6 +1124,19 @@ export default function ImageCropModal({ open, image, onApply, onApplyAll, sheet
                     ))}
                   </g>
                 )}
+
+                {/* Modo contorno: línea de corte roja (silueta + offset) */}
+                {mode === 'contour' && contourLines.map((poly, i) => (
+                  <polygon
+                    key={`ct-${i}`}
+                    points={poly.map(([x, y]) => `${x},${y}`).join(' ')}
+                    fill="none"
+                    stroke="#ef4444"
+                    strokeWidth={strokeWidth * 1.4}
+                    strokeLinejoin="round"
+                    style={{ pointerEvents: 'none' }}
+                  />
+                ))}
               </svg>
             </div>
           </div>
@@ -1068,7 +1155,7 @@ export default function ImageCropModal({ open, image, onApply, onApplyAll, sheet
               <>Polígono: {poly.length} {poly.length === 1 ? 'punto' : 'puntos'}{polyClosed ? ' (cerrado)' : ' (abierto)'}</>
             )}
             {mode === 'contour' && (
-              <>Contorno: recorta por la silueta · tolerancia {contourTol}{contourHoles ? ' · calado' : ''}</>
+              <>Contorno: recorta por la silueta · tolerancia {contourTol} · margen {contourOffset > 0 ? `+${contourOffset}` : contourOffset}px{contourHoles ? ' · calado' : ''}</>
             )}
             {bulkProgress && (
               <span className="ml-3 text-accent-300">Aplicando a todas… {bulkProgress.done}/{bulkProgress.total}</span>
