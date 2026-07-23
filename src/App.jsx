@@ -80,6 +80,30 @@ import { facesBoundingBox } from './lib/faceDetection.js';
 import { cropImageDataUrl } from './lib/imageCrop.js';
 import { rotateImageDataUrl90CW, rotateFaces90CW } from './lib/imageRotate.js';
 
+// Slug estable para el cutId (QR + nombre del .plt) derivado del NOMBRE de una
+// plantilla guardada. Minúsculas, sin acentos, espacios/símbolos -> '-', colapsa
+// y recorta a ~24 chars (un QR de 8mm con nombre corto lo lee la cámara del
+// plotter; nombres largos = QR denso). El server exige safeName===rawName, y
+// [a-z0-9-] cumple [A-Za-z0-9_-].
+function slugCutId(name) {
+  const s = String(name || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '') // saca tildes/diacríticos
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 24)
+    .replace(/-+$/, ''); // por si el corte a 24 dejó un guión colgando
+  return s || 'corte';
+}
+
+// Sufijo corto y ESTABLE (derivado del id del store) para desambiguar dos
+// plantillas guardadas distintas que slugifican al mismo nombre.
+function cutIdSuffix(storeId) {
+  const s = String(storeId || '').replace(/[^a-z0-9]/gi, '').slice(-4).toLowerCase();
+  return s || 'x';
+}
+
 export default function App() {
   const {
     templates,
@@ -1105,21 +1129,44 @@ export default function App() {
       .catch(() => {});
   }, []);
 
-  // Nombre de corte por defecto (<prefijo><timestamp>) UNA vez, cuando la hoja
-  // tiene cortes y todavía no tiene nombre. Queda estable y se persiste con la
+  // ¿La plantilla en curso está respaldada por el store (guardada, con nombre)?
+  // sourceTemplateId guarda el id real (tpl_…) de la plantilla del store; una
+  // grilla suelta / corte temporal no lo tiene.
+  const isSavedTemplate = (t) => !!(t && t.sourceTemplateId);
+
+  // cutId ESTABLE derivado del nombre de una plantilla guardada. Si otra
+  // plantilla guardada distinta slugifica igual, agrega un sufijo estable del
+  // id para no pisar el mismo <cutId>.plt. Devuelve { cutId, collided }.
+  const deriveCutId = useCallback((tpl) => {
+    const base = slugCutId(tpl?.name);
+    const myId = tpl?.sourceTemplateId || tpl?.id;
+    const clash = templates.some((t) => t.id !== myId && slugCutId(t.name) === base);
+    if (!clash) return { cutId: base, collided: false };
+    return { cutId: `${base}-${cutIdSuffix(myId)}`, collided: true };
+  }, [templates]);
+
+  // Nombre de corte por defecto UNA vez, cuando la hoja tiene cortes y todavía no
+  // tiene nombre. Para plantillas GUARDADAS se deriva del nombre (estable → un
+  // solo QR/.plt por plantilla, no uno por impresión); para cortes sueltos /
+  // grillas no guardadas se mantiene el timestamp de siempre. Se persiste con la
   // hoja (viaja en el template del .pljob). Editable en las propiedades.
   useEffect(() => {
     if (!qrConfig || !selected || !hasCuts(selected) || selected.cutId) return;
-    const prefix = qrConfig.cutPrefix || '';
-    const d = new Date();
-    const p2 = (n) => String(n).padStart(2, '0');
-    const stamp = `${String(d.getFullYear()).slice(2)}${p2(d.getMonth() + 1)}${p2(d.getDate())}`
-      + `${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
-    const def = `${prefix}${stamp}`.replace(/[^A-Za-z0-9_-]/g, '');
+    let def;
+    if (isSavedTemplate(selected)) {
+      def = deriveCutId(selected).cutId;
+    } else {
+      const prefix = qrConfig.cutPrefix || '';
+      const d = new Date();
+      const p2 = (n) => String(n).padStart(2, '0');
+      const stamp = `${String(d.getFullYear()).slice(2)}${p2(d.getMonth() + 1)}${p2(d.getDate())}`
+        + `${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
+      def = `${prefix}${stamp}`.replace(/[^A-Za-z0-9_-]/g, '');
+    }
     updateActiveTab((tab) => (tab.template && hasCuts(tab.template) && !tab.template.cutId
       ? { template: { ...tab.template, cutId: def } }
       : {}));
-  }, [qrConfig, selected, updateActiveTab]);
+  }, [qrConfig, selected, updateActiveTab, deriveCutId]);
 
   const handlePatchActiveTemplate = (updates) => {
     if (!activeTab?.template) return;
@@ -1159,8 +1206,22 @@ export default function App() {
   const handleRenameTemplate = (template, newName) => {
     const trimmed = (newName || '').trim();
     if (!trimmed || trimmed === template.name) return;
+    // Si es una plantilla guardada, con corte y sin override manual del cutId,
+    // el QR/.plt sigue al nombre nuevo (como pediste).
+    const followName = isSavedTemplate(template)
+      && hasCuts(template)
+      && !template.cutIdManual;
+    const nextCutId = followName
+      ? deriveCutId({ name: trimmed, sourceTemplateId: template.sourceTemplateId }).cutId
+      : null;
     updateActiveTab((tab) => ({
-      template: tab.template ? { ...tab.template, name: trimmed } : tab.template,
+      template: tab.template
+        ? {
+            ...tab.template,
+            name: trimmed,
+            ...(nextCutId ? { cutId: nextCutId, cutIdManual: false } : {}),
+          }
+        : tab.template,
     }));
   };
 
@@ -1190,12 +1251,23 @@ export default function App() {
         sourceTemplateId: _sti,
         ...rest
       } = tpl;
-      const saved = await update({
+      let saved = await update({
         ...rest,
         ...(tpl.sourceTemplateId ? { id: tpl.sourceTemplateId } : {}),
         name,
         categoria: categoria || undefined,
       });
+      // Sellar el cutId derivado del NOMBRE (estable) salvo override manual. Se
+      // hace con el id ya asignado por el store, así el sufijo de colisión es
+      // estable y no depende de cuándo corrió el efecto de generación.
+      let collidedCut = false;
+      if (hasCuts(saved) && !tpl.cutIdManual) {
+        const r = deriveCutId({ name: saved.name, sourceTemplateId: saved.id });
+        collidedCut = r.collided;
+        if (r.cutId !== saved.cutId) {
+          saved = await update({ ...saved, cutId: r.cutId });
+        }
+      }
       // Apuntar la tab al template guardado para que aparezca "Compartir".
       updateActiveTab((tab) => {
         if (!tab.template) return {};
@@ -1207,10 +1279,18 @@ export default function App() {
             categoria: saved.categoria,
             sharedAt: saved.sharedAt,
             sharedHash: saved.sharedHash,
+            ...(hasCuts(saved) && !tpl.cutIdManual
+              ? { cutId: saved.cutId, cutIdManual: false }
+              : {}),
           },
         };
       });
-      setToast({ kind: 'success', text: `Plantilla "${saved.name}" guardada en la lista.` });
+      setToast({
+        kind: collidedCut ? 'info' : 'success',
+        text: collidedCut
+          ? `Plantilla "${saved.name}" guardada. Ya había otra con el mismo nombre: su QR/corte quedó como "${saved.cutId}" para no pisarlas.`
+          : `Plantilla "${saved.name}" guardada en la lista.`,
+      });
     } catch (err) {
       console.error(err);
       setToast({ kind: 'error', text: `No se pudo guardar: ${err.message}` });
@@ -3302,7 +3382,10 @@ export default function App() {
             categoriasList={categoriasList}
             onEditMargin={handleEditMargin}
             onSetCutId={(v) => updateActiveTab((tab) => (tab.template
-              ? { template: { ...tab.template, cutId: v }, isDirty: true }
+              // Editar el nombre a mano = override manual: ese valor gana y NO lo
+              // pisa el slug del nombre. Vaciarlo vuelve a "derivado del nombre"
+              // (el efecto de generación lo re-deriva).
+              ? { template: { ...tab.template, cutId: v, cutIdManual: !!v }, isDirty: true }
               : {}))}
             onSetConQr={(v) => updateActiveTab((tab) => (tab.template
               ? { template: { ...tab.template, conQr: v }, isDirty: true }
