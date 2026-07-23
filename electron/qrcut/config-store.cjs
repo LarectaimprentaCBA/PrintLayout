@@ -3,7 +3,8 @@
 // así persiste entre reinicios y no se pierde como pasaba con el programa chino.
 //
 // Forma: { plotterIP, plotterPort, cortesDir, activo, qrSizeMm, qrBottomMm,
-//          qrCentered, cutPrefix, relayActivo, relayPort, relayAllowlistCidr }.
+//          qrCentered, cutPrefix, relayActivo, relayPort, relayAllowlistCidr,
+//          plotterSettleMs }.
 //
 // plotterIP/plotterPort son la ÚNICA fuente de verdad de la IP del plotter: la
 // usa tanto este servidor como el envío directo de cortes (send_to_plotter.py),
@@ -42,6 +43,12 @@ const DEFAULTS = {
   relayPort: 8080,
   // Solo se aceptan conexiones de estas IP (loopback siempre permitido).
   relayAllowlistCidr: '192.168.100.0/24',
+  // Tiempo de asentamiento del plotter en las transiciones de dueño del candado
+  // (ms). Al soltar el server QR / pasar el turno, esperamos esto antes de que el
+  // nuevo productor escriba (o antes de reconectar el QR) para que el plotter
+  // libere/termine al anterior y no descarte los bytes. Subir si un plotter
+  // necesita más; 0 = sin espera.
+  plotterSettleMs: 1200,
 };
 
 function getFilePath() {
@@ -83,6 +90,7 @@ function sanitize(cfg) {
     relayAllowlistCidr: typeof c.relayAllowlistCidr === 'string' && c.relayAllowlistCidr.trim()
       ? c.relayAllowlistCidr.trim()
       : DEFAULTS.relayAllowlistCidr,
+    plotterSettleMs: num(c.plotterSettleMs, DEFAULTS.plotterSettleMs, 0, 10000),
   };
 }
 

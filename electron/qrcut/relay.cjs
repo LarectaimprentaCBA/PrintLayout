@@ -29,7 +29,9 @@ let activeClientIp = null;   // IP del cliente que está piping ahora (o null)
 let waitingCount = 0;        // clientes esperando el candado (antes del 1er byte / en cola)
 const activeClients = new Set(); // sockets de cliente vivos (para forzar cierre)
 
-const CONNECT_TIMEOUT_MS = 5000;   // timeout de connect al plotter (+1 retry)
+const CONNECT_TIMEOUT_MS = 5000;   // timeout de connect al plotter (por intento)
+const CONNECT_ATTEMPTS = 3;        // reintentos por si rechaza durante la transición
+const CONNECT_RETRY_PAUSE_MS = 300; // pausa corta entre intentos
 const IDLE_TIMEOUT_MS = 45000;     // sin bytes ni drain → se cierra
 const ABSOLUTE_MAX_MS = 3 * 60 * 1000; // tope duro por cliente
 
@@ -73,17 +75,25 @@ function ipAllowed(rawIp, cidr) {
   return (ipi & mask) === (base & mask);
 }
 
-// Abre una conexión fresca al plotter con timeout de connect + 1 reintento.
+// Abre una conexión fresca al plotter con timeout de connect + varios reintentos
+// (por si el plotter rechaza la conexión momentáneamente durante la transición de
+// dueño). Pausa corta entre intentos.
 function openPlotter(cfg, attempt = 1) {
   return new Promise((resolve, reject) => {
+    const retryOrFail = (err) => {
+      if (attempt < CONNECT_ATTEMPTS) {
+        setTimeout(() => { openPlotter(cfg, attempt + 1).then(resolve, reject); }, CONNECT_RETRY_PAUSE_MS);
+      } else {
+        reject(err);
+      }
+    };
     const p = net.connect({ host: cfg.plotterIP, port: cfg.plotterPort });
     let settled = false;
     const to = setTimeout(() => {
       if (settled) return;
       settled = true;
       try { p.destroy(); } catch (_) { /* ignore */ }
-      if (attempt < 2) openPlotter(cfg, attempt + 1).then(resolve, reject);
-      else reject(new Error('timeout conectando al plotter'));
+      retryOrFail(new Error('timeout conectando al plotter'));
     }, CONNECT_TIMEOUT_MS);
     p.once('connect', () => {
       if (settled) return;
@@ -96,8 +106,8 @@ function openPlotter(cfg, attempt = 1) {
       if (settled) return;
       settled = true;
       clearTimeout(to);
-      if (attempt < 2) openPlotter(cfg, attempt + 1).then(resolve, reject);
-      else reject(e);
+      try { p.destroy(); } catch (_) { /* ignore */ }
+      retryOrFail(e);
     });
   });
 }

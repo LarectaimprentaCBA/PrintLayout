@@ -11,6 +11,7 @@ const EMPTY = {
   cortesDir: '', activo: true,
   qrSizeMm: 8, qrBottomMm: 9.5, qrCentered: true, cutPrefix: '',
   relayActivo: true, relayPort: 8080, relayAllowlistCidr: '192.168.100.0/24',
+  plotterSettleMs: 1200,
 };
 
 export default function QrCutPanelModal({ open, onClose }) {
@@ -214,6 +215,23 @@ export default function QrCutPanelModal({ open, onClose }) {
               </div>
               <p className="mt-1 text-[10px] text-ink-500">
                 Esta misma IP la usa también el envío directo de cortes desde PrintLayout.
+              </p>
+
+              <label className="mt-3 flex items-center gap-2 text-xs text-ink-300">
+                <span className="w-40">Asentamiento del plotter</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="10000"
+                  step="100"
+                  value={cfg.plotterSettleMs}
+                  onChange={(e) => patch({ plotterSettleMs: e.target.value })}
+                  className="w-24 rounded border border-ink-700 bg-ink-800 px-2 py-1 text-sm text-ink-100 outline-none focus:border-accent-500"
+                />
+                <span className="text-ink-500">ms</span>
+              </label>
+              <p className="mt-1 text-[10px] text-ink-500">
+                Espera al turnarse el plotter (corte por QR ↔ envío directo ↔ portero) para que no descarte los primeros bytes. Subilo si un corte entra recién al reenviarlo.
               </p>
 
               <label className="mt-3 block text-xs text-ink-300">

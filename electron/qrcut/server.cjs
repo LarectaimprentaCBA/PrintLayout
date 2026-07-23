@@ -46,6 +46,7 @@ let lastError = null;
 let currentToken = null;
 const waiters = [];        // [{ token, resolve }]
 let lockWatchdog = null;   // backstop si un dueño no libera
+let settleTimer = null;    // espera de asentamiento en las transiciones de dueño
 // Estado del relay (lo empuja relay.cjs) para publicarlo en el mismo status.
 let relayState = { relayListening: false, relayPort: null, relayClient: null, relayQueue: 0 };
 
@@ -254,6 +255,7 @@ function getConfig() {
 function setConfig(patch) {
   const cfg = configStore.save(patch);
   reconnectDelay = 0;
+  if (!currentToken) clearSettle(); // cancelar reconexión-settle pendiente (sin waiter)
   teardown();
   if (cfg.activo && !currentToken) connect();
   else status();
@@ -263,6 +265,7 @@ function setConfig(patch) {
 // Fuerza una reconexión inmediata (botón "Reconectar" del panel).
 function reconnectNow() {
   reconnectDelay = 0;
+  if (!currentToken) clearSettle(); // cancelar reconexión-settle pendiente (sin waiter)
   teardown();
   const cfg = configStore.load();
   if (cfg.activo && !currentToken) { connect(); return { ok: true }; }
@@ -287,25 +290,71 @@ function armWatchdog(token) {
   }, LOCK_ABSOLUTE_MAX_MS);
 }
 
+function clearSettle() {
+  if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
+}
+
+// Tiempo de asentamiento del plotter (ms) en las transiciones de dueño.
+function settleMs() {
+  const n = Number(configStore.load().plotterSettleMs);
+  if (!Number.isFinite(n)) return 1200;
+  return Math.max(0, Math.min(10000, n));
+}
+
 // Otorga el candado al próximo de la cola; si no hay nadie, reconecta el server
 // QR (dueño por defecto). Mantiene la pausa durante todo el drenado.
+//
+// SETTLE (asentamiento): tras soltar el socket del server QR (teardown), el
+// plotter (un solo dueño efectivo) tarda un instante en liberar/terminar al
+// anterior. Sin esperar, el nuevo productor escribe en esa ventana y el plotter
+// descarta esos bytes (por eso un corte de Corel entraba recién al 2º/3º intento).
+// Por eso esperamos `plotterSettleMs` ANTES de resolver el token del nuevo dueño,
+// y también antes de reconectar el QR (que el latido no pise el último corte).
 function pump() {
-  if (currentToken) return;
+  if (currentToken) return; // dueño activo o grant en asentamiento
   const next = waiters.shift();
   if (next) {
+    clearSettle();          // cancelar una reconexión-settle pendiente: hay trabajo
     currentToken = next.token;
-    teardown();            // soltar el socket del server QR mientras dura el uso
+    teardown();             // soltar el socket del server QR mientras dura el uso
     armWatchdog(next.token);
     status();
-    next.resolve(next.token);
+    const ms = settleMs();
+    if (ms > 0) {
+      settleTimer = setTimeout(() => {
+        settleTimer = null;
+        // El productor recién escribe ahora (el plotter ya soltó al anterior). Si
+        // el token fue liberado/forzado mientras esperaba, resolver igual: el
+        // dueño verá su token != currentToken y su release será no-op (o el
+        // manejo de token huérfano del relay lo suelta).
+        next.resolve(next.token);
+      }, ms);
+    } else {
+      next.resolve(next.token);
+    }
     return;
   }
-  // Cola vacía y candado libre → el server QR vuelve a tomar el plotter.
+  // Cola vacía y candado libre → el server QR vuelve a tomar el plotter, tras el
+  // settle. Si mientras esperamos entra un waiter, se re-evalúa pump() (no se
+  // reconecta el QR pisando el corte nuevo).
+  clearSettle();
   clearWatchdog();
-  reconnectDelay = 0;
   const cfg = configStore.load();
-  if (cfg.activo) connect();
-  else status();
+  if (!cfg.activo) { status(); return; }
+  const ms = settleMs();
+  if (ms > 0) {
+    settleTimer = setTimeout(() => {
+      settleTimer = null;
+      if (currentToken || waiters.length) { pump(); return; } // llegó trabajo: atenderlo
+      reconnectDelay = 0;
+      const c = configStore.load();
+      if (c.activo) connect();
+      else status();
+    }, ms);
+  } else {
+    reconnectDelay = 0;
+    connect();
+  }
 }
 
 // Pide el plotter. Resuelve con un TOKEN cuando el :8080 queda libre (encola si
