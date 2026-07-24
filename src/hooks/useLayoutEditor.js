@@ -5,6 +5,7 @@ import {
   fixedPageCount,
 } from '../lib/templates.js';
 import { distributeEvenly } from '../lib/grid.js';
+import { dbg } from '../lib/debugLog.js';
 
 // Limite del stack de undo/redo. 50 pasos cubre uso normal sin inflar memoria.
 // Como las imagenes se referencian (no se copian), el costo extra real son
@@ -97,6 +98,7 @@ export function useLayoutEditor(template, face = 'front') {
     const newTplId = template?.id ?? null;
     if (lastTemplateIdRef.current === newTplId) return;
 
+    dbg(`[layout] template change ${lastTemplateIdRef.current ?? 'null'} → ${newTplId ?? 'null'} | curImages=${images.length} mapHas=${!!templateStatesRef.current.get(newTplId)}`);
     lastTemplateIdRef.current = newTplId;
     // El proximo fire del snapshot effect no debe pushear al historial
     // (el cambio de state es restore, no accion del usuario). Pero igual
@@ -156,6 +158,7 @@ export function useLayoutEditor(template, face = 'front') {
         if (lastTemplateIdRef.current !== newTplId) return;
         // Sanity check: que tenga la forma esperada.
         if (!Array.isArray(disk.images) || !Array.isArray(disk.assignmentsFront)) return;
+        dbg(`[layout] disk-load aplica → tpl=${newTplId} images=${disk.images.length} front=${disk.assignmentsFront.filter((x) => x != null).length}`);
         skipNextSnapshotRef.current = true;
         setImages(disk.images);
         setAssignmentsFront(disk.assignmentsFront);
@@ -217,12 +220,14 @@ export function useLayoutEditor(template, face = 'front') {
         payload.assignmentsBack.some((x) => x !== null);
       if (!hasImages && !hasAssignments) {
         if (diskTemplatesRef.current.has(tplId)) {
+          dbg(`[ws] DELETE ${tplId} (estado vacío) ← ¡OJO borra trabajo en disco!`);
           api.delete(tplId).catch(() => {});
           diskTemplatesRef.current.delete(tplId);
           bumpHistoryTick();
         }
         return;
       }
+      dbg(`[ws] save ${tplId} images=${payload.images.length} front=${payload.assignmentsFront.filter((x) => x != null).length} minPages=${payload.minPages}`);
       api.save(tplId, payload).then(() => {
         if (!diskTemplatesRef.current.has(tplId)) {
           diskTemplatesRef.current.add(tplId);
@@ -468,6 +473,7 @@ export function useLayoutEditor(template, face = 'front') {
   const addImages = useCallback(
     (newImages) => {
       if (newImages.length === 0) return;
+      dbg(`[layout] addImages +${newImages.length} tpl=${lastTemplateIdRef.current ?? '-'} isMultiPage=${isMultiPage} cellsPerPage=${cellsPerPage} frontLen(antes)=${assignmentsFrontRef.current.length}`);
       // Modo multi-page: solo asigna en celdas vacias existentes, sin crecer.
       if (isMultiPage) {
         if (totalCellsCount === 0) return;
@@ -782,6 +788,7 @@ export function useLayoutEditor(template, face = 'front') {
     const safeFront = Array.isArray(jobFront) ? jobFront : [];
     const safeBack = Array.isArray(jobBack) ? jobBack : [];
     const safeMin = Math.max(1, Math.floor(Number(jobMinPages) || 1));
+    dbg(`[layout] loadFromJob → tpl=${lastTemplateIdRef.current ?? '-'} images=${safeImages.length} front=${safeFront.filter((x) => x != null).length}`);
     skipNextSnapshotRef.current = true;
     setImages(safeImages);
     setAssignmentsFront(safeFront);

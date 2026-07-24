@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { dbg } from '../lib/debugLog.js';
 
 // Gestor de tabs (multi-doc). Cada tab contiene el state "de identidad" del
 // trabajo: template embebido (copia self-contained con id sintetico),
@@ -172,6 +173,7 @@ export function useTabs() {
     const base = createEmptyTab('');
     const tab = { ...base, ...init };
     const assignedId = tab.id;
+    dbg(`[tab] createTab id=${assignedId} tpl=${tab.template?.id ?? '-'} name="${tab.name || '(auto)'}" activate=${activate}`);
     setTabs((prev) => {
       if (!tab.name) tab.name = nextDefaultName(prev);
       return [...prev, tab];
@@ -193,6 +195,7 @@ export function useTabs() {
       const tab = prev[idx];
       // Cleanup async del work-state. No blockea el cierre.
       const tplId = tab?.template?.id;
+      dbg(`[tab] closeTab id=${id} tpl=${tplId ?? '-'} name="${tab?.name ?? ''}" isDirty=${tab?.isDirty} → DELETE work-state`);
       if (tplId) {
         const wsApi = typeof window !== 'undefined' ? window.printlayout?.workStates : null;
         if (wsApi?.delete) {
@@ -215,6 +218,7 @@ export function useTabs() {
   }, []);
 
   const switchTab = useCallback((id) => {
+    dbg(`[tab] switchTab → ${id}`);
     setActiveTabId(id);
   }, []);
 

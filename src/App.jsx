@@ -79,6 +79,7 @@ import { rasterizePdfPages, renderPdfBytesToImages } from './lib/pdfPreview.js';
 import { facesBoundingBox } from './lib/faceDetection.js';
 import { cropImageDataUrl } from './lib/imageCrop.js';
 import { rotateImageDataUrl90CW, rotateFaces90CW } from './lib/imageRotate.js';
+import { dbg } from './lib/debugLog.js';
 
 // Slug estable para el cutId (QR + nombre del .plt) derivado del NOMBRE de una
 // plantilla guardada. Minúsculas, sin acentos, espacios/símbolos -> '-', colapsa
@@ -451,6 +452,7 @@ export default function App() {
     const { name, jobId = null, forceNew = false, initialLayout = null } = opts;
     const empty = !!activeTab && !activeTab.template && !activeTab.jobId;
     const reuse = !forceNew && empty;
+    dbg(`[open] openInTab rawTplId=${rawTemplate?.id ?? '-'} forceNew=${forceNew} reuse=${reuse} activeTab=${activeTab?.id ?? '-'} initImages=${initialLayout?.images?.length ?? 0}`);
 
     // Si el raw template viene con id "real" (no sintetico de tab/job), lo
     // guardamos como sourceTemplateId. Asi PropertiesSidebar puede ocultar
@@ -898,6 +900,7 @@ export default function App() {
   // Reescribe el job en el path que ya tiene la tab (tras un Save As previo).
   const persistJobToPath = async (filePath, name) => {
     const targetTabId = activeTabId;
+    dbg(`[save] persistJobToPath tab=${targetTabId} tpl=${selected?.id ?? '-'} path="${filePath}" images=${layout.images.length}`);
     const payload = buildJobPayload(name);
     if (!payload) {
       setToast({ kind: 'error', text: 'No hay plantilla activa para guardar.' });
@@ -984,6 +987,7 @@ export default function App() {
       setToast({ kind: 'error', text: 'El trabajo no tiene plantilla.' });
       return;
     }
+    dbg(`[open] pljob desde lista jobId=${jobId} jobTplId=${job.template?.id ?? '-'} images=${job.images?.length ?? 0} | tabsAbiertas=${tabs.length} activa=${activeTabId}`);
     // Abrir el job en una tab. forceNew=true para no pisar la tab actual
     // si el usuario ya esta trabajando — cada job vive en su propia tab.
     openInTab(job.template, {
@@ -1018,8 +1022,9 @@ export default function App() {
       setToast({ kind: 'error', text: 'El archivo no es un trabajo valido.' });
       return;
     }
+    dbg(`[open] pljob desde archivo path="${r.path}" jobTplId=${job.template?.id ?? '-'} src=${job.template?.sourceTemplateId ?? '-'} images=${job.images?.length ?? 0} | tabsAbiertas=${tabs.length} activa=${activeTabId}`);
     const baseName = r.path.replace(/^.*[\\/]/, '').replace(/\.(pljob|json)$/i, '');
-    openInTab(job.template, {
+    const newTabId = openInTab(job.template, {
       name: job.name || baseName,
       forceNew: true,
       initialLayout: {
@@ -1029,12 +1034,12 @@ export default function App() {
         minPages: job.minPages ?? 1,
       },
     });
-    // Como openInTab no acepta jobPath en su API actual, lo asignamos al
-    // ultimo tab agregado en el siguiente tick. activeTabId apunta al tab
-    // recien creado tras updateActiveTab/createTab.
-    setTimeout(() => {
-      updateActiveTab({ jobPath: r.path, isDirty: false });
-    }, 0);
+    // Asignamos jobPath al tab NUEVO por su id explícito (openInTab lo devuelve).
+    // Antes se hacía con updateActiveTab dentro de un setTimeout: ese closure
+    // capturaba el activeTabId VIEJO (la pestaña anterior), así que el jobPath
+    // caía en la pestaña equivocada → al guardar (Ctrl+S) se pisaba el .pljob de
+    // otra pestaña. updateTab apunta por id y encola después del createTab.
+    if (newTabId) updateTab(newTabId, { jobPath: r.path, isDirty: false });
   };
 
   const handleDeleteJob = async (jobId) => {
@@ -1127,6 +1132,11 @@ export default function App() {
     window.printlayout?.qrcut?.getConfig?.()
       .then((c) => setQrConfig(c || null))
       .catch(() => {});
+  }, []);
+
+  // Marcador de arranque de sesión en el log de diagnóstico (temporal).
+  useEffect(() => {
+    dbg('===== SESIÓN nueva (app abierta) =====');
   }, []);
 
   // ¿La plantilla en curso está respaldada por el store (guardada, con nombre)?
@@ -1960,6 +1970,7 @@ export default function App() {
     if (pendingTabLoads.length === 0) return;
     const entry = pendingTabLoads.find((p) => p.templateId === selected?.id);
     if (!entry) return;
+    dbg(`[open] pendingLoad MATCH selected=${selected?.id} → loadFromJob images=${entry.images?.length ?? 0}`);
     layout.loadFromJob(entry);
     lastMutationTickRef.current = layout.mutationTick;
     updateActiveTab({ isDirty: false });

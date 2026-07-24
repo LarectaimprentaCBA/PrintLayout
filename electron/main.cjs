@@ -297,6 +297,25 @@ function runPython(scriptName, { args = [], stdin = null } = {}) {
   });
 }
 
+// Registro de diagnóstico (temporal) para cazar bugs de uso intermitentes
+// (p.ej. pestañas que se vacían al abrir un .pljob). Escribe líneas con hora a
+// userData/state-debug.log. Fire-and-forget (send, no invoke) para no frenar la
+// UI. Rota el archivo si pasa ~4MB. QUITAR cuando se encuentre la causa raíz.
+const DEBUG_LOG_PATH = path.join(app.getPath('userData'), 'state-debug.log');
+ipcMain.on('debug:log', (_evt, msg) => {
+  try {
+    try {
+      const st = fs.statSync(DEBUG_LOG_PATH);
+      if (st.size > 4 * 1024 * 1024) {
+        // Conservar la cola (lo más reciente) y descartar el principio.
+        const buf = fs.readFileSync(DEBUG_LOG_PATH);
+        fs.writeFileSync(DEBUG_LOG_PATH, buf.subarray(buf.length - 1024 * 1024));
+      }
+    } catch (_) { /* archivo nuevo */ }
+    fs.appendFileSync(DEBUG_LOG_PATH, `${new Date().toISOString()} ${msg}\n`);
+  } catch (_) { /* best-effort */ }
+});
+
 ipcMain.handle('templates:list', () => templatesStore.list());
 ipcMain.handle('templates:save', (_evt, template) => templatesStore.save(template));
 ipcMain.handle('templates:delete', (_evt, id) => templatesStore.remove(id));

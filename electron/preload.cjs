@@ -2,6 +2,10 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('printlayout', {
   version: '0.2.0',
+  // Registro de diagnóstico temporal (bugs de uso intermitentes). Fire-and-forget.
+  debug: {
+    log: (msg) => ipcRenderer.send('debug:log', String(msg)),
+  },
   templates: {
     list: () => ipcRenderer.invoke('templates:list'),
     save: (template) => ipcRenderer.invoke('templates:save', template),
