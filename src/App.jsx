@@ -3236,13 +3236,48 @@ export default function App() {
 
   // Auto-update: escuchar status del main y mostrar banner cuando este listo.
   const [updateInfo, setUpdateInfo] = useState(null);
+  const [updateChecking, setUpdateChecking] = useState(false);
   useEffect(() => {
     if (!window.printlayout?.updater?.onStatus) return undefined;
     return window.printlayout.updater.onStatus((s) => {
-      if (s.kind === 'ready') setUpdateInfo({ version: s.version });
-      else if (s.kind === 'error') console.warn('[updater]', s.error);
+      if (s.kind === 'ready') {
+        setUpdateInfo({ version: s.version });
+        setUpdateChecking(false);
+      } else if (s.kind === 'available') {
+        // La descarga arranca sola (autoDownload). Avisamos y liberamos el botón.
+        setUpdateChecking(false);
+        setToast({ kind: 'info', text: `Descargando actualización${s.version ? ` v${s.version}` : ''}… te aviso cuando esté lista.` });
+      } else if (s.kind === 'none') {
+        setUpdateChecking(false);
+        setToast({ kind: 'success', text: 'Ya tenés la última versión instalada.' });
+      } else if (s.kind === 'error') {
+        setUpdateChecking(false);
+        console.warn('[updater]', s.error);
+        setToast({ kind: 'error', text: `No se pudo buscar actualizaciones: ${s.error}` });
+      }
     });
   }, []);
+
+  // Botón "Actualizar": busca una versión nueva y la baja ahora (sin cerrar la
+  // app). El resto del flujo (descargando → lista) llega por los eventos de
+  // arriba; cuando queda lista aparece el banner "Reiniciar e instalar".
+  const handleCheckUpdates = async () => {
+    if (updateChecking || !window.printlayout?.updater?.checkNow) return;
+    setUpdateChecking(true);
+    setToast({ kind: 'info', text: 'Buscando actualizaciones…' });
+    try {
+      const r = await window.printlayout.updater.checkNow();
+      if (!r?.ok) {
+        setUpdateChecking(false);
+        setToast({ kind: 'error', text: r?.error || 'No se pudo buscar actualizaciones.' });
+      }
+      // Si ok: los eventos update-available / update-not-available / ready
+      // continúan el flujo y liberan updateChecking.
+    } catch (err) {
+      setUpdateChecking(false);
+      setToast({ kind: 'error', text: `Error buscando actualizaciones: ${err.message}` });
+    }
+  };
 
   const overlayImage =
     activeDrag?.imageId ? layout.imageMap.get(activeDrag.imageId) : null;
@@ -3379,6 +3414,8 @@ export default function App() {
           onEditRotulos={selected?.rotulos ? () => { setRotulosPlanchaInit({ ...selected.rotulos, editing: true }); setRotulosPlanchaOpen(true); } : null}
           onOpenPdfToImage={() => setPdfToImageOpen(true)}
           onRepairPdf={handleRepairPdf}
+          onCheckUpdates={handleCheckUpdates}
+          updateChecking={updateChecking}
           onOpenIntake={isLaRecta ? () => setIntakePanelOpen(true) : undefined}
           onOpenQrCut={() => setQrCutPanelOpen(true)}
         />

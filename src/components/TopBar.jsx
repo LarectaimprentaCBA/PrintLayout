@@ -297,6 +297,8 @@ export default function TopBar({
   onEditRotulos,
   onOpenPdfToImage,
   onRepairPdf,
+  onCheckUpdates,
+  updateChecking,
 }) {
   const fitDisabled = !onLayoutFitChange;
   const pdfBusy = exporting || printing;
@@ -463,6 +465,17 @@ export default function TopBar({
                 className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:bg-ink-700"
               >
                 Corte QR
+              </button>
+            )}
+            {onCheckUpdates && (
+              <button
+                type="button"
+                onClick={onCheckUpdates}
+                disabled={updateChecking}
+                title="Buscar si hay una versión nueva y bajarla ahora, sin cerrar la app. Cuando esté lista aparece el botón para reiniciar e instalar."
+                className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:bg-ink-700 disabled:opacity-50"
+              >
+                {updateChecking ? 'Buscando…' : 'Actualizar'}
               </button>
             )}
           </div>
