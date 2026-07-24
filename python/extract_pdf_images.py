@@ -107,12 +107,25 @@ def main():
         return 0
 
     try:
+        # entry = (xref, smask, w, h, bpc, cs, alt.cs, name, filter). El campo
+        # smask apunta al xref de la mascara de transparencia de esa imagen; esas
+        # mascaras (DeviceGray) NO son imagenes para importar — se ven como
+        # circulos blancos vacios. Las salteamos y avisamos que el PDF trae
+        # imagenes con transparencia (maskedImages) para ofrecer el modo "piezas".
+        smask_xrefs = set()
+        masked_images = False
+        for page in doc:
+            for entry in page.get_images(full=True):
+                if entry[1]:
+                    smask_xrefs.add(entry[1])
+                    masked_images = True
+
         seen_xrefs = []
         seen_set = set()
         for page in doc:
             for entry in page.get_images(full=True):
                 xref = entry[0]
-                if xref in seen_set:
+                if xref in seen_set or xref in smask_xrefs:
                     continue
                 seen_set.add(xref)
                 seen_xrefs.append(xref)
@@ -168,7 +181,7 @@ def main():
                 "sizeBytes": len(img_bytes),
             })
 
-        print(json.dumps({"ok": True, "images": results}))
+        print(json.dumps({"ok": True, "images": results, "maskedImages": masked_images}))
         return 0
     except Exception as e:
         print(json.dumps({"ok": False, "error": str(e), "trace": traceback.format_exc()}))

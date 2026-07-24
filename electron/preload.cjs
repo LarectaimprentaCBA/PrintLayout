@@ -95,6 +95,7 @@ contextBridge.exposeInMainWorld('printlayout', {
     hasPrinterConfig: (deviceName) =>
       ipcRenderer.invoke('print:has-printer-config', { deviceName }),
     extractImages: (bytes) => ipcRenderer.invoke('pdf:extract-images', { bytes }),
+    renderRegions: (bytes, dpi) => ipcRenderer.invoke('pdf:render-regions', { bytes, dpi }),
     readExtractedImage: (filePath) =>
       ipcRenderer.invoke('pdf:read-extracted-image', { path: filePath }),
     cleanupExtracted: (tmpDir) =>

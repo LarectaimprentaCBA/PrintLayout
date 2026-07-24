@@ -742,6 +742,40 @@ ipcMain.handle('pdf:extract-images', async (_evt, payload) => {
   }
 });
 
+// Renderiza las PIEZAS de un PDF: cada imagen embebida se rinde recortando su
+// region de la pagina, asi el resultado incluye lo que este ENCIMA (mascaras de
+// transparencia, texto/logos vectoriales). Resuelve el caso "tira de stickers
+// donde las imagenes embebidas salen en blanco" (el fondo es un raster y la
+// mascara/diseno va aparte). Misma metadata que extract para reusar el flujo.
+ipcMain.handle('pdf:render-regions', async (_evt, payload) => {
+  const bytes = payload?.bytes ?? payload;
+  const dpi = Number(payload?.dpi) || 300;
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'printlayout-regions-'));
+  const tmpPdf = path.join(tmpDir, 'source.pdf');
+  const outDir = path.join(tmpDir, 'images');
+  try {
+    fs.writeFileSync(tmpPdf, Buffer.from(bytes));
+    fs.mkdirSync(outDir);
+    const { stdout } = await runPython('render_pdf_regions.py', { args: [tmpPdf, outDir, String(dpi)] });
+    let parsed;
+    try {
+      parsed = JSON.parse(stdout.trim());
+    } catch (e) {
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+      return { ok: false, error: `Salida invalida del renderizador: ${e.message}` };
+    }
+    if (!parsed.ok) {
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+      return parsed;
+    }
+    parsed.tmpDir = tmpDir;
+    return parsed;
+  } catch (err) {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    return { ok: false, error: err.message };
+  }
+});
+
 ipcMain.handle('pdf:read-extracted-image', async (_evt, payload) => {
   try {
     const filePath = payload?.path;

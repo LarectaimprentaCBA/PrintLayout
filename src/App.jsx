@@ -1417,6 +1417,20 @@ export default function App() {
     });
   };
 
+  // Renderiza cada PIEZA del PDF (recorta la region de cada imagen desde la
+  // pagina, componiendo mascaras/overlays) via el motor Python. Devuelve
+  // { images, tmpDir } con la misma forma que extract (paths en tmpDir) o null.
+  const regionsEntriesFromBytes = async (bytes) => {
+    try {
+      const res = await window.printlayout.pdf.renderRegions(bytes, 300);
+      if (!res?.ok || !res.images?.length) return null;
+      return { images: res.images, tmpDir: res.tmpDir };
+    } catch (err) {
+      console.error(err);
+      return null;
+    }
+  };
+
   const handleImportPdfImages = async (file) => {
     if (!file || extractingPdf) return;
     setExtractingPdf(true);
@@ -1432,6 +1446,26 @@ export default function App() {
         return;
       }
       if (result.images && result.images.length > 0) {
+        // Si el PDF trae imagenes con transparencia (mascaras), las embebidas
+        // salen como circulos/recuadros vacios: renderizamos cada PIEZA desde la
+        // pagina (compone la mascara → el diseno real). Caso "tira de stickers".
+        if (result.maskedImages) {
+          const regions = await regionsEntriesFromBytes(bytes);
+          if (regions) {
+            if (result.tmpDir) {
+              try { await window.printlayout.pdf.cleanupExtracted(result.tmpDir); } catch {}
+            }
+            setPdfExtract({
+              fileName: file.name,
+              tmpDir: regions.tmpDir,
+              images: regions.images,
+              mode: 'regions',
+              pdfBytes: bytes,
+            });
+            return;
+          }
+          // Si el render de piezas falló, seguimos con las embebidas (tmpDir intacto).
+        }
         // Guardamos bytes en el ctx para poder ofrecer "Usar paginas enteras"
         // sin pedir el archivo de nuevo si las imagenes embebidas no sirven.
         setPdfExtract({
@@ -1507,6 +1541,36 @@ export default function App() {
     } catch (err) {
       console.error(err);
       setToast({ kind: 'error', text: `No se pudo rasterizar: ${err.message}` });
+    } finally {
+      setExtractingPdf(false);
+    }
+  };
+
+  // Modo "piezas": recorta cada imagen del PDF desde la pagina (compone
+  // mascaras/overlays). Lo dispara el boton del modal si el auto no acerto.
+  const handleSwitchToRegions = async () => {
+    const ctx = pdfExtract;
+    if (!ctx?.pdfBytes || extractingPdf) return;
+    setExtractingPdf(true);
+    try {
+      const regions = await regionsEntriesFromBytes(ctx.pdfBytes);
+      if (!regions) {
+        setToast({ kind: 'error', text: 'No se pudieron recortar las piezas del PDF.' });
+        return;
+      }
+      if (ctx.tmpDir) {
+        try { await window.printlayout.pdf.cleanupExtracted(ctx.tmpDir); } catch {}
+      }
+      setPdfExtract({
+        fileName: ctx.fileName,
+        tmpDir: regions.tmpDir,
+        images: regions.images,
+        mode: 'regions',
+        pdfBytes: ctx.pdfBytes,
+      });
+    } catch (err) {
+      console.error(err);
+      setToast({ kind: 'error', text: `No se pudieron recortar las piezas: ${err.message}` });
     } finally {
       setExtractingPdf(false);
     }
@@ -3665,6 +3729,7 @@ export default function App() {
           onConfirm={submitPdfExtract}
           onCancel={cancelPdfExtract}
           onSwitchToRasterized={handleSwitchToRasterized}
+          onSwitchToRegions={handleSwitchToRegions}
         />
 
         <ImagePackModal
