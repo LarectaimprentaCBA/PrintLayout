@@ -462,8 +462,25 @@ export function useLayoutEditor(template, face = 'front') {
   // re-creacion del callback.
   const applyMutationRef = useRef(applyMutation);
   useEffect(() => { applyMutationRef.current = applyMutation; }, [applyMutation]);
+  // Este effect existe para reaccionar cuando el USUARIO cambia "Hojas"
+  // (minPages) en la MISMA pestaña. PERO sus deps incluyen cellsPerPage, que
+  // también cambia en un CAMBIO DE PESTAÑA. Si corría applyMutation en un
+  // switch, leía `assignmentsFrontRef.current` — que va UN RENDER ATRÁS del
+  // setAssignmentsFront que hizo el layoutEffect al montar el template nuevo, o
+  // sea, todavía tiene las asignaciones de la pestaña SALIENTE — y las volcaba
+  // (matchLength-eadas a múltiplo de cellsPerPage) en la pestaña ENTRANTE →
+  // CONTAMINACIÓN CRUZADA de celdas entre pestañas (bug del posado que se
+  // "borra" al abrir/cambiar de pestaña). Fix: correr applyMutation SOLO si el
+  // template no cambió respecto de la última corrida (mismo tpl = fue un cambio
+  // real de "Hojas", no un switch). En un switch, el layoutEffect ya dejó el
+  // estado correcto — no hay que tocarlo.
+  const minPagesEffectTplRef = useRef(null);
   useEffect(() => {
+    const tpl = lastTemplateIdRef.current;
+    const sameTemplate = minPagesEffectTplRef.current === tpl;
+    minPagesEffectTplRef.current = tpl;
     if (isMultiPage || cellsPerPage === 0) return;
+    if (!sameTemplate) return; // fue un switch de pestaña, no un cambio de "Hojas"
     applyMutationRef.current((arr) => arr);
   }, [minPages, isMultiPage, cellsPerPage]);
 
