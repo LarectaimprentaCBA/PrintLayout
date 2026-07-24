@@ -119,6 +119,7 @@ export function useLayoutEditor(template, face = 'front') {
 
     const saved = templateStatesRef.current.get(newTplId);
     if (saved) {
+      dbg(`[layout] RESTORE Map[${newTplId}] → images=${saved.images.length} front=${saved.assignmentsFront.length} (front!=null=${saved.assignmentsFront.filter((x) => x != null).length})`);
       setImages(saved.images);
       setAssignmentsFront(saved.assignmentsFront);
       setAssignmentsBack(saved.assignmentsBack);
@@ -259,6 +260,7 @@ export function useLayoutEditor(template, face = 'front') {
 
     // Actualizar Map persistente con estado actual.
     if (lastTemplateIdRef.current) {
+      dbg(`[layout] MIRROR Map[${lastTemplateIdRef.current}] = images:${images.length} front:${assignmentsFront.length} wasSkip:${wasSkip}`);
       templateStatesRef.current.set(lastTemplateIdRef.current, {
         images,
         assignmentsFront,
