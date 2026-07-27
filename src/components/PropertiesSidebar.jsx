@@ -165,9 +165,9 @@ export default function PropertiesSidebar({
   };
 
   const handlePdfPick = async (e) => {
-    const file = e.target.files?.[0];
+    const files = Array.from(e.target.files || []);
     e.target.value = '';
-    if (file) onImportPdfImages?.(file);
+    if (files.length) onImportPdfImages?.(files);
   };
 
   const isPdf = (f) =>
@@ -204,9 +204,9 @@ export default function PropertiesSidebar({
     dragCounterRef.current = 0;
     setDragKind(null);
     const files = Array.from(e.dataTransfer.files);
-    const pdf = files.find(isPdf);
-    if (pdf) {
-      onImportPdfImages?.(pdf);
+    const pdfs = files.filter(isPdf);
+    if (pdfs.length) {
+      onImportPdfImages?.(pdfs);
       return;
     }
     const imgs = files.filter(isImg);
@@ -268,6 +268,7 @@ export default function PropertiesSidebar({
         ref={pdfInputRef}
         type="file"
         accept="application/pdf,.pdf"
+        multiple
         className="hidden"
         onChange={handlePdfPick}
       />

@@ -414,6 +414,11 @@ export default function App() {
   // siempre); 'autopack'/'countpack' = alimentan el acomodar (mismo modal de PDF).
   const [pdfExtractDest, setPdfExtractDest] = useState(null);
   const [pdfExtractPending, setPdfExtractPending] = useState([]); // imagenes sueltas junto al PDF
+  // Cola para importar VARIOS PDFs juntos (panel Fotos): se procesan de a uno
+  // (abrir modal → elegir → confirmar → sigue el próximo). El ref evita que el
+  // effect que avanza la cola dispare dos a la vez.
+  const [pdfQueue, setPdfQueue] = useState([]);
+  const pdfQueueBusyRef = useRef(false);
   // Auto-acomodar imagenes.
   const [autoPackFiles, setAutoPackFiles] = useState(null);
   // Cache de contornos por imagen+tolerancia (modo corte "Contorno"): ajustar
@@ -1524,6 +1529,31 @@ export default function App() {
       setExtractingPdf(false);
     }
   };
+
+  // Importar VARIOS PDFs juntos (panel Fotos): acepta un File o un array. Los
+  // encola; el effect de abajo los procesa de a uno (el modal de PDF es por
+  // archivo). Cada PDF elegido suma sus imágenes al panel; al confirmar, sigue
+  // el próximo solo.
+  const handleImportPdfs = (input) => {
+    const files = (Array.isArray(input) ? input : [input]).filter(Boolean);
+    if (files.length === 0) return;
+    setPdfQueue((q) => [...q, ...files]);
+    if (files.length > 1) {
+      setToast({ kind: 'info', text: `${files.length} PDFs en cola: los vas eligiendo de a uno.` });
+    }
+  };
+
+  // Avanza la cola de PDFs: cuando no hay modal abierto ni extracción en curso y
+  // quedan PDFs, procesa el siguiente. El ref sincrónico evita doble disparo.
+  useEffect(() => {
+    if (pdfExtract || extractingPdf || pdfQueueBusyRef.current || pdfQueue.length === 0) return;
+    pdfQueueBusyRef.current = true;
+    const [next, ...rest] = pdfQueue;
+    setPdfQueue(rest);
+    Promise.resolve(handleImportPdfImages(next)).finally(() => {
+      pdfQueueBusyRef.current = false;
+    });
+  }, [pdfExtract, extractingPdf, pdfQueue]);
 
   // Si las imagenes embebidas no sirven (PDF con capas/overlay/fondo), el
   // usuario aprieta "Usar paginas enteras" en el modal y reabrimos en modo
@@ -3517,7 +3547,7 @@ export default function App() {
             contourComputing={contourComputing}
             onSaveTemporal={(tpl) => setSaveTemplatePrompt(tpl)}
             onAddImages={handleAddImages}
-            onImportPdfImages={handleImportPdfImages}
+            onImportPdfImages={handleImportPdfs}
             extractingPdf={extractingPdf}
             onRemoveImage={layout.removeImage}
             onClearCell={layout.clearCell}
