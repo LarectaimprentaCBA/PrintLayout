@@ -260,7 +260,6 @@ export function useLayoutEditor(template, face = 'front') {
 
     // Actualizar Map persistente con estado actual.
     if (lastTemplateIdRef.current) {
-      dbg(`[layout] MIRROR Map[${lastTemplateIdRef.current}] = images:${images.length} front:${assignmentsFront.length} wasSkip:${wasSkip}`);
       templateStatesRef.current.set(lastTemplateIdRef.current, {
         images,
         assignmentsFront,

@@ -1,8 +1,12 @@
-// Logger de diagnóstico. DESACTIVADO (no-op) tras encontrar la causa del bug de
-// pestañas que se vaciaban (v0.1.101). Se deja el punto de entrada por si hay
-// que reactivarlo: descomentar el cuerpo para volver a escribir a
-// userData/state-debug.log vía IPC. Las llamadas dbg(...) repartidas por el
-// código quedan inertes con esto.
-export function dbg(_msg) {
-  // window.printlayout?.debug?.log?.(String(_msg));
+// Registro de actividad para diagnosticar bugs de uso. Escribe eventos
+// significativos a userData/state-debug.log (vía IPC best-effort; nunca tira si
+// el canal no está). Queda ACTIVO de forma permanente como red de diagnóstico:
+// el archivo se auto-recorta al llegar a ~4MB (main), así que no crece infinito.
+// NO se loguea el camino caliente (MIRROR en cada micro-cambio) para no ensuciar.
+export function dbg(msg) {
+  try {
+    window.printlayout?.debug?.log?.(String(msg));
+  } catch {
+    /* no-op */
+  }
 }
