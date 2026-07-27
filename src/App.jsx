@@ -279,6 +279,7 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [layoutFitMode, setLayoutFitMode] = useState('contain');
   const [showCuts, setShowCuts] = useState(true);
+  const [showSafety, setShowSafety] = useState(true);
 
   // Auto-abrir el modal "Nuevo trabajo" cuando se queda en una sola tab vacia
   // (al arrancar la app, o tras cerrar la ultima tab que useTabs reemplaza
@@ -3393,6 +3394,8 @@ export default function App() {
           onLayoutFitChange={selected ? setLayoutFitMode : undefined}
           showCuts={showCuts}
           onShowCutsChange={hasCuts(selected) ? setShowCuts : undefined}
+          showSafety={showSafety}
+          onShowSafetyChange={hasCuts(selected) ? setShowSafety : undefined}
           template={selected}
           customPaper={customPaper}
           onCustomPaperChange={selected ? setCustomPaper : undefined}
@@ -3489,6 +3492,7 @@ export default function App() {
             face={viewingFace}
             showBackground={viewingFace !== 'back'}
             showCuts={showCuts}
+            showSafety={showSafety}
             qr={(selected?.conQr ?? true) && hasCuts(selected) && selected.cutId && qrConfig ? {
               text: selected.cutId,
               sizeMm: qrConfig.qrSizeMm,

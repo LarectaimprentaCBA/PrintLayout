@@ -313,10 +313,10 @@ export function bleedMmForCell(template, cell) {
 }
 
 // Zona segura interior al corte, en mm. Sale de template.safetyMm si esta;
-// default 3 mm.
+// default 2 mm.
 export function safetyMm(template) {
   const v = parseFloat(template?.safetyMm);
-  return Number.isFinite(v) && v >= 0 ? v : 3;
+  return Number.isFinite(v) && v >= 0 ? v : 2;
 }
 
 // Devuelve true si la primera celda y todas las restantes tienen el mismo

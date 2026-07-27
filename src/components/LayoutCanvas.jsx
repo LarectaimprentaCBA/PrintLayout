@@ -4,7 +4,9 @@ import {
   cellsForPage,
   pageStartOffset,
   fixedPageCount,
+  safetyMm,
 } from '../lib/templates.js';
+import { offsetPolygons } from '../lib/contour/offset.js';
 import { coverObjectPosition, coverCropRect, focalPoint } from '../lib/faceDetection.js';
 import { renderPdfPage1Preview } from '../lib/pdfPreview.js';
 import { qrMatrix, qrPlacementMm } from '../lib/exportPdf.js';
@@ -86,6 +88,7 @@ export default function LayoutCanvas({
   onSetFocalPoint,
   showBackground = true,
   showCuts = false,
+  showSafety = false,
   face = 'front',
   qr = null,
   onUploadPdfClick,
@@ -110,6 +113,34 @@ export default function LayoutCanvas({
     const yTopMm = template.pageHeightMm - (yBottomMm + sizeMm);
     return { cells, xLeftMm, yTopMm, sizeMm, moduleMm };
   }, [qr?.text, qr?.sizeMm, qr?.bottomMm, qr?.centered, face, template?.pageWidthMm, template?.pageHeightMm]);
+
+  // Zona segura: cada polígono de corte "achicado" hacia adentro por safetyMm
+  // (mismo margen que muestra el editor de imágenes). Usamos el motor Clipper que
+  // ya usa la app para contornos, así funciona con cualquier forma (rect, círculo,
+  // silueta). Se recalcula solo cuando cambian los cortes o el margen.
+  const safeCuts = useMemo(() => {
+    // OJO: corre antes del early-return por template null.
+    if (!showSafety || !template) return null;
+    const cortes = template.cortes ?? [];
+    if (cortes.length === 0) return null;
+    const s = safetyMm(template);
+    if (!(s > 0)) return null;
+    const out = [];
+    for (const poly of cortes) {
+      if (!poly || poly.length < 3) continue;
+      const cp = poly.map(([x, y]) => ({ X: Math.round(x * 1000), Y: Math.round(y * 1000) }));
+      try {
+        const { polys } = offsetPolygons([cp], -s, { joinType: 'miter' });
+        for (const sol of polys) {
+          if (sol && sol.length >= 3) out.push(sol.map((p) => [p.X / 1000, p.Y / 1000]));
+        }
+      } catch {
+        /* forma degenerada: la salteamos */
+      }
+    }
+    return out.length ? out : null;
+  }, [showSafety, template?.cortes, template?.safetyMm]);
+
   const scrollRef = useRef(null);
   const [fitScale, setFitScale] = useState(1);
   const [zoomLevel, setZoomLevel] = useState(1);
@@ -391,6 +422,25 @@ export default function LayoutCanvas({
                     fill="none"
                     stroke="#ef4444"
                     strokeWidth={1.2}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                ))}
+              </svg>
+            )}
+            {safeCuts && (
+              <svg
+                viewBox={`0 0 ${template.pageWidthMm} ${template.pageHeightMm}`}
+                preserveAspectRatio="none"
+                className="pointer-events-none absolute inset-0 z-20 h-full w-full"
+              >
+                {safeCuts.map((poly, i) => (
+                  <polygon
+                    key={i}
+                    points={poly.map(([x, y]) => `${x},${y}`).join(' ')}
+                    fill="none"
+                    stroke="#4ade80"
+                    strokeWidth={1}
+                    strokeDasharray="3 2"
                     vectorEffect="non-scaling-stroke"
                   />
                 ))}

@@ -264,6 +264,8 @@ export default function TopBar({
   onLayoutFitChange,
   showCuts,
   onShowCutsChange,
+  showSafety,
+  onShowSafetyChange,
   template,
   customPaper,
   onCustomPaperChange,
@@ -623,6 +625,20 @@ export default function TopBar({
               />
               <span>
                 <span className="text-red-400">●</span> Corte
+              </span>
+            </label>
+          )}
+
+          {onShowSafetyChange && (
+            <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-ink-300">
+              <input
+                type="checkbox"
+                checked={!!showSafety}
+                onChange={(e) => onShowSafetyChange(e.target.checked)}
+                className="h-3.5 w-3.5 accent-green-500"
+              />
+              <span>
+                <span className="text-green-400">●</span> Zona segura
               </span>
             </label>
           )}
