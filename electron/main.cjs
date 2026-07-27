@@ -361,6 +361,11 @@ ipcMain.handle('jobs:save-as', async (_evt, { payload, defaultName }) => {
       return { canceled: true };
     }
     const body = { ...payload, savedAt: new Date().toISOString() };
+    // Si el usuario escribió "carpeta\archivo" (o eligió una carpeta que aún no
+    // existe), la creamos nosotros. Así puede armar la carpeta desde el campo
+    // "Nombre" sin usar el botón "Nueva carpeta" del diálogo de Windows, que a
+    // veces se traba con "carpeta en uso" (lo bloquea el antivirus al crearla).
+    fs.mkdirSync(path.dirname(result.filePath), { recursive: true });
     fs.writeFileSync(result.filePath, JSON.stringify(body), 'utf-8');
     return { ok: true, path: result.filePath };
   } catch (err) {
@@ -1334,6 +1339,7 @@ ipcMain.handle('export:save-pdf', async (evt, { defaultName, bytes }) => {
     return { canceled: true };
   }
   try {
+    fs.mkdirSync(path.dirname(result.filePath), { recursive: true });
     fs.writeFileSync(result.filePath, Buffer.from(bytes));
     return { canceled: false, path: result.filePath };
   } catch (err) {
@@ -1355,6 +1361,7 @@ ipcMain.handle('export:save-image', async (evt, { defaultName, dataUrl }) => {
     return { canceled: true };
   }
   try {
+    fs.mkdirSync(path.dirname(result.filePath), { recursive: true });
     fs.writeFileSync(result.filePath, dataUrlToBuffer(dataUrl));
     return { canceled: false, path: result.filePath };
   } catch (err) {
