@@ -34,6 +34,8 @@ import SaveJobModal from './components/SaveJobModal.jsx';
 import JobsListModal from './components/JobsListModal.jsx';
 import NewTabModal from './components/NewTabModal.jsx';
 import TemplatesManagerModal from './components/TemplatesManagerModal.jsx';
+import AdaptSheetModal from './components/AdaptSheetModal.jsx';
+import { scaleTemplateToSheet } from './lib/templateResize.js';
 import RotulosManagerModal from './components/RotulosManagerModal.jsx';
 import RotulosPlanchaModal from './components/RotulosPlanchaModal.jsx';
 import { buildRotulosSheet, buildRotulosPdfBytes, buildRotulosTemplate } from './rotulos/planchaJob.js';
@@ -396,6 +398,7 @@ export default function App() {
   const [dobbleBusy, setDobbleBusy] = useState(false);
   // Editor de plantillas (botón "Plantillas" de la barra) + edición de medidas.
   const [templatesManagerOpen, setTemplatesManagerOpen] = useState(false);
+  const [adaptSheetOpen, setAdaptSheetOpen] = useState(false);
   const [rotulosOpen, setRotulosOpen] = useState(false);
   const [rotulosPlanchaOpen, setRotulosPlanchaOpen] = useState(false);
   // Precarga del armador: { planchaId, modeloId } (nuevo) o la receta completa
@@ -1239,6 +1242,32 @@ export default function App() {
           }
         : tab.template,
     }));
+  };
+
+  // Adaptar la plantilla en uso a otra hoja física (el proveedor cambió el tamaño
+  // de la hoja unos mm). Encoge TODO junto (fondo/QR/marcas + celdas + corte) para
+  // que entre en la hoja nueva y crea una plantilla NUEVA (la original queda de
+  // respaldo). Ver src/lib/templateResize.js.
+  const submitAdaptSheet = async (newWmm, newHmm) => {
+    if (!selected) return;
+    try {
+      const scaled = scaleTemplateToSheet(selected, newWmm, newHmm);
+      // Plantilla nueva del store: sin id/compartido/sintético heredado.
+      const {
+        id, sourceTemplateId, sharedAt, sharedHash, temporal, tabBacked,
+        ...rest
+      } = scaled;
+      const nueva = {
+        ...rest,
+        name: `${selected.name} (${Math.round(newWmm)}×${Math.round(newHmm)})`,
+      };
+      const saved = await update(nueva);
+      setAdaptSheetOpen(false);
+      openInTab(saved, { name: saved.name, forceNew: true });
+      setToast({ kind: 'success', text: `Plantilla adaptada creada: ${saved.name}. Hacé una hoja de prueba antes de una tirada.` });
+    } catch (e) {
+      setToast({ kind: 'error', text: `No se pudo adaptar la plantilla: ${e.message}` });
+    }
   };
 
   // Categoria de tab no aplica (es metadata de la lista de plantillas, no del
@@ -3525,6 +3554,7 @@ export default function App() {
             onChangeMinPages={layout.setMinPages}
             onShare={handleShare}
             onRenameTemplate={handleRenameTemplate}
+            onAdaptSheet={selected && !selected.temporal ? () => setAdaptSheetOpen(true) : undefined}
             onSetCategoria={handleSetCategoria}
             categoriasList={categoriasList}
             onEditMargin={handleEditMargin}
@@ -3672,6 +3702,13 @@ export default function App() {
           onOpenInTab={handleOpenTemplateFromManager}
           onRenameCategoria={handleRenameCategoria}
           onClose={() => setTemplatesManagerOpen(false)}
+        />
+
+        <AdaptSheetModal
+          open={adaptSheetOpen}
+          template={selected}
+          onClose={() => setAdaptSheetOpen(false)}
+          onSubmit={submitAdaptSheet}
         />
 
         <RotulosManagerModal

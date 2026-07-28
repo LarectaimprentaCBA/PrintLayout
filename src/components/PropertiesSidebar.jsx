@@ -111,6 +111,7 @@ export default function PropertiesSidebar({
   contourComputing = false,
   onSaveTemporal,
   onRenameTemplate,
+  onAdaptSheet,
   onSetCategoria,
   categoriasList = [],
   onAddImages,
@@ -543,10 +544,20 @@ export default function PropertiesSidebar({
                 </dd>
               </div>
             )}
-            <div className="flex justify-between">
+            <div className="flex items-center justify-between">
               <dt className="text-ink-400">Hoja</dt>
-              <dd>
-                {Math.round(template.pageWidthMm)} × {Math.round(template.pageHeightMm)} mm
+              <dd className="flex items-center gap-1.5">
+                <span>{Math.round(template.pageWidthMm)} × {Math.round(template.pageHeightMm)} mm</span>
+                {onAdaptSheet && (
+                  <button
+                    type="button"
+                    onClick={onAdaptSheet}
+                    title="Adaptar la plantilla a otra hoja (si el proveedor te cambió el tamaño). Crea una copia adaptada."
+                    className="rounded border border-ink-700 bg-ink-800 px-1.5 py-0.5 text-[10px] text-ink-200 hover:bg-ink-700"
+                  >
+                    Adaptar…
+                  </button>
+                )}
               </dd>
             </div>
             <div className="flex justify-between">
