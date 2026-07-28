@@ -85,6 +85,10 @@ function SizeSlotEditor({ size, slot, onPick, onChangeBox }) {
   const radiusPx = size.radius * scale;
   const box = sanitizeBox(slot?.textBox);
   const rot = box?.rotation || 0;
+  // Margen de la zona segura para escribir (mismo criterio que la hoja: 2mm),
+  // acotado para que nunca tape un rótulo chico.
+  const safeMm = Math.max(0, Math.min(2, Math.min(size.cutW, size.cutH) / 2 - 0.5));
+  const safePx = safeMm * scale;
 
   // Resize en el marco local: proyecta el delta de pantalla a los ejes de la
   // caja (rotar por -rot), mueve el borde arrastrado dejando fijo el opuesto, y
@@ -189,9 +193,10 @@ function SizeSlotEditor({ size, slot, onPick, onChangeBox }) {
       </div>
 
       <div ref={frameRef} className="relative mx-auto" style={{ width: `${DISP_W}px`, height: `${dispH}px` }}>
-        {/* Capa imagen: recorte redondeado = borde del rótulo */}
+        {/* Capa imagen: recorte redondeado = borde del rótulo. Línea ROJA = corte
+            (mismo código de color que la hoja principal). */}
         <div
-          className="absolute inset-0 overflow-hidden border border-dashed border-sky-400/80 bg-white"
+          className="absolute inset-0 overflow-hidden border border-red-500 bg-white"
           style={{ borderRadius: `${radiusPx}px` }}
           title="Contorno del corte (redondeado)"
         >
@@ -208,6 +213,22 @@ function SizeSlotEditor({ size, slot, onPick, onChangeBox }) {
             </button>
           )}
         </div>
+
+        {/* Zona segura para escribir (corte − margen). Verde punteado, igual que
+            en la hoja principal. Solo guía visual: no bloquea el arrastre. */}
+        {slot && safePx > 0 && (
+          <div
+            className="pointer-events-none absolute border border-dashed border-green-400"
+            style={{
+              left: `${safePx}px`,
+              top: `${safePx}px`,
+              right: `${safePx}px`,
+              bottom: `${safePx}px`,
+              borderRadius: `${Math.max(0, radiusPx - safePx)}px`,
+            }}
+            title="Zona segura para escribir (dentro del corte)"
+          />
+        )}
 
         {/* Capa caja: sin recorte, encima, rotada */}
         {slot && box && (
@@ -739,7 +760,8 @@ export default function RotulosManagerModal({ open, onClose }) {
                 <p className="flex-1 text-[11px] text-ink-400">
                   Subí la imagen de cada tamaño y arrastrá la caja azul a donde va el nombre.
                   Cambiá su tamaño desde cualquier lado o esquina (los cuadraditos).
-                  El recuadro punteado es el borde del rótulo.
+                  La <span className="text-red-400">línea roja</span> es el corte y la{' '}
+                  <span className="text-green-400">verde punteada</span> es la zona segura para escribir.
                 </p>
               </div>
 
