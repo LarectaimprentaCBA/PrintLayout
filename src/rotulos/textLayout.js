@@ -67,14 +67,36 @@ export function resolveSizeLayout({
   return cand[0];
 }
 
-// El recuadro del nombre ES la zona que dibujó el usuario (textBox). El nombre se
-// ajusta ADENTRO con "aire". Antes el recuadro se achicaba para "abrazar" el
-// texto y quedaba flotando; ahora "lo que dibujás es lo que ves" y el usuario
-// controla el tamaño del recuadro dibujándolo. Devuelve {x,y,w,h,radius} en mm.
+// El recuadro del nombre ocupa TODA la zona dibujada. Devuelve {x,y,w,h,radius}.
 export function zoneAsBox(zone) {
   const w = zone.w;
   const h = zone.h;
   return { x: zone.x, y: zone.y, w, h, radius: Math.min(w, h) * 0.2 };
+}
+
+// Recuadro que "abraza" el texto ya resuelto, centrado dentro de la zona. La zona
+// dibujada por el usuario es el MÁXIMO; el recuadro se achica al ancho/alto real
+// del nombre + el aire, sin pasarse de la zona. Devuelve {x,y,w,h,radius,rotation}.
+// (El overlay dibuja el recuadro centrado en la zona, así que x/y son informativos;
+// lo que importa para el dibujo es w/h/radius.)
+export function hugBoxToText(zone, layout, padMm, measurePt, lineHeightFactor = 1.15) {
+  if (!zone) return null;
+  if (!layout || !measurePt || !Array.isArray(layout.lines) || layout.lines.length === 0) {
+    return zoneAsBox(zone);
+  }
+  const p = Math.max(0, padMm || 0);
+  let maxWpt = 0;
+  for (const ln of layout.lines) {
+    const wpt = measurePt(ln || '', layout.fontSizePt);
+    if (wpt > maxWpt) maxWpt = wpt;
+  }
+  const textWmm = maxWpt / MM_TO_PT;
+  const textHmm = (layout.lines.length * layout.fontSizePt * lineHeightFactor) / MM_TO_PT;
+  const w = Math.max(1, Math.min(zone.w, textWmm + 2 * p));
+  const h = Math.max(1, Math.min(zone.h, textHmm + 2 * p));
+  const cx = zone.x + zone.w / 2;
+  const cy = zone.y + zone.h / 2;
+  return { x: cx - w / 2, y: cy - h / 2, w, h, radius: Math.min(w, h) * 0.2, rotation: zone.rotation || 0 };
 }
 
 // Aire efectivo dentro del recuadro = el aire pedido + el grosor del contorno,

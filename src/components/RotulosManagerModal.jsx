@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { clampCenterRotated, sanitizeBox } from '../rotulos/boxEditing.js';
+import {
+  clampCenterRotated,
+  sanitizeBox,
+  resizeBox,
+  moveBox,
+  RESIZE_HANDLES,
+  RESIZE_EDGES,
+} from '../rotulos/boxEditing.js';
 
 // Gestor de "Rótulos escolares" — Fase 1: CARGAR.
 //   · Tipografías: subir/validar/listar/eliminar fuentes .ttf/.otf.
@@ -19,23 +26,6 @@ const SIZES = [
 ];
 const SIZE_KEYS = SIZES.map((s) => s.key);
 const sizeDef = (key) => SIZES.find((s) => s.key === key);
-
-// Handles de resize: 4 lados + 4 esquinas.
-const RESIZE_HANDLES = [
-  { dir: 'n', pos: 'left-1/2 top-0 -translate-x-1/2 -translate-y-1/2', cur: 'cursor-ns-resize' },
-  { dir: 's', pos: 'left-1/2 bottom-0 -translate-x-1/2 translate-y-1/2', cur: 'cursor-ns-resize' },
-  { dir: 'w', pos: 'left-0 top-1/2 -translate-x-1/2 -translate-y-1/2', cur: 'cursor-ew-resize' },
-  { dir: 'e', pos: 'right-0 top-1/2 translate-x-1/2 -translate-y-1/2', cur: 'cursor-ew-resize' },
-  { dir: 'nw', pos: 'left-0 top-0 -translate-x-1/2 -translate-y-1/2', cur: 'cursor-nwse-resize' },
-  { dir: 'ne', pos: 'right-0 top-0 translate-x-1/2 -translate-y-1/2', cur: 'cursor-nesw-resize' },
-  { dir: 'sw', pos: 'left-0 bottom-0 -translate-x-1/2 translate-y-1/2', cur: 'cursor-nesw-resize' },
-  { dir: 'se', pos: 'right-0 bottom-0 translate-x-1/2 translate-y-1/2', cur: 'cursor-nwse-resize' },
-];
-const RESIZE_EDGES = {
-  n: { top: true }, s: { bottom: true }, w: { left: true }, e: { right: true },
-  nw: { top: true, left: true }, ne: { top: true, right: true },
-  sw: { bottom: true, left: true }, se: { bottom: true, right: true },
-};
 
 const extFromFile = (file) => {
   const t = (file?.type || '').toLowerCase();
@@ -90,31 +80,6 @@ function SizeSlotEditor({ size, slot, onPick, onChangeBox }) {
   const safeMm = Math.max(0, Math.min(2, Math.min(size.cutW, size.cutH) / 2 - 0.5));
   const safePx = safeMm * scale;
 
-  // Resize en el marco local: proyecta el delta de pantalla a los ejes de la
-  // caja (rotar por -rot), mueve el borde arrastrado dejando fijo el opuesto, y
-  // vuelve a componer el centro (en pantalla) acotando la caja ROTADA al rótulo.
-  const doResize = (edges, dxMm, dyMm, s) => {
-    const rad = (s.rotation || 0) * Math.PI / 180;
-    const cos = Math.cos(rad);
-    const sin = Math.sin(rad);
-    const lx = dxMm * cos + dyMm * sin;      // pantalla -> local
-    const ly = -dxMm * sin + dyMm * cos;
-    let w = s.w;
-    let h = s.h;
-    let shiftLx = 0;
-    let shiftLy = 0;
-    if (edges.right) { w = s.w + lx; shiftLx = lx / 2; }
-    if (edges.left) { w = s.w - lx; shiftLx = lx / 2; }
-    if (edges.bottom) { h = s.h + ly; shiftLy = ly / 2; }
-    if (edges.top) { h = s.h - ly; shiftLy = ly / 2; }
-    w = Math.max(2, Math.min(w, size.cutW));
-    h = Math.max(1, Math.min(h, size.cutH));
-    const sx = shiftLx * cos - shiftLy * sin; // local -> pantalla
-    const sy = shiftLx * sin + shiftLy * cos;
-    const { cx, cy } = clampCenterRotated(s.x + s.w / 2 + sx, s.y + s.h / 2 + sy, w, h, s.rotation, size.cutW, size.cutH);
-    return { x: round2(cx - w / 2), y: round2(cy - h / 2), w: round2(w), h: round2(h), rotation: s.rotation || 0 };
-  };
-
   // Edición numérica del recuadro (mm), acotada al rótulo.
   const setBoxField = (field, val) => {
     if (!slot?.textBox) return;
@@ -155,10 +120,9 @@ function SizeSlotEditor({ size, slot, onPick, onChangeBox }) {
       const dxMm = (ev.clientX - d.sx) / scale;
       const dyMm = (ev.clientY - d.sy) / scale;
       if (d.kind === 'move') {
-        const { cx, cy } = clampCenterRotated(d.start.x + d.start.w / 2 + dxMm, d.start.y + d.start.h / 2 + dyMm, d.start.w, d.start.h, d.start.rotation, size.cutW, size.cutH);
-        onChangeBox({ ...d.start, x: round2(cx - d.start.w / 2), y: round2(cy - d.start.h / 2) });
+        onChangeBox(moveBox(d.start, dxMm, dyMm, size.cutW, size.cutH));
       } else {
-        onChangeBox(doResize(RESIZE_EDGES[d.kind], dxMm, dyMm, d.start));
+        onChangeBox(resizeBox(RESIZE_EDGES[d.kind], dxMm, dyMm, d.start, size.cutW, size.cutH));
       }
     };
     const onUp = () => {

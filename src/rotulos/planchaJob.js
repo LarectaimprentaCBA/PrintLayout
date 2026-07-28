@@ -14,7 +14,7 @@
 
 import { planchaCeldas, MARK_MARGIN_MM } from './planchas.js';
 import { cellsToRoundedRectCuts } from '../lib/grid.js';
-import { resolveSizeLayout, zoneAsBox, effectivePad, padForSize } from './textLayout.js';
+import { resolveSizeLayout, hugBoxToText, effectivePad, padForSize } from './textLayout.js';
 import { makeCanvasMeasure, drawRotuloOverlay } from './drawOverlay.js';
 import { cropImageDataUrl } from '../lib/imageCrop.js';
 import { buildRotulosPlanchaPdf, centerCoverRect } from './exportRotulos.js';
@@ -119,16 +119,18 @@ export async function loadRotulosInputs(spec) {
 }
 
 // Resuelve líneas + tamaño de fuente para un tamaño (igual que el preview 2C).
+// Devuelve el layout Y el aire usado (para abrazar el recuadro al nombre).
 function layoutFor(spec, size, textBox, drawBox, measurePt) {
   const outlineMm = (spec.outline?.enabled && spec.outline.widthMm > 0) ? spec.outline.widthMm : 0;
   const pad = effectivePad(drawBox ? padForSize(spec.boxPadMm, size) : 0, outlineMm, textBox);
-  return resolveSizeLayout({
+  const layout = resolveSizeLayout({
     text: spec.text,
     mode: spec.lineModes?.[size] || 'auto',
     boxWmm: Math.max(1, textBox.w - 2 * pad),
     boxHmm: Math.max(1, textBox.h - 2 * pad),
     minPt: MIN_PT, maxPt: MAX_PT, lineHeightFactor: LINE_HEIGHT, measurePt,
   });
+  return { layout, pad };
 }
 
 // PNG compuesto de UN tamaño: arte (cover-crop al corte) + nombre quemado. Se
@@ -150,11 +152,11 @@ async function composeSizePng(si, spec, family, drawBox, measurePt, dpi = 300) {
 
   const hasText = String(spec.text ?? '').trim().length > 0;
   if (hasText && family && textBox) {
-    const layout = layoutFor(spec, si.size, textBox, drawBox, measurePt);
+    const { layout, pad } = layoutFor(spec, si.size, textBox, drawBox, measurePt);
     drawRotuloOverlay(ctx, {
       scale, family, textColor: spec.color, boxColor: spec.boxColor,
-      drawBox, box: drawBox ? zoneAsBox(textBox) : null, zone: textBox, layout,
-      outline: spec.outline, lineHeightFactor: LINE_HEIGHT,
+      drawBox, box: drawBox ? hugBoxToText(textBox, layout, pad, measurePt, LINE_HEIGHT) : null,
+      zone: textBox, layout, outline: spec.outline, lineHeightFactor: LINE_HEIGHT,
     });
   }
   return { dataUrl: canvas.toDataURL('image/png'), width: W, height: H };

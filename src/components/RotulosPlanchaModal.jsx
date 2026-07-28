@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { resolveSizeLayout, zoneAsBox, effectivePad, DEFAULT_BOX_PAD_MM, padForSize } from '../rotulos/textLayout.js';
+import { resolveSizeLayout, hugBoxToText, effectivePad, DEFAULT_BOX_PAD_MM, padForSize } from '../rotulos/textLayout.js';
 import { makeCanvasMeasure, drawRotuloOverlay } from '../rotulos/drawOverlay.js';
 import { PLANCHA_LIST, planchaCeldas } from '../rotulos/planchas.js';
 import { RESIZE_HANDLES, RESIZE_EDGES, moveBox, resizeBox, fullLabelBox, clampCenterRotated, sanitizeBox } from '../rotulos/boxEditing.js';
@@ -144,8 +144,9 @@ function PlanchaSizePreview({ sizeKey, cutMm, textBox, arteDataUrl, family, text
   }, [measure, textBox, text, mode, pad]);
   const nameBox = useMemo(() => {
     if (!drawBox || !textBox) return null;
-    return zoneAsBox(textBox);
-  }, [drawBox, textBox]);
+    // El recuadro se ajusta al nombre (la zona dibujada es el máximo).
+    return hugBoxToText(textBox, layout, pad, measure, LINE_HEIGHT);
+  }, [drawBox, textBox, layout, pad, measure]);
   const hasText = String(text ?? '').trim().length > 0;
 
   useEffect(() => {

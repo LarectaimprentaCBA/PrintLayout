@@ -7,7 +7,7 @@
 import { PDFDocument } from 'pdf-lib';
 import { cropImageDataUrl } from '../lib/imageCrop.js';
 import { MM_TO_PT } from './vendor/fitText.js';
-import { resolveSizeLayout, zoneAsBox, effectivePad, padForSize } from './textLayout.js';
+import { resolveSizeLayout, hugBoxToText, effectivePad, padForSize } from './textLayout.js';
 import { makeCanvasMeasure, renderOverlayPng } from './drawOverlay.js';
 import { planchaCeldas, MARK_MARGIN_MM } from './planchas.js';
 import { drawCornerMarks, drawQr } from '../lib/exportPdf.js';
@@ -96,7 +96,7 @@ export async function buildRotulosPlanchaPdf({
         boxWmm: Math.max(1, s.textBox.w - 2 * pad), boxHmm: Math.max(1, s.textBox.h - 2 * pad),
         minPt, maxPt, lineHeightFactor, measurePt,
       });
-      const box = drawBox ? zoneAsBox(s.textBox) : null;
+      const box = drawBox ? hugBoxToText(s.textBox, layout, pad, measurePt, lineHeightFactor) : null;
       const png = renderOverlayPng({
         cutWmm: cutW, cutHmm: cutH, dpi, family,
         textColor: color, boxColor, drawBox, box, zone: s.textBox, layout, outline, lineHeightFactor,

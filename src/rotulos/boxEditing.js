@@ -54,14 +54,40 @@ export function moveBox(start, dxMm, dyMm, cutW, cutH) {
 }
 
 // Redimensiona en el marco LOCAL (rotado): proyecta el delta de pantalla a los
-// ejes de la caja, mueve el borde arrastrado dejando fijo el opuesto y recompone
-// el centro con la rotación.
+// ejes de la caja. Dos comportamientos "clásicos":
+//   · ESQUINAS (nw/ne/sw/se): proporcional (mantiene la proporción alto/ancho) y
+//     desde el CENTRO (el centro no se mueve) — como tirar de la esquina con
+//     Shift+Alt en un editor de diseño, pero sin teclas.
+//   · LADOS (n/s/e/w): un solo eje, con el borde opuesto fijo.
 export function resizeBox(edges, dxMm, dyMm, s, cutW, cutH) {
   const rad = ((s.rotation || 0) * Math.PI) / 180;
   const cos = Math.cos(rad);
   const sin = Math.sin(rad);
   const lx = dxMm * cos + dyMm * sin;
   const ly = -dxMm * sin + dyMm * cos;
+  const isCorner = (edges.left || edges.right) && (edges.top || edges.bottom);
+
+  if (isCorner) {
+    // Centro fijo: cada lado se mueve, así que el tamaño cambia al doble del
+    // arrastre. El signo depende de qué esquina se toma.
+    const sgnX = edges.right ? 1 : -1;
+    const sgnY = edges.bottom ? 1 : -1;
+    let w = s.w + 2 * sgnX * lx;
+    let h = s.h + 2 * sgnY * ly;
+    const ar = (s.w / s.h) || 1;
+    // Bloquea la proporción usando el eje que más se movió (se siente natural).
+    if (Math.abs(w / s.w - 1) >= Math.abs(h / s.h - 1)) h = w / ar; else w = h * ar;
+    w = Math.max(2, w);
+    h = Math.max(1, h);
+    // Acota a la hoja manteniendo la proporción (dos pasadas: al corregir un
+    // eje puede pasarse el otro).
+    if (w > cutW) { w = cutW; h = w / ar; }
+    if (h > cutH) { h = cutH; w = h * ar; }
+    if (w > cutW) { w = cutW; h = w / ar; }
+    const { cx, cy } = clampCenterRotated(s.x + s.w / 2, s.y + s.h / 2, w, h, s.rotation, cutW, cutH);
+    return { x: round2(cx - w / 2), y: round2(cy - h / 2), w: round2(w), h: round2(h), rotation: s.rotation || 0 };
+  }
+
   let w = s.w;
   let h = s.h;
   let shiftLx = 0;
