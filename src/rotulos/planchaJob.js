@@ -14,7 +14,7 @@
 
 import { planchaCeldas, MARK_MARGIN_MM } from './planchas.js';
 import { cellsToRoundedRectCuts } from '../lib/grid.js';
-import { resolveSizeLayout, hugBoxToText, effectivePad, padForSize } from './textLayout.js';
+import { resolveSizeLayout, resolveScaledOverlay, effectivePad, padForSize } from './textLayout.js';
 import { makeCanvasMeasure, drawRotuloOverlay } from './drawOverlay.js';
 import { cropImageDataUrl } from '../lib/imageCrop.js';
 import { buildRotulosPlanchaPdf, centerCoverRect } from './exportRotulos.js';
@@ -153,10 +153,14 @@ async function composeSizePng(si, spec, family, drawBox, measurePt, dpi = 300) {
   const hasText = String(spec.text ?? '').trim().length > 0;
   if (hasText && family && textBox) {
     const { layout, pad } = layoutFor(spec, si.size, textBox, drawBox, measurePt);
+    const { drawLayout, box, drawZone } = resolveScaledOverlay({
+      zone: textBox, layout, scale: spec.textScales?.[si.size] || 1, padMm: pad,
+      cutW: cutMm.w, cutH: cutMm.h, measurePt, lineHeightFactor: LINE_HEIGHT, maxPt: MAX_PT,
+    });
     drawRotuloOverlay(ctx, {
       scale, family, textColor: spec.color, boxColor: spec.boxColor,
-      drawBox, box: drawBox ? hugBoxToText(textBox, layout, pad, measurePt, LINE_HEIGHT) : null,
-      zone: textBox, layout, outline: spec.outline, lineHeightFactor: LINE_HEIGHT,
+      drawBox, box: drawBox ? box : null,
+      zone: drawZone, layout: drawLayout, outline: spec.outline, lineHeightFactor: LINE_HEIGHT,
     });
   }
   return { dataUrl: canvas.toDataURL('image/png'), width: W, height: H };
@@ -213,7 +217,7 @@ export async function buildRotulosPdfBytes(spec, { qr } = {}) {
     model: { sizes, arteIncluyeRecuadro: inputs.arteIncluyeRecuadro },
     family: inputs.family,
     color: spec.color, boxColor: spec.boxColor, noBox: spec.noBox, boxPadMm: spec.boxPadMm,
-    text: spec.text, lineModes: spec.lineModes, outline: spec.outline,
+    text: spec.text, lineModes: spec.lineModes, outline: spec.outline, textScales: spec.textScales,
     planchaId: spec.planchaId, markMarginMm: MARK_MARGIN_MM, qr: qrPayload,
   });
 }

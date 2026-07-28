@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { resolveSizeLayout, hugBoxToText, effectivePad, DEFAULT_BOX_PAD_MM, padForSize } from '../rotulos/textLayout.js';
+import { resolveSizeLayout, resolveScaledOverlay, effectivePad, DEFAULT_BOX_PAD_MM, padForSize } from '../rotulos/textLayout.js';
 import { makeCanvasMeasure, drawRotuloOverlay } from '../rotulos/drawOverlay.js';
 import { PLANCHA_LIST, planchaCeldas } from '../rotulos/planchas.js';
 import { RESIZE_HANDLES, RESIZE_EDGES, moveBox, resizeBox, fullLabelBox, clampCenterRotated, sanitizeBox } from '../rotulos/boxEditing.js';
@@ -73,7 +73,7 @@ function NumMm({ label, value, onChange }) {
   );
 }
 
-function PlanchaSizePreview({ sizeKey, cutMm, textBox, arteDataUrl, family, textColor, boxColor, drawBox, padMm, onPadChange, text, mode, onModeChange, outline, onBoxChange, onResetBox, isOverridden }) {
+function PlanchaSizePreview({ sizeKey, cutMm, textBox, arteDataUrl, family, textColor, boxColor, drawBox, padMm, onPadChange, text, mode, onModeChange, outline, onBoxChange, onResetBox, isOverridden, textScale = 1, onTextScaleChange }) {
   const DISP_W = 280;
   const cutW = cutMm?.w || 40;
   const cutH = cutMm?.h || 20;
@@ -142,11 +142,15 @@ function PlanchaSizePreview({ sizeKey, cutMm, textBox, arteDataUrl, family, text
     if (!measure || !textBox) return null;
     return resolveSizeLayout({ text, mode, boxWmm: Math.max(1, textBox.w - 2 * pad), boxHmm: Math.max(1, textBox.h - 2 * pad), minPt: MIN_PT, maxPt: MAX_PT, lineHeightFactor: LINE_HEIGHT, measurePt: measure });
   }, [measure, textBox, text, mode, pad]);
-  const nameBox = useMemo(() => {
-    if (!drawBox || !textBox) return null;
-    // El recuadro se ajusta al nombre (la zona dibujada es el máximo).
-    return hugBoxToText(textBox, layout, pad, measure, LINE_HEIGHT);
-  }, [drawBox, textBox, layout, pad, measure]);
+  // Abraza el nombre + aplica la escala de letra (la zona es el máximo; agrandar
+  // la lleva hasta el borde del sticker).
+  const scaled = useMemo(() => {
+    if (!textBox || !layout) return null;
+    return resolveScaledOverlay({
+      zone: textBox, layout, scale: textScale, padMm: pad,
+      cutW, cutH, measurePt: measure, lineHeightFactor: LINE_HEIGHT, maxPt: MAX_PT,
+    });
+  }, [textBox, layout, textScale, pad, cutW, cutH, measure]);
   const hasText = String(text ?? '').trim().length > 0;
 
   useEffect(() => {
@@ -160,10 +164,10 @@ function PlanchaSizePreview({ sizeKey, cutMm, textBox, arteDataUrl, family, text
     ctx.clearRect(0, 0, DISP_W, dispH);
     drawRotuloOverlay(ctx, {
       scale, family, textColor, boxColor,
-      drawBox: drawBox && hasText, box: nameBox, zone: textBox,
-      layout: hasText ? layout : null, outline, lineHeightFactor: LINE_HEIGHT,
+      drawBox: drawBox && hasText, box: scaled?.box, zone: scaled?.drawZone || textBox,
+      layout: hasText ? (scaled?.drawLayout || layout) : null, outline, lineHeightFactor: LINE_HEIGHT,
     });
-  }, [dispH, scale, family, textColor, boxColor, drawBox, hasText, nameBox, textBox, layout, outline]);
+  }, [dispH, scale, family, textColor, boxColor, drawBox, hasText, scaled, textBox, layout, outline]);
 
   return (
     <div className="rounded-lg border border-ink-700 bg-ink-950/40 p-3">
@@ -186,6 +190,25 @@ function PlanchaSizePreview({ sizeKey, cutMm, textBox, arteDataUrl, family, text
               {editing ? '✓ Listo' : '✎ Ajustar recuadro'}
             </button>
           )}
+          {onTextScaleChange && (() => {
+            // El −/+ se apoya en la escala REAL aplicada (topada por el sticker),
+            // así "+" deja de crecer cuando llega al borde y "−" reacciona al toque.
+            const base = hasText ? (scaled?.appliedScale ?? textScale) : textScale;
+            const isAuto = Math.abs(textScale - 1) < 0.01;
+            return (
+              <div className="flex items-center overflow-hidden rounded border border-ink-700" title="Tamaño de la letra (Auto = llena el recuadro; podés agrandar hasta el borde del sticker)">
+                <button type="button" onClick={() => onTextScaleChange(Math.max(0.4, base / 1.1))}
+                  className="px-1.5 py-0.5 text-[11px] leading-none text-ink-200 hover:bg-ink-700" title="Letra más chica">−</button>
+                <button type="button" onClick={() => onTextScaleChange(1)}
+                  className={`min-w-[42px] px-1 py-0.5 text-[10px] leading-none ${isAuto ? 'text-ink-400' : 'text-accent-300'}`}
+                  title="Volver a Auto">
+                  {isAuto ? 'Letra' : `${Math.round(base * 100)}%`}
+                </button>
+                <button type="button" onClick={() => onTextScaleChange(Math.min(3, base * 1.1))}
+                  className="px-1.5 py-0.5 text-[11px] leading-none text-ink-200 hover:bg-ink-700" title="Letra más grande">+</button>
+              </div>
+            );
+          })()}
           <div className="flex overflow-hidden rounded border border-ink-700">
             {LINE_MODES.map((m) => (
               <button key={m.v} type="button" onClick={() => onModeChange(m.v)}
@@ -261,6 +284,7 @@ export default function RotulosPlanchaModal({ open, init = null, onSubmit, onClo
   const [text, setText] = useState('');
   const [debouncedText, setDebouncedText] = useState('');
   const [lineModes, setLineModes] = useState({ grande: 'auto', intermedio: 'auto', chico: 'auto' });
+  const [textScales, setTextScales] = useState({});
   const [arteBySize, setArteBySize] = useState({});
   const [family, setFamily] = useState(null);
   const [feedback, setFeedback] = useState(null);
@@ -318,9 +342,11 @@ export default function RotulosPlanchaModal({ open, init = null, onSubmit, onClo
       if (init.outline) setOutline(init.outline);
       setText(init.text || '');
       if (init.lineModes) setLineModes(init.lineModes);
+      setTextScales(init.textScales || {});
     } else {
       // Trabajo nuevo: no arrastrar el nombre del armado anterior.
       setText('');
+      setTextScales({});
     }
     Promise.all([api.modelsList(), api.fontsList()]).then(([m, f]) => {
       const ms = Array.isArray(m) ? m : [];
@@ -417,6 +443,7 @@ export default function RotulosPlanchaModal({ open, init = null, onSubmit, onClo
       boxPadMm,
       text,
       lineModes,
+      textScales,
       outline,
       boxOverrides,
       name,
@@ -544,7 +571,9 @@ export default function RotulosPlanchaModal({ open, init = null, onSubmit, onClo
                       text={debouncedText} mode={lineModes[key]} outline={outline}
                       onModeChange={(m) => setLineModes((prev) => ({ ...prev, [key]: m }))}
                       onBoxChange={(b) => setOverride(key, b)} onResetBox={() => resetOverride(key)}
-                      isOverridden={!!boxOverrides[key]} />
+                      isOverridden={!!boxOverrides[key]}
+                      textScale={textScales[key] || 1}
+                      onTextScaleChange={(v) => setTextScales((prev) => ({ ...prev, [key]: v }))} />
                   );
                 })}
               </div>

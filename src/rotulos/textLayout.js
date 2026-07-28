@@ -3,8 +3,11 @@
 // ves = lo que imprimís".
 
 import { fitTextIntoBox, MM_TO_PT } from './vendor/fitText.js';
+import { clampCenterRotated } from './boxEditing.js';
 
 const norm = (s) => String(s ?? '').replace(/\r/g, '');
+const OVERLAY_MIN_PT = 3;
+const CUT_MARGIN_MM = 0.5; // margen mínimo entre la letra y el borde del sticker
 
 // Divide el texto en `count` líneas.
 //   count 1 → todo junto (los Enter pasan a ser espacios).
@@ -79,12 +82,16 @@ export function zoneAsBox(zone) {
 // del nombre + el aire, sin pasarse de la zona. Devuelve {x,y,w,h,radius,rotation}.
 // (El overlay dibuja el recuadro centrado en la zona, así que x/y son informativos;
 // lo que importa para el dibujo es w/h/radius.)
-export function hugBoxToText(zone, layout, padMm, measurePt, lineHeightFactor = 1.15) {
+export function hugBoxToText(zone, layout, padMm, measurePt, lineHeightFactor = 1.15, opts = {}) {
   if (!zone) return null;
   if (!layout || !measurePt || !Array.isArray(layout.lines) || layout.lines.length === 0) {
     return zoneAsBox(zone);
   }
   const p = Math.max(0, padMm || 0);
+  // Por defecto el recuadro no se pasa de la zona; si se pide (letra agrandada)
+  // el tope es el corte (opts.maxW/maxH).
+  const capW = Number.isFinite(opts.maxW) ? opts.maxW : zone.w;
+  const capH = Number.isFinite(opts.maxH) ? opts.maxH : zone.h;
   let maxWpt = 0;
   for (const ln of layout.lines) {
     const wpt = measurePt(ln || '', layout.fontSizePt);
@@ -92,11 +99,50 @@ export function hugBoxToText(zone, layout, padMm, measurePt, lineHeightFactor = 
   }
   const textWmm = maxWpt / MM_TO_PT;
   const textHmm = (layout.lines.length * layout.fontSizePt * lineHeightFactor) / MM_TO_PT;
-  const w = Math.max(1, Math.min(zone.w, textWmm + 2 * p));
-  const h = Math.max(1, Math.min(zone.h, textHmm + 2 * p));
+  const w = Math.max(1, Math.min(capW, textWmm + 2 * p));
+  const h = Math.max(1, Math.min(capH, textHmm + 2 * p));
   const cx = zone.x + zone.w / 2;
   const cy = zone.y + zone.h / 2;
   return { x: cx - w / 2, y: cy - h / 2, w, h, radius: Math.min(w, h) * 0.2, rotation: zone.rotation || 0 };
+}
+
+// Combina "abrazar el nombre" + escala de letra manual. `scale` 1 = Auto (la
+// letra llena la zona dibujada). scale > 1 agranda la letra MÁS ALLÁ de la zona,
+// topada para que no se pase del corte; scale < 1 la achica. Devuelve:
+//   · drawLayout: el layout con la fuente escalada/topada,
+//   · box: el recuadro que abraza la letra (tope = corte cuando se agranda),
+//   · drawZone: la zona con el centro reubicado para que todo quede en el corte.
+export function resolveScaledOverlay({
+  zone, layout, scale = 1, padMm = 0, cutW, cutH, measurePt, lineHeightFactor = 1.15, maxPt = 120,
+}) {
+  if (!zone || !layout) {
+    return { drawLayout: layout, box: zone ? zoneAsBox(zone) : null, drawZone: zone };
+  }
+  const s = scale > 0 ? scale : 1;
+  let font = layout.fontSizePt * s;
+  // Tope físico: la letra (con su aire) no puede pasar el borde del sticker.
+  if (measurePt && Array.isArray(layout.lines) && layout.lines.length && Number.isFinite(cutW) && Number.isFinite(cutH)) {
+    const maxW = Math.max(1, cutW - 2 * padMm - 2 * CUT_MARGIN_MM);
+    const maxH = Math.max(1, cutH - 2 * padMm - 2 * CUT_MARGIN_MM);
+    const cap = fitTextIntoBox({ lines: layout.lines, boxWmm: maxW, boxHmm: maxH, minPt: OVERLAY_MIN_PT, maxPt, lineHeightFactor, measurePt });
+    font = Math.min(font, cap.fontSizePt);
+  }
+  font = Math.max(OVERLAY_MIN_PT, font);
+  const drawLayout = { ...layout, fontSizePt: font };
+  // Escala REALMENTE aplicada (tras el tope del sticker): el control −/+ se apoya
+  // en esto para no acumular en el vacío una vez que la letra llegó al borde.
+  const appliedScale = layout.fontSizePt > 0 ? font / layout.fontSizePt : 1;
+  const useCut = s > 1 && Number.isFinite(cutW) && Number.isFinite(cutH);
+  const box = hugBoxToText(zone, drawLayout, padMm, measurePt, lineHeightFactor, useCut ? { maxW: cutW, maxH: cutH } : {});
+  let drawZone = zone;
+  if (box && useCut) {
+    // El recuadro puede ser más grande que la zona: recentramos para no salirnos.
+    const cx = zone.x + zone.w / 2;
+    const cy = zone.y + zone.h / 2;
+    const { cx: ncx, cy: ncy } = clampCenterRotated(cx, cy, box.w, box.h, zone.rotation, cutW, cutH);
+    drawZone = { ...zone, x: ncx - zone.w / 2, y: ncy - zone.h / 2 };
+  }
+  return { drawLayout, box, drawZone, appliedScale };
 }
 
 // Aire efectivo dentro del recuadro = el aire pedido + el grosor del contorno,

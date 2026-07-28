@@ -7,7 +7,7 @@
 import { PDFDocument } from 'pdf-lib';
 import { cropImageDataUrl } from '../lib/imageCrop.js';
 import { MM_TO_PT } from './vendor/fitText.js';
-import { resolveSizeLayout, hugBoxToText, effectivePad, padForSize } from './textLayout.js';
+import { resolveSizeLayout, resolveScaledOverlay, effectivePad, padForSize } from './textLayout.js';
 import { makeCanvasMeasure, renderOverlayPng } from './drawOverlay.js';
 import { planchaCeldas, MARK_MARGIN_MM } from './planchas.js';
 import { drawCornerMarks, drawQr } from '../lib/exportPdf.js';
@@ -47,6 +47,7 @@ export async function buildRotulosPlanchaPdf({
   noBox = false,
   text,
   lineModes = {},
+  textScales = {},
   outline = null,
   boxPadMm = 0.8, // número (global) u objeto {grande,intermedio,chico}
   planchaId = 'plancha1',
@@ -96,10 +97,14 @@ export async function buildRotulosPlanchaPdf({
         boxWmm: Math.max(1, s.textBox.w - 2 * pad), boxHmm: Math.max(1, s.textBox.h - 2 * pad),
         minPt, maxPt, lineHeightFactor, measurePt,
       });
-      const box = drawBox ? hugBoxToText(s.textBox, layout, pad, measurePt, lineHeightFactor) : null;
+      const { drawLayout, box, drawZone } = resolveScaledOverlay({
+        zone: s.textBox, layout, scale: textScales[key] || 1, padMm: pad,
+        cutW, cutH, measurePt, lineHeightFactor, maxPt,
+      });
       const png = renderOverlayPng({
         cutWmm: cutW, cutHmm: cutH, dpi, family,
-        textColor: color, boxColor, drawBox, box, zone: s.textBox, layout, outline, lineHeightFactor,
+        textColor: color, boxColor, drawBox, box: drawBox ? box : null,
+        zone: drawZone, layout: drawLayout, outline, lineHeightFactor,
       });
       overlayImg = await doc.embedPng(dataUrlToBytes(png));
     }

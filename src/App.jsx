@@ -2304,6 +2304,7 @@ export default function App() {
         boxPadMm: ov.boxPadMm ?? undefined,
         outline: ov.outline || null,
         lineModes: ov.lineModes || {},
+        textScales: ov.textScales || {},
         boxOverrides: ov.boxOverrides || {},
       };
       if (!spec.planchaId) throw new Error('El pedido no trae plancha_id.');
