@@ -302,6 +302,26 @@ async function upsertTipografiasRotulos(cfg, rows) {
   return true;
 }
 
+// Upsert de filas del catálogo de mazos "busca2" (PK id, merge-duplicates).
+// PrintLayout es la fuente de verdad; la web /busca2 lo lee.
+async function upsertMazosBusca2(cfg, rows) {
+  assertCfg(cfg);
+  const list = Array.isArray(rows) ? rows : [];
+  if (list.length === 0) return true;
+  const url = `${cfg.supabaseUrl}/rest/v1/mazos_busca2`;
+  const res = await net.fetch(url, {
+    method: 'POST',
+    headers: {
+      ...authHeaders(cfg),
+      'Content-Type': 'application/json',
+      Prefer: 'resolution=merge-duplicates,return=minimal',
+    },
+    body: JSON.stringify(list),
+  });
+  if (!res.ok) throw await readErr(res, 'mazos_busca2 upsert');
+  return true;
+}
+
 // Upsert de una clave de configuración (tabla key-value `config_fotos`, PK clave).
 async function upsertConfig(cfg, clave, valor) {
   assertCfg(cfg);
@@ -332,6 +352,7 @@ module.exports = {
   publicObjectUrl,
   upsertModelosRotulos,
   upsertTipografiasRotulos,
+  upsertMazosBusca2,
   // Dobble
   listPendingDobble,
   downloadDobbleObject,

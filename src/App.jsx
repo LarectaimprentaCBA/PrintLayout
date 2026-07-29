@@ -29,6 +29,7 @@ import QrCutPanelModal from './components/QrCutPanelModal.jsx';
 import ImageEditorModal from './components/ImageEditorModal.jsx';
 import ImageCropModal from './components/ImageCropModal.jsx';
 import SaveTemplateModal from './components/SaveTemplateModal.jsx';
+import PublishMazoModal from './components/PublishMazoModal.jsx';
 import PrintModal from './components/PrintModal.jsx';
 import SaveJobModal from './components/SaveJobModal.jsx';
 import JobsListModal from './components/JobsListModal.jsx';
@@ -276,6 +277,8 @@ export default function App() {
   const [saveTemplatePrompt, setSaveTemplatePrompt] = useState(null); // template temporal | null
   const [printPrompt, setPrintPrompt] = useState(null); // { face } | null
   const [exportMarksPrompt, setExportMarksPrompt] = useState(false); // pregunta marcas al exportar
+  const [publishMazoPrompt, setPublishMazoPrompt] = useState(null); // { previewUrl } | null (publicar mazo a busca2)
+  const [publishingMazo, setPublishingMazo] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [cutting, setCutting] = useState(false);
   const [toast, setToast] = useState(null);
@@ -3098,6 +3101,67 @@ export default function App() {
     }
   };
 
+  // Primera carta ya renderizada del mazo posado (las images del job son cartas
+  // rasterizadas, nombradas "Carta N"). Sirve de preview del catálogo.
+  const firstCardPreview = () => {
+    for (const img of layout.imageMap.values()) {
+      if (typeof img?.name === 'string' && img.name.startsWith('Carta ') && img.dataUrl) {
+        return img.dataUrl;
+      }
+    }
+    return '';
+  };
+
+  // Abre el modal "Guardar y publicar mazo" (solo mazos Dobble posados).
+  const handlePublishMazo = () => {
+    if (!selected?.dobble) {
+      setToast({ kind: 'error', text: 'Abrí un mazo Dobble para poder publicarlo.' });
+      return;
+    }
+    const preview = firstCardPreview();
+    if (!preview) {
+      setToast({ kind: 'error', text: 'No hay cartas renderizadas todavía. Reimportá el mazo.' });
+      return;
+    }
+    setPublishMazoPrompt({ previewUrl: preview });
+  };
+
+  // Confirma la publicación: arma el PDF del mazo (mismo camino que Exportar),
+  // toma la carta de preview y manda TODO al main (busca2:publish-mazo), que
+  // guarda el PDF, registra el mazo_id, sube la preview y hace upsert de la ficha.
+  const submitPublishMazo = async ({ id, nombre, descripcion, orden }) => {
+    if (!selected?.dobble || publishingMazo) return;
+    setPublishingMazo(true);
+    setToast(null);
+    try {
+      const previewDataUrl = publishMazoPrompt?.previewUrl || firstCardPreview();
+      if (!previewDataUrl) throw new Error('No hay carta de preview.');
+      // El mazo Dobble es doble faz; reusamos el mismo build que Exportar PDF.
+      const bytes = selected.doubleSided
+        ? await buildDoubleSidedPdf(selected, layout.assignmentsFront, layout.assignmentsBack, layout.imageMap)
+        : await buildPdf(selected, layout.assignmentsFront, layout.imageMap);
+      const res = await window.printlayout.busca2.publishMazo({
+        id,
+        nombre,
+        descripcion,
+        orden,
+        pdfBytes: bytes,
+        previewDataUrl,
+      });
+      if (res?.ok) {
+        setPublishMazoPrompt(null);
+        setToast({ kind: 'success', text: `Mazo "${nombre}" publicado en la web.` });
+      } else {
+        setToast({ kind: 'error', text: `No se pudo publicar: ${res?.error || 'error desconocido'}` });
+      }
+    } catch (err) {
+      console.error(err);
+      setToast({ kind: 'error', text: `No se pudo publicar: ${err.message}` });
+    } finally {
+      setPublishingMazo(false);
+    }
+  };
+
   // Abre el PrintModal donde el usuario elige impresora + copias. La
   // impresion real ocurre en runPrint cuando el modal confirma.
   const handlePrint = (face = 'front') => {
@@ -3631,6 +3695,7 @@ export default function App() {
             onClearDobbleImage={handleDobbleClearImage}
             onSetDobbleCaja={handleDobbleCaja}
             onClearDobbleCaja={handleDobbleClearCaja}
+            onPublishMazo={handlePublishMazo}
             onToggleDoubleSided={handleToggleDoubleSided}
             onChangeWhiteBorder={(v) => handlePatchActiveTemplate({ cellWhiteBorderMm: v })}
             onChangeBorderLine={(v) => handlePatchActiveTemplate({ cellBorderLineMm: v })}
@@ -3925,6 +3990,15 @@ export default function App() {
           onConfirm={submitCountPack}
           onCancel={() => setCountPackFiles(null)}
           qrConfig={qrConfig}
+        />
+
+        <PublishMazoModal
+          open={!!publishMazoPrompt}
+          defaultName={selected?.name || ''}
+          previewUrl={publishMazoPrompt?.previewUrl || ''}
+          busy={publishingMazo}
+          onConfirm={submitPublishMazo}
+          onCancel={() => { if (!publishingMazo) setPublishMazoPrompt(null); }}
         />
 
         <SaveTemplateModal

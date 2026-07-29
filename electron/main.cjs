@@ -1187,6 +1187,60 @@ ipcMain.handle('rotulos:publish-web', async () => {
   }
 });
 
+// Publica un mazo Dobble a la web /busca2 de una: guarda el PDF ya armado en un
+// lugar estable (userData/busca2-mazos/<id>.pdf), lo registra en el mapa
+// mazo_id→PDF (para que el exportador automático de pedidos lo copie), sube la
+// preview al bucket público `mazos-busca2` (path <id>.png, x-upsert) y hace
+// upsert de la ficha en la tabla `mazos_busca2`. TODO en main: la service key
+// NUNCA sale al renderer ni se loguea. Idempotente (mismo id pisa todo).
+ipcMain.handle('busca2:publish-mazo', async (_evt, payload = {}) => {
+  try {
+    const { id, nombre, descripcion, orden, pdfBytes, previewDataUrl } = payload;
+    const mazoId = String(id || '').trim();
+    const name = String(nombre || '').trim();
+    if (!mazoId) return { ok: false, error: 'Falta el identificador del mazo.' };
+    if (!name) return { ok: false, error: 'El nombre es obligatorio.' };
+    if (!pdfBytes) return { ok: false, error: 'No hay PDF del mazo para guardar.' };
+    if (!previewDataUrl) return { ok: false, error: 'No hay imagen de preview del mazo.' };
+
+    const cfg = intakeService.getConfig();
+    if (!cfg?.supabaseUrl || !cfg?.serviceKey) {
+      return { ok: false, error: 'Configurá Supabase (URL + service key) en el panel de entrada de pedidos.' };
+    }
+
+    // 1) Guardar el PDF en una ubicación estable + registrar mazo_id → PDF.
+    const pdfPath = path.join(app.getPath('userData'), 'busca2-mazos', `${mazoId}.pdf`);
+    writePdfSilent(pdfPath, Buffer.from(pdfBytes));
+    intakeService.setConfig({
+      dobbleMazoPdfMap: { ...(cfg.dobbleMazoPdfMap || {}), [mazoId]: pdfPath },
+    });
+
+    // 2) Subir la preview al bucket público (pisa con x-upsert).
+    const previewObjectPath = `${mazoId}.png`;
+    await supabase.uploadPublicObject(
+      cfg, 'mazos-busca2', previewObjectPath, dataUrlToBuffer(previewDataUrl), 'image/png',
+    );
+    const previewUrl = supabase.publicObjectUrl(cfg, 'mazos-busca2', previewObjectPath);
+
+    // 3) Upsert de la ficha del catálogo. precio_id null → la web usa armado-31.
+    const ordenNum = Number.isFinite(Number(orden)) ? Math.floor(Number(orden)) : 0;
+    const row = {
+      id: mazoId,
+      nombre: name,
+      descripcion: (descripcion && String(descripcion).trim()) || null,
+      preview_path: previewUrl,
+      precio_id: null,
+      activo: true,
+      orden: ordenNum,
+    };
+    await supabase.upsertMazosBusca2(cfg, [row]);
+
+    return { ok: true, previewUrl, pdfPath, id: mazoId };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 // Migración one-shot: copia el catálogo LOCAL (userData/rotulos) a la carpeta
 // compartida configurada. Explícito (botón), no automático. Si el destino ya
 // tiene índice, NO pisa salvo overwrite:true (el renderer avisa antes).

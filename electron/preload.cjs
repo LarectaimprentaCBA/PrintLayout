@@ -84,6 +84,10 @@ contextBridge.exposeInMainWorld('printlayout', {
     tracePotrace: (arrayBuffer, opts) =>
       ipcRenderer.invoke('contour:trace-potrace', arrayBuffer, opts),
   },
+  // Publicar un mazo Dobble a la web /busca2 (PDF + preview + ficha) de una.
+  busca2: {
+    publishMazo: (payload) => ipcRenderer.invoke('busca2:publish-mazo', payload),
+  },
   pdf: {
     save: (defaultName, bytes) =>
       ipcRenderer.invoke('export:save-pdf', { defaultName, bytes }),

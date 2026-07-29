@@ -103,6 +103,7 @@ export default function PropertiesSidebar({
   onClearDobbleImage,
   onSetDobbleCaja,
   onClearDobbleCaja,
+  onPublishMazo,
   onChangeWhiteBorder,
   onChangeBorderLine,
   onChangeBorderColor,
@@ -691,6 +692,17 @@ export default function PropertiesSidebar({
                     className="w-full rounded border border-accent-500/40 bg-accent-500/10 px-2 py-1 text-[11px] font-medium text-accent-200 hover:bg-accent-500/20 disabled:opacity-40"
                   >
                     Cambiar plantilla…
+                  </button>
+                )}
+                {onPublishMazo && (
+                  <button
+                    type="button"
+                    disabled={dobbleBusy}
+                    onClick={onPublishMazo}
+                    title="Deja el mazo listo en la web: guarda el PDF, registra el mazo y publica la ficha en el catálogo."
+                    className="w-full rounded border border-t border-accent-500/50 bg-accent-600 px-2 py-1.5 text-[11px] font-semibold text-white hover:bg-accent-500 disabled:opacity-40"
+                  >
+                    Guardar y publicar mazo
                   </button>
                 )}
                 {dobbleBusy && (
