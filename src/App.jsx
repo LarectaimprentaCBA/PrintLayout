@@ -3103,28 +3103,51 @@ export default function App() {
     }
   };
 
-  // Compone la carta de preview sobre un CÍRCULO BLANCO (como la de mundialista):
-  // así en la web se ve como una carta impresa en papel blanco aunque el mazo
-  // tenga fondo transparente. Si la carta ya trae fondo propio (color/imagen),
-  // ese fondo gana porque se dibuja ENCIMA del blanco.
+  // Compone la carta de preview como una CARTA REDONDA visible sobre cualquier
+  // fondo (la web muestra la imagen tal cual, sin recortarla ni darle sombra):
+  // círculo blanco + borde fino gris + sombra suave, con las esquinas
+  // transparentes. Así se ve como carta impresa aunque el recuadro de la web sea
+  // blanco (antes el cuadrado blanco se "fundía" con el fondo). Los símbolos se
+  // recortan al círculo; si la carta trae fondo propio, ese gana (va encima).
   const cardOnWhiteCircle = (dataUrl) => new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
-      const size = Math.max(img.naturalWidth, img.naturalHeight) || 512;
+      const src = Math.max(img.naturalWidth, img.naturalHeight) || 1024;
+      const pad = Math.round(src * 0.06); // margen para que entre la sombra
+      const size = src + pad * 2;
       const canvas = document.createElement('canvas');
       canvas.width = size;
       canvas.height = size;
       const ctx = canvas.getContext('2d');
+      const cx = size / 2;
+      const cy = size / 2;
+      const r = src / 2;
+      // 1) Círculo blanco con sombra suave (la carta "flota" sobre la página).
       ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,0.20)';
+      ctx.shadowBlur = pad * 0.9;
+      ctx.shadowOffsetY = Math.round(pad * 0.25);
       ctx.beginPath();
-      ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.closePath();
       ctx.fillStyle = '#ffffff';
       ctx.fill();
       ctx.restore();
-      const dx = (size - img.naturalWidth) / 2;
-      const dy = (size - img.naturalHeight) / 2;
-      ctx.drawImage(img, dx, dy);
+      // 2) Símbolos, recortados al círculo (nada se escapa del canto).
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.closePath();
+      ctx.clip();
+      ctx.drawImage(img, cx - img.naturalWidth / 2, cy - img.naturalHeight / 2);
+      ctx.restore();
+      // 3) Borde fino gris claro para marcar el canto de la carta sobre blanco.
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.closePath();
+      ctx.lineWidth = Math.max(2, Math.round(src * 0.004));
+      ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+      ctx.stroke();
       resolve(canvas.toDataURL('image/png'));
     };
     img.onerror = () => resolve(dataUrl);
