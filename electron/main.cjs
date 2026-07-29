@@ -1242,6 +1242,68 @@ ipcMain.handle('busca2:publish-mazo', async (_evt, payload = {}) => {
   }
 });
 
+// Lista las fichas de mazos publicadas en /busca2 (para el panel de gestión).
+ipcMain.handle('busca2:list-mazos', async () => {
+  try {
+    const cfg = intakeService.getConfig();
+    if (!cfg?.supabaseUrl || !cfg?.serviceKey) {
+      return { ok: false, error: 'Configurá Supabase (URL + service key) en el panel de entrada de pedidos.' };
+    }
+    const mazos = await supabase.listMazosBusca2(cfg);
+    return { ok: true, mazos };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// Edita campos de una ficha (nombre, descripción, orden, activo). No toca el PDF
+// ni la preview.
+ipcMain.handle('busca2:update-mazo', async (_evt, { id, fields } = {}) => {
+  try {
+    const mazoId = String(id || '').trim();
+    if (!mazoId) return { ok: false, error: 'Falta el identificador del mazo.' };
+    const cfg = intakeService.getConfig();
+    if (!cfg?.supabaseUrl || !cfg?.serviceKey) {
+      return { ok: false, error: 'Configurá Supabase (URL + service key) en el panel de entrada de pedidos.' };
+    }
+    // Solo campos editables; descripcion NUNCA null (columna NOT NULL).
+    const out = {};
+    if (typeof fields?.nombre === 'string') out.nombre = fields.nombre.trim();
+    if (fields?.descripcion != null) out.descripcion = String(fields.descripcion).trim();
+    if (fields?.orden != null && Number.isFinite(Number(fields.orden))) out.orden = Math.floor(Number(fields.orden));
+    if (typeof fields?.activo === 'boolean') out.activo = fields.activo;
+    if (Object.keys(out).length === 0) return { ok: false, error: 'No hay cambios para guardar.' };
+    if (out.nombre === '') return { ok: false, error: 'El nombre no puede quedar vacío.' };
+    await supabase.patchMazoBusca2(cfg, mazoId, out);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// Borra una ficha de /busca2: saca la fila de la tabla, borra la preview del
+// bucket público y limpia el registro mazo_id→PDF (deja el PDF local por las
+// dudas). Idempotente.
+ipcMain.handle('busca2:delete-mazo', async (_evt, { id } = {}) => {
+  try {
+    const mazoId = String(id || '').trim();
+    if (!mazoId) return { ok: false, error: 'Falta el identificador del mazo.' };
+    const cfg = intakeService.getConfig();
+    if (!cfg?.supabaseUrl || !cfg?.serviceKey) {
+      return { ok: false, error: 'Configurá Supabase (URL + service key) en el panel de entrada de pedidos.' };
+    }
+    await supabase.deleteMazoBusca2(cfg, mazoId);
+    // La preview es best-effort: si falla el borrado del objeto, no cortamos.
+    try { await supabase.removePublicObject(cfg, 'mazos-busca2', `${mazoId}.png`); } catch (_) { /* ignore */ }
+    // Sacar del mapa mazo_id→PDF (para que no quede colgado).
+    const map = { ...(cfg.dobbleMazoPdfMap || {}) };
+    if (map[mazoId]) { delete map[mazoId]; intakeService.setConfig({ dobbleMazoPdfMap: map }); }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 // Migración one-shot: copia el catálogo LOCAL (userData/rotulos) a la carpeta
 // compartida configurada. Explícito (botón), no automático. Si el destino ya
 // tiene índice, NO pisa salvo overwrite:true (el renderer avisa antes).

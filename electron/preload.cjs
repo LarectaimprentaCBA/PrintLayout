@@ -84,9 +84,12 @@ contextBridge.exposeInMainWorld('printlayout', {
     tracePotrace: (arrayBuffer, opts) =>
       ipcRenderer.invoke('contour:trace-potrace', arrayBuffer, opts),
   },
-  // Publicar un mazo Dobble a la web /busca2 (PDF + preview + ficha) de una.
+  // Publicar / gestionar mazos Dobble de la web /busca2.
   busca2: {
     publishMazo: (payload) => ipcRenderer.invoke('busca2:publish-mazo', payload),
+    listMazos: () => ipcRenderer.invoke('busca2:list-mazos'),
+    updateMazo: (id, fields) => ipcRenderer.invoke('busca2:update-mazo', { id, fields }),
+    deleteMazo: (id) => ipcRenderer.invoke('busca2:delete-mazo', { id }),
   },
   pdf: {
     save: (defaultName, bytes) =>

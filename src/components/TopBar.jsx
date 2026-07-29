@@ -292,6 +292,7 @@ export default function TopBar({
   onSaveJobAs,
   onOpenJob,
   onOpenIntake,
+  onOpenMazosPublicados,
   onOpenQrCut,
   // Utilidades globales
   onOpenTemplates,
@@ -457,6 +458,16 @@ export default function TopBar({
                 className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:bg-ink-700"
               >
                 Pedidos
+              </button>
+            )}
+            {onOpenMazosPublicados && (
+              <button
+                type="button"
+                onClick={onOpenMazosPublicados}
+                title="Ver, editar y borrar los mazos Dobble publicados en la web /busca2"
+                className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:bg-ink-700"
+              >
+                Mazos web
               </button>
             )}
             {onOpenQrCut && (

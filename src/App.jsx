@@ -30,6 +30,7 @@ import ImageEditorModal from './components/ImageEditorModal.jsx';
 import ImageCropModal from './components/ImageCropModal.jsx';
 import SaveTemplateModal from './components/SaveTemplateModal.jsx';
 import PublishMazoModal from './components/PublishMazoModal.jsx';
+import MazosPublicadosModal from './components/MazosPublicadosModal.jsx';
 import PrintModal from './components/PrintModal.jsx';
 import SaveJobModal from './components/SaveJobModal.jsx';
 import JobsListModal from './components/JobsListModal.jsx';
@@ -162,6 +163,7 @@ export default function App() {
   const [presetsModalOpen, setPresetsModalOpen] = useState(false);
   const [pdfToImageOpen, setPdfToImageOpen] = useState(false);
   const [intakePanelOpen, setIntakePanelOpen] = useState(false);
+  const [mazosPublicadosOpen, setMazosPublicadosOpen] = useState(false);
   const [qrCutPanelOpen, setQrCutPanelOpen] = useState(false);
   // Config del server QR (posición del QR + prefijo del nombre). Se usa para
   // dibujar el QR en la vista previa y en la impresión directa. Se refresca al
@@ -3101,6 +3103,34 @@ export default function App() {
     }
   };
 
+  // Compone la carta de preview sobre un CÍRCULO BLANCO (como la de mundialista):
+  // así en la web se ve como una carta impresa en papel blanco aunque el mazo
+  // tenga fondo transparente. Si la carta ya trae fondo propio (color/imagen),
+  // ese fondo gana porque se dibuja ENCIMA del blanco.
+  const cardOnWhiteCircle = (dataUrl) => new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const size = Math.max(img.naturalWidth, img.naturalHeight) || 512;
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+      ctx.closePath();
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.restore();
+      const dx = (size - img.naturalWidth) / 2;
+      const dy = (size - img.naturalHeight) / 2;
+      ctx.drawImage(img, dx, dy);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+
   // Primera carta ya renderizada del mazo posado (las images del job son cartas
   // rasterizadas, nombradas "Carta N"). Sirve de preview del catálogo.
   const firstCardPreview = () => {
@@ -3134,8 +3164,10 @@ export default function App() {
     setPublishingMazo(true);
     setToast(null);
     try {
-      const previewDataUrl = publishMazoPrompt?.previewUrl || firstCardPreview();
-      if (!previewDataUrl) throw new Error('No hay carta de preview.');
+      const rawPreview = publishMazoPrompt?.previewUrl || firstCardPreview();
+      if (!rawPreview) throw new Error('No hay carta de preview.');
+      // Círculo blanco detrás (como mundialista) para que se vea como carta impresa.
+      const previewDataUrl = await cardOnWhiteCircle(rawPreview);
       // El mazo Dobble es doble faz; reusamos el mismo build que Exportar PDF.
       const bytes = selected.doubleSided
         ? await buildDoubleSidedPdf(selected, layout.assignmentsFront, layout.assignmentsBack, layout.imageMap)
@@ -3601,6 +3633,7 @@ export default function App() {
           onCheckUpdates={handleCheckUpdates}
           updateChecking={updateChecking}
           onOpenIntake={isLaRecta ? () => setIntakePanelOpen(true) : undefined}
+          onOpenMazosPublicados={isLaRecta ? () => setMazosPublicadosOpen(true) : undefined}
           onOpenQrCut={() => setQrCutPanelOpen(true)}
         />
         <TabsBar
@@ -3999,6 +4032,11 @@ export default function App() {
           busy={publishingMazo}
           onConfirm={submitPublishMazo}
           onCancel={() => { if (!publishingMazo) setPublishMazoPrompt(null); }}
+        />
+
+        <MazosPublicadosModal
+          open={mazosPublicadosOpen}
+          onClose={() => setMazosPublicadosOpen(false)}
         />
 
         <SaveTemplateModal

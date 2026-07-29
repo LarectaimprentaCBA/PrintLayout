@@ -322,6 +322,66 @@ async function upsertMazosBusca2(cfg, rows) {
   return true;
 }
 
+// Lista todas las fichas del catálogo de mazos "busca2" (orden por `orden`).
+async function listMazosBusca2(cfg) {
+  assertCfg(cfg);
+  const q = new URLSearchParams();
+  q.set('select', '*');
+  q.set('order', 'orden.asc');
+  const url = `${cfg.supabaseUrl}/rest/v1/mazos_busca2?${q.toString()}`;
+  const res = await net.fetch(url, {
+    method: 'GET',
+    headers: { ...authHeaders(cfg), Accept: 'application/json' },
+  });
+  if (!res.ok) throw await readErr(res, 'mazos_busca2 list');
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
+}
+
+// Edita campos de una ficha (PATCH por id). `fields` = solo lo que cambia.
+async function patchMazoBusca2(cfg, id, fields) {
+  assertCfg(cfg);
+  const url = `${cfg.supabaseUrl}/rest/v1/mazos_busca2?id=eq.${encodeURIComponent(id)}`;
+  const res = await net.fetch(url, {
+    method: 'PATCH',
+    headers: {
+      ...authHeaders(cfg),
+      'Content-Type': 'application/json',
+      Prefer: 'return=minimal',
+    },
+    body: JSON.stringify(fields || {}),
+  });
+  if (!res.ok) throw await readErr(res, 'mazos_busca2 patch');
+  return true;
+}
+
+// Borra una ficha del catálogo (DELETE por id). Idempotente.
+async function deleteMazoBusca2(cfg, id) {
+  assertCfg(cfg);
+  const url = `${cfg.supabaseUrl}/rest/v1/mazos_busca2?id=eq.${encodeURIComponent(id)}`;
+  const res = await net.fetch(url, {
+    method: 'DELETE',
+    headers: { ...authHeaders(cfg), Prefer: 'return=minimal' },
+  });
+  if (!res.ok) throw await readErr(res, 'mazos_busca2 delete');
+  return true;
+}
+
+// Borra objetos de un bucket público (DELETE /storage/v1/object/<bucket>).
+async function removePublicObject(cfg, bucket, objectPaths) {
+  assertCfg(cfg);
+  const list = (Array.isArray(objectPaths) ? objectPaths : [objectPaths]).filter(Boolean);
+  if (list.length === 0) return true;
+  const url = `${cfg.supabaseUrl}/storage/v1/object/${bucket}`;
+  const res = await net.fetch(url, {
+    method: 'DELETE',
+    headers: { ...authHeaders(cfg), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prefixes: list }),
+  });
+  if (!res.ok) throw await readErr(res, `Storage DELETE (${bucket})`);
+  return true;
+}
+
 // Upsert de una clave de configuración (tabla key-value `config_fotos`, PK clave).
 async function upsertConfig(cfg, clave, valor) {
   assertCfg(cfg);
@@ -353,6 +413,10 @@ module.exports = {
   upsertModelosRotulos,
   upsertTipografiasRotulos,
   upsertMazosBusca2,
+  listMazosBusca2,
+  patchMazoBusca2,
+  deleteMazoBusca2,
+  removePublicObject,
   // Dobble
   listPendingDobble,
   downloadDobbleObject,
