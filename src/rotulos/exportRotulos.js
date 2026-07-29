@@ -14,6 +14,12 @@ import { drawCornerMarks, drawQr } from '../lib/exportPdf.js';
 
 const SIZE_KEYS = ['grande', 'intermedio', 'chico'];
 
+// Sangrado del arte: el arte se imprime 1 mm MÁS GRANDE que el corte por cada
+// lado (grande 62×42, interm 42×22, chico 42×9) y el corte queda adentro. Así
+// la tolerancia normal de registro del plotter cae siempre sobre color y no se
+// ve borde blanco / corte corrido (es lo que hace el flujo histórico de Corel).
+const BLEED_MM = 1;
+
 function dataUrlToBytes(dataUrl) {
   const comma = dataUrl.indexOf(',');
   const base64 = dataUrl.slice(comma + 1);
@@ -79,7 +85,8 @@ export async function buildRotulosPlanchaPdf({
 
     let arteImg = null;
     if (s.dataUrl && s.wPx && s.hPx && cutW && cutH) {
-      const rect = centerCoverRect(s.wPx, s.hPx, cutW, cutH);
+      // Recortar el arte a la proporción CON sangrado (corte + 1mm por lado).
+      const rect = centerCoverRect(s.wPx, s.hPx, cutW + 2 * BLEED_MM, cutH + 2 * BLEED_MM);
       const cropped = await cropImageDataUrl(s.dataUrl, rect, s.wPx, s.hPx);
       const bytes = dataUrlToBytes(cropped);
       const mime = detectMime(cropped, 'image/png');
@@ -119,7 +126,10 @@ export async function buildRotulosPlanchaPdf({
     const yBottom = pageHpt - cell.y * MM_TO_PT - cell.h * MM_TO_PT;
     const w = cell.w * MM_TO_PT;
     const h = cell.h * MM_TO_PT;
-    if (ps.arteImg) page.drawImage(ps.arteImg, { x, y: yBottom, width: w, height: h });
+    // El ARTE va con sangrado: 1 mm más grande por cada lado, centrado en el
+    // corte. El corte (cortes) y el NOMBRE quedan al tamaño del corte.
+    const bPt = BLEED_MM * MM_TO_PT;
+    if (ps.arteImg) page.drawImage(ps.arteImg, { x: x - bPt, y: yBottom - bPt, width: w + 2 * bPt, height: h + 2 * bPt });
     if (ps.overlayImg) page.drawImage(ps.overlayImg, { x, y: yBottom, width: w, height: h });
   }
 
