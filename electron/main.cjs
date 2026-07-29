@@ -4,6 +4,7 @@ const {
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
+const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { autoUpdater } = require('electron-updater');
 const potrace = require('potrace');
@@ -1281,8 +1282,26 @@ ipcMain.handle('qrcut:ensure-base-cut', async (_evt, payload) => {
     const dir = (cfg && cfg.cortesDir ? String(cfg.cortesDir) : '').trim();
     if (!dir) return { ok: false, error: 'No hay carpeta de cortes configurada.' };
     const outPath = path.join(dir, `${planchaId}.plt`);
+    // Firma de los parámetros que definen el corte. Si el .plt ya existe pero se
+    // generó con OTROS parámetros (típico: cambió el margen de marcas de 10 a 25),
+    // hay que REGENERARLO, sino el corte servido por QR no coincide con las marcas
+    // impresas. El nombre del .plt es fijo (= texto del QR) y no se puede versionar,
+    // así que guardamos la firma en un sidecar <planchaId>.plt.json (el server QR
+    // resuelve por nombre exacto, nunca pide el .json → es inofensivo).
+    const sigPath = `${outPath}.json`;
+    const sig = crypto.createHash('md5').update(JSON.stringify({
+      m: payload.markMarginMm,
+      w: payload.pageWidthMm,
+      h: payload.pageHeightMm,
+      b: payload.bladeOffsetMm,
+      c: payload.cortes,
+    })).digest('hex');
     if (fs.existsSync(outPath)) {
-      return { ok: true, existed: true, path: outPath };
+      let prevSig = null;
+      try { prevSig = JSON.parse(fs.readFileSync(sigPath, 'utf8')).sig; } catch { /* sin sidecar → regenerar */ }
+      if (prevSig === sig) {
+        return { ok: true, existed: true, path: outPath };
+      }
     }
     const stdin = JSON.stringify({
       cortes: payload.cortes,
@@ -1298,6 +1317,9 @@ ipcMain.handle('qrcut:ensure-base-cut', async (_evt, payload) => {
       result = JSON.parse(stdout.trim());
     } catch (e) {
       return { ok: false, error: `Salida inválida del sender: ${e.message}` };
+    }
+    if (result && result.ok) {
+      try { fs.writeFileSync(sigPath, JSON.stringify({ sig, markMarginMm: payload.markMarginMm })); } catch { /* best-effort */ }
     }
     return { ...result, existed: false };
   } catch (err) {

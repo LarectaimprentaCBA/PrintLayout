@@ -26,7 +26,16 @@ const COLS_6 = [35, 78, 121, 164, 207, 250];             // 6 (interm y chico)
 // Margen de las marcas L (mm). ÚNICA fuente: la comparten el PDF (drawCornerMarks)
 // y el payload del .plt (ensureBaseCut). Si difieren, el corte no alinea con la
 // impresión.
-export const MARK_MARGIN_MM = 10;
+//
+// 25 mm (antes 10): aleja las marcas del borde de la hoja para dejar más "cola"
+// de papel. Con marcas a 10 mm el plotter arrastra la hoja justo por el borde
+// impreso y el papel se dobla/rompe (sobre todo por los lados largos). El diseño
+// está centrado y deja ~35 mm de aire a los lados, así que 25 mm es lo máximo que
+// se puede acercar la marca al diseño MANTENIENDO el margen parejo en los 4 lados
+// sin que el brazo de la L (10 mm) pise el diseño: el vértice queda a 10 mm del
+// diseño por los lados cortos y la cola de papel pasa de 10 a 25 mm. El QR NO se
+// toca (sigue a qrBottomMm ≈ 9.5 mm del borde inferior, dentro de la cola).
+export const MARK_MARGIN_MM = 25;
 
 // 3 tipos de plancha FIJOS. Todas 325×500 mm, mismos tamaños de rótulo (grande
 // 60×40 / interm 40×20 / chico 40×7), gap 3 mm. Cada una: su id = qrId = texto
