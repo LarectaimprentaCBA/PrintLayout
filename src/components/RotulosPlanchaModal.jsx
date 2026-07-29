@@ -80,6 +80,10 @@ function PlanchaSizePreview({ sizeKey, cutMm, textBox, arteDataUrl, family, text
   const scale = DISP_W / cutW;
   const dispH = cutH * scale;
   const radiusPx = (cutMm?.radius || 0) * scale;
+  // Zona segura para escribir (mismo criterio que la hoja principal y el editor
+  // de modelos: 2 mm adentro del corte, acotado para tamaños chicos).
+  const safeMm = Math.max(0, Math.min(2, Math.min(cutW, cutH) / 2 - 0.5));
+  const safePx = safeMm * scale;
   const canvasRef = useRef(null);
   const frameRef = useRef(null);
   const dragRef = useRef(null);
@@ -186,8 +190,8 @@ function PlanchaSizePreview({ sizeKey, cutMm, textBox, arteDataUrl, family, text
           {drawBox && onBoxChange && (
             <button type="button" onClick={() => setEditing((v) => !v)}
               className={`rounded border px-2 py-0.5 text-[10px] ${editing ? 'border-accent-500 bg-accent-600 text-white' : 'border-ink-700 text-ink-300 hover:bg-ink-800'}`}
-              title="Ajustar el recuadro solo para esta plancha">
-              {editing ? '✓ Listo' : '✎ Ajustar recuadro'}
+              title="Mover / redimensionar el texto (arrastrá el recuadro; solo para esta plancha)">
+              {editing ? '✓ Listo' : '✎ Mover texto'}
             </button>
           )}
           {onTextScaleChange && (() => {
@@ -220,11 +224,18 @@ function PlanchaSizePreview({ sizeKey, cutMm, textBox, arteDataUrl, family, text
         </div>
       </div>
       <div ref={frameRef} className="relative mx-auto" style={{ width: `${DISP_W}px`, height: `${dispH}px` }}>
-        <div className="absolute inset-0 overflow-hidden border border-dashed border-sky-400/50 bg-white" style={{ borderRadius: `${radiusPx}px` }}>
+        {/* Arte + línea de CORTE roja (mismo color que la hoja principal y el editor). */}
+        <div className="absolute inset-0 overflow-hidden border border-red-500 bg-white" style={{ borderRadius: `${radiusPx}px` }} title="Contorno del corte (redondeado)">
           {arteDataUrl ? <img src={arteDataUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
             : <div className="absolute inset-0 flex items-center justify-center text-[11px] text-ink-400">(sin arte)</div>}
         </div>
         <canvas ref={canvasRef} className="pointer-events-none absolute inset-0" style={{ width: `${DISP_W}px`, height: `${dispH}px` }} />
+        {/* Zona segura para escribir: verde punteada, adentro del corte. */}
+        {safePx > 0 && (
+          <div className="pointer-events-none absolute border border-dashed border-green-400"
+            style={{ left: `${safePx}px`, top: `${safePx}px`, right: `${safePx}px`, bottom: `${safePx}px`, borderRadius: `${Math.max(0, radiusPx - safePx)}px` }}
+            title="Zona segura para escribir (dentro del corte)" />
+        )}
         {editing && textBox && (
           <div onPointerDown={startDrag('move')}
             className="absolute cursor-move border-2 border-accent-400 bg-accent-400/10"
