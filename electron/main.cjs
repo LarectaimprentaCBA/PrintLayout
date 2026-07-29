@@ -1227,7 +1227,8 @@ ipcMain.handle('busca2:publish-mazo', async (_evt, payload = {}) => {
     const row = {
       id: mazoId,
       nombre: name,
-      descripcion: (descripcion && String(descripcion).trim()) || null,
+      // La columna descripcion es NOT NULL → vacío = '' (nunca null).
+      descripcion: (descripcion && String(descripcion).trim()) || '',
       preview_path: previewUrl,
       precio_id: null,
       activo: true,
