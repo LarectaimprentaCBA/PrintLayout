@@ -787,18 +787,24 @@ export default function RotulosManagerModal({ open, onClose }) {
             </div>
           )}
 
-          {feedback && <p className={`mt-3 text-xs ${fbColor}`}>{feedback.text}</p>}
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t border-ink-700 p-4">
+        {/* Barra fija: el feedback (guardado OK / error) va ACÁ, siempre visible,
+            al lado del botón — antes estaba al final del área que scrollea y en el
+            editor quedaba fuera de vista. */}
+        <div className="flex items-center gap-2 border-t border-ink-700 p-4">
           {draft ? (
             <>
-              <span className="mr-auto text-[11px] text-ink-500">{slotsFilled}/3 imágenes cargadas</span>
+              <span className="min-w-0 flex-1 text-[11px] leading-tight">
+                {feedback
+                  ? <span className={fbColor}>{feedback.text}</span>
+                  : <span className="text-ink-500">{slotsFilled}/3 imágenes cargadas</span>}
+              </span>
               <button
                 type="button"
                 onClick={() => setDraft(null)}
                 disabled={busy}
-                className="rounded border border-ink-700 px-3 py-1 text-xs text-ink-200 hover:bg-ink-800 disabled:opacity-40"
+                className="shrink-0 rounded border border-ink-700 px-3 py-1 text-xs text-ink-200 hover:bg-ink-800 disabled:opacity-40"
               >
                 Cancelar
               </button>
@@ -806,19 +812,22 @@ export default function RotulosManagerModal({ open, onClose }) {
                 type="button"
                 onClick={saveModel}
                 disabled={busy || slotsFilled === 0}
-                className="rounded bg-accent-600 px-3 py-1 text-xs font-medium text-white hover:bg-accent-500 disabled:opacity-40"
+                className="shrink-0 rounded bg-accent-600 px-3 py-1 text-xs font-medium text-white hover:bg-accent-500 disabled:opacity-40"
               >
                 {busy ? 'Guardando…' : (draft.id ? 'Guardar cambios' : 'Guardar modelo')}
               </button>
             </>
           ) : (
-            <button
-              type="button"
-              onClick={handleClose}
-              className="rounded border border-ink-700 px-3 py-1 text-xs text-ink-200 hover:bg-ink-800"
-            >
-              Cerrar
-            </button>
+            <>
+              {feedback && <span className={`min-w-0 flex-1 text-[11px] leading-tight ${fbColor}`}>{feedback.text}</span>}
+              <button
+                type="button"
+                onClick={handleClose}
+                className="ml-auto shrink-0 rounded border border-ink-700 px-3 py-1 text-xs text-ink-200 hover:bg-ink-800"
+              >
+                Cerrar
+              </button>
+            </>
           )}
         </div>
       </div>
