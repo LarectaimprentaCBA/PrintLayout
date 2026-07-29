@@ -940,16 +940,23 @@ ipcMain.handle('rotulos:model-save', async (_evt, payload) => {
     rotulosStore.ensureDirs();
     const id = reqId || rotulosStore.generateId('rot');
     const dir = rotulosStore.modelDir(id);
-    // Reescribir limpio: borra imágenes previas (soporta editar / cambiar formato).
-    try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) { /* noop */ }
+    // Sobrescribir EN EL LUGAR (no borrar+recrear la carpeta). En Windows el
+    // borrado es ASÍNCRONO: si borrás un archivo/carpeta y enseguida escribís uno
+    // con el MISMO nombre, el SO todavía lo tiene en "borrado pendiente" y tira
+    // EPERM. Eso pasaba SOLO al EDITAR (los artes ya existen); al crear un modelo
+    // nuevo la carpeta no existe y no hay carrera. Por eso: mkdir si falta,
+    // writeFile PISA el archivo existente (truncate, sin recrear la entrada de
+    // directorio) y al final se podan los artes viejos que ya no correspondan.
     fs.mkdirSync(dir, { recursive: true });
 
     const savedSizes = {};
+    const keepFiles = new Set();
     for (const [key, s] of Object.entries(sizes)) {
       if (!s || !s.dataUrl) continue;
       const ext = (s.ext || 'png').toLowerCase();
       const arteFile = `${key}.${ext}`;
       await writeFileRetry(path.join(dir, arteFile), dataUrlToBuffer(s.dataUrl));
+      keepFiles.add(arteFile);
       savedSizes[key] = {
         arteFile,
         artePath: path.join(dir, arteFile),
@@ -960,8 +967,15 @@ ipcMain.handle('rotulos:model-save', async (_evt, payload) => {
         textBox: s.textBox || null, // {x,y,w,h,rotation} en mm/grados, relativa al rótulo
       };
     }
+    // Podar artes viejos que ya no van (tamaño quitado, o cambió el formato
+    // png<->jpg). Son nombres DISTINTOS a los recién escritos, así que borrarlos no
+    // recrea nada → sin carrera de "borrado pendiente".
+    try {
+      for (const f of fs.readdirSync(dir)) {
+        if (!keepFiles.has(f)) { try { fs.rmSync(path.join(dir, f), { force: true }); } catch (_) { /* noop */ } }
+      }
+    } catch (_) { /* noop */ }
     if (Object.keys(savedSizes).length === 0) {
-      try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) { /* noop */ }
       return { ok: false, error: 'No se pudo leer ninguna imagen del modelo.' };
     }
 
