@@ -916,6 +916,21 @@ ipcMain.handle('rotulos:models-list', () => rotulosStore.listModels());
 // y persiste la entrada con la caja de texto dibujada a mano (mm, relativa al
 // rótulo). Un modelo = 3 imágenes sueltas (grande/intermedio/chico), NO PDF. En
 // edición, reescribe el directorio del modelo desde cero.
+// Escribe un archivo reintentando ante bloqueos TRANSITORIOS (EPERM/EBUSY/EACCES),
+// típicos cuando la carpeta está en OneDrive/Escritorio, la escanea un antivirus o
+// el archivo quedó abierto en un visor. Espera incremental entre intentos.
+async function writeFileRetry(filePath, data, tries = 6) {
+  for (let i = 0; i < tries; i++) {
+    try {
+      fs.writeFileSync(filePath, data);
+      return;
+    } catch (err) {
+      if (!['EPERM', 'EBUSY', 'EACCES'].includes(err.code) || i === tries - 1) throw err;
+      await new Promise((r) => setTimeout(r, 120 * (i + 1)));
+    }
+  }
+}
+
 ipcMain.handle('rotulos:model-save', async (_evt, payload) => {
   try {
     const { id: reqId, nombre, thumb, sizes, arteIncluyeRecuadro } = payload || {};
@@ -934,7 +949,7 @@ ipcMain.handle('rotulos:model-save', async (_evt, payload) => {
       if (!s || !s.dataUrl) continue;
       const ext = (s.ext || 'png').toLowerCase();
       const arteFile = `${key}.${ext}`;
-      fs.writeFileSync(path.join(dir, arteFile), dataUrlToBuffer(s.dataUrl));
+      await writeFileRetry(path.join(dir, arteFile), dataUrlToBuffer(s.dataUrl));
       savedSizes[key] = {
         arteFile,
         artePath: path.join(dir, arteFile),
@@ -959,7 +974,12 @@ ipcMain.handle('rotulos:model-save', async (_evt, payload) => {
     });
     return { ok: true, model };
   } catch (err) {
-    return { ok: false, error: err.message };
+    const locked = ['EPERM', 'EBUSY', 'EACCES'].includes(err.code);
+    const arch = err.path ? path.basename(err.path) : 'la imagen';
+    const msg = locked
+      ? `No se pudo guardar ${arch}: el archivo está bloqueado (abierto en otro programa, o sincronizándose por OneDrive/antivirus). Cerrá la imagen si la tenés abierta y probá de nuevo. Si sigue, conviene mover el catálogo de rótulos a una carpeta que NO esté en OneDrive/Escritorio.`
+      : err.message;
+    return { ok: false, error: msg };
   }
 });
 
