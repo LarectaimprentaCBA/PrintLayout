@@ -101,6 +101,8 @@ export default function PropertiesSidebar({
   onChangeDobbleColor,
   onSetDobbleImage,
   onClearDobbleImage,
+  onSetDobbleCaja,
+  onClearDobbleCaja,
   onChangeWhiteBorder,
   onChangeBorderLine,
   onChangeBorderColor,
@@ -146,6 +148,7 @@ export default function PropertiesSidebar({
   const singleInputRef = useRef(null);
   const pdfInputRef = useRef(null);
   const dobbleImgInputRef = useRef(null);
+  const dobbleCajaInputRef = useRef(null);
   const [dragKind, setDragKind] = useState(null); // 'pdf' | 'image' | null
   const dragCounterRef = useRef(0);
 
@@ -224,6 +227,16 @@ export default function PropertiesSidebar({
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => onSetDobbleImage?.(reader.result);
+    reader.readAsDataURL(file);
+  };
+
+  // Imagen de caja (Dobble): cubre toda la celda 'caja' del troquel de la caja.
+  const handleDobbleCajaPick = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => onSetDobbleCaja?.(reader.result);
     reader.readAsDataURL(file);
   };
 
@@ -573,6 +586,13 @@ export default function PropertiesSidebar({
                   className="hidden"
                   onChange={handleDobbleImagePick}
                 />
+                <input
+                  ref={dobbleCajaInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/jpg,image/webp"
+                  className="hidden"
+                  onChange={handleDobbleCajaPick}
+                />
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-semibold text-accent-200">Mazo Dobble</span>
                   <span className="text-[11px] text-ink-300">carta ⌀ {template.dobble.diametroMM} mm</span>
@@ -626,6 +646,40 @@ export default function PropertiesSidebar({
                       Imagen recortada al círculo de la carta (con sangrado), detrás de los símbolos.
                     </div>
                   )}
+                </div>
+
+                {/* Caja: una imagen que cubre TODA la celda de la caja. Persiste
+                    con la plantilla (template.cajaFondo). */}
+                <div className="space-y-1.5 border-t border-accent-500/20 pt-2">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-ink-400">
+                    Caja
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={dobbleBusy}
+                      onClick={() => dobbleCajaInputRef.current?.click()}
+                      className="flex-1 rounded border border-ink-700 px-2 py-1 text-[11px] text-ink-200 hover:bg-ink-800 disabled:opacity-40"
+                    >
+                      {template.cajaFondo?.imagen ? 'Cambiar caja…' : 'Subir caja completa'}
+                    </button>
+                    {template.cajaFondo?.imagen && (
+                      <button
+                        type="button"
+                        disabled={dobbleBusy}
+                        onClick={() => onClearDobbleCaja?.()}
+                        title="Quitar la imagen de la caja"
+                        className="rounded border border-red-500/40 px-2 py-1 text-[11px] text-red-300 hover:bg-red-500/10 disabled:opacity-40"
+                      >
+                        Quitar
+                      </button>
+                    )}
+                  </div>
+                  <div className="text-[10px] text-ink-500">
+                    {template.cajaFondo?.imagen
+                      ? 'La imagen cubre toda la caja. El corte/hendido lo hace el plotter (QR).'
+                      : 'Imagen que cubre toda la celda de la caja (cover).'}
+                  </div>
                 </div>
 
                 {onReposeDobble && (

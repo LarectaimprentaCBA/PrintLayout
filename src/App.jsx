@@ -749,6 +749,63 @@ export default function App() {
     applyDobbleFondo(rest);
   }, [applyDobbleFondo, activeTab]);
 
+  // Cambiar el fondo de CAJA (imagen que cubre toda la celda 'caja') del mazo
+  // activo: re-renderiza todo con buildDobbleJob({ caja }), persiste
+  // template.cajaFondo y recarga el layout. Calcado de applyDobbleFondo.
+  const applyDobbleCaja = useCallback(async (nextCaja) => {
+    const tpl = activeTab?.template;
+    if (!tpl?.dobble) return;
+    const receta = dobbleRecetasRef.current.get(tpl.id);
+    if (!receta) {
+      setToast({ kind: 'error', text: 'No tengo la receta de este mazo (reimportá el .json).' });
+      return;
+    }
+    const caja = {};
+    if (nextCaja?.color) caja.color = nextCaja.color;
+    if (nextCaja?.imagen) caja.imagen = nextCaja.imagen;
+    const cajaOut = Object.keys(caja).length ? caja : undefined;
+    // El render de la carta lee el fondo de opts.fondo/fondoImagen (no del
+    // template), así que lo reinyectamos para no perder el fondo de carta.
+    const fondoActual = tpl.dobbleFondo || {};
+    setDobbleBusy(true);
+    try {
+      const { spec, error } = await buildDobbleJob(receta, {
+        template: { ...tpl, cajaFondo: cajaOut },
+        caja,
+        fondo: fondoActual.color,
+        fondoImagen: fondoActual.imagen,
+        dobleFaz: tpl.dobble.doubleSided,
+        dpi: tpl.dobble.dpi,
+      });
+      if (!spec) { setToast({ kind: 'error', text: error || 'No se pudo aplicar la caja.' }); return; }
+      updateActiveTab({ template: { ...spec.template, id: tpl.id, temporal: true, tabBacked: true } });
+      layout.loadFromJob({
+        images: spec.images,
+        assignmentsFront: spec.assignmentsFront,
+        assignmentsBack: spec.assignmentsBack,
+        minPages: spec.minPages,
+      });
+      if (tpl.sourceTemplateId) {
+        const storeTpl = templates.find((t) => t.id === tpl.sourceTemplateId);
+        if (storeTpl) update({ ...storeTpl, cajaFondo: cajaOut }).catch(() => {});
+      }
+    } catch (err) {
+      setToast({ kind: 'error', text: `Error aplicando la caja: ${err.message}` });
+    } finally {
+      setDobbleBusy(false);
+    }
+  }, [activeTab, updateActiveTab, layout, templates, update]);
+
+  // Helpers de caja: parten de la caja actual y cambian una clave.
+  const dobbleCajaActual = () => activeTab?.template?.cajaFondo || {};
+  const handleDobbleCaja = useCallback((dataUrl) => {
+    applyDobbleCaja({ ...dobbleCajaActual(), imagen: dataUrl });
+  }, [applyDobbleCaja, activeTab]);
+  const handleDobbleClearCaja = useCallback(() => {
+    const { imagen, ...rest } = dobbleCajaActual();
+    applyDobbleCaja(rest);
+  }, [applyDobbleCaja, activeTab]);
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
   );
@@ -3572,6 +3629,8 @@ export default function App() {
             onChangeDobbleColor={handleDobbleColor}
             onSetDobbleImage={handleDobbleImage}
             onClearDobbleImage={handleDobbleClearImage}
+            onSetDobbleCaja={handleDobbleCaja}
+            onClearDobbleCaja={handleDobbleClearCaja}
             onToggleDoubleSided={handleToggleDoubleSided}
             onChangeWhiteBorder={(v) => handlePatchActiveTemplate({ cellWhiteBorderMm: v })}
             onChangeBorderLine={(v) => handlePatchActiveTemplate({ cellBorderLineMm: v })}
