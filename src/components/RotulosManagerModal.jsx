@@ -70,8 +70,16 @@ function SizeSlotEditor({ size, slot, onPick, onChangeBox }) {
   const inputRef = useRef(null);
   const frameRef = useRef(null);
   const DISP_W = 380;
-  const scale = DISP_W / size.cutW;
-  const dispH = size.cutH * scale;
+  // Sangrado: el arte se imprime 1 mm MÁS GRANDE que el corte por cada lado
+  // (igual que exportRotulos.js). El editor muestra el ARTE COMPLETO (corte +
+  // sangrado) con la línea de corte 1 mm adentro, para que se vea si el dibujo
+  // llega al borde o queda blanco (que SÍ saldría impreso).
+  const BLEED_MM = 1;
+  const arteW = size.cutW + 2 * BLEED_MM;
+  const arteH = size.cutH + 2 * BLEED_MM;
+  const scale = DISP_W / arteW; // px por mm (basado en el arte con sangrado)
+  const dispH = arteH * scale;
+  const bleedPx = BLEED_MM * scale;
   const radiusPx = size.radius * scale;
   const box = sanitizeBox(slot?.textBox);
   const rot = box?.rotation || 0;
@@ -109,8 +117,8 @@ function SizeSlotEditor({ size, slot, onPick, onChangeBox }) {
       if (d.kind === 'rotate') {
         const rect = frameRef.current?.getBoundingClientRect();
         if (!rect) return;
-        const cxS = rect.left + (d.start.x + d.start.w / 2) * scale;
-        const cyS = rect.top + (d.start.y + d.start.h / 2) * scale;
+        const cxS = rect.left + bleedPx + (d.start.x + d.start.w / 2) * scale;
+        const cyS = rect.top + bleedPx + (d.start.y + d.start.h / 2) * scale;
         let deg = Math.atan2(ev.clientY - cyS, ev.clientX - cxS) * 180 / Math.PI + 90;
         deg = ((deg % 360) + 360) % 360;
         if (deg > 180) deg -= 360;
@@ -157,12 +165,13 @@ function SizeSlotEditor({ size, slot, onPick, onChangeBox }) {
       </div>
 
       <div ref={frameRef} className="relative mx-auto" style={{ width: `${DISP_W}px`, height: `${dispH}px` }}>
-        {/* Capa imagen: recorte redondeado = borde del rótulo. Línea ROJA = corte
-            (mismo código de color que la hoja principal). */}
+        {/* Capa ARTE: la imagen llena TODO el marco = corte + 1 mm de sangrado por
+            lado, RECTANGULAR (así sale impresa). Si el dibujo no llega al borde,
+            acá se ve el blanco (que también saldría impreso). */}
         <div
-          className="absolute inset-0 overflow-hidden border border-red-500 bg-white"
-          style={{ borderRadius: `${radiusPx}px` }}
-          title="Contorno del corte (redondeado)"
+          className="absolute inset-0 overflow-hidden bg-white"
+          style={{ borderRadius: `${radiusPx + bleedPx}px` }}
+          title="Arte con sangrado (llega 1 mm más allá del corte)"
         >
           {slot ? (
             <img src={slot.dataUrl} alt="" draggable={false} className="absolute inset-0 h-full w-full object-cover" />
@@ -178,30 +187,47 @@ function SizeSlotEditor({ size, slot, onPick, onChangeBox }) {
           )}
         </div>
 
+        {/* Línea de CORTE (roja, redondeada), 1 mm ADENTRO del arte: lo que queda
+            por fuera es el sangrado. Mismo color que la hoja principal. */}
+        {slot && (
+          <div
+            className="pointer-events-none absolute border border-red-500"
+            style={{
+              left: `${bleedPx}px`,
+              top: `${bleedPx}px`,
+              right: `${bleedPx}px`,
+              bottom: `${bleedPx}px`,
+              borderRadius: `${radiusPx}px`,
+            }}
+            title="Contorno del corte (redondeado) — afuera queda 1 mm de sangrado"
+          />
+        )}
+
         {/* Zona segura para escribir (corte − margen). Verde punteado, igual que
             en la hoja principal. Solo guía visual: no bloquea el arrastre. */}
         {slot && safePx > 0 && (
           <div
             className="pointer-events-none absolute border border-dashed border-green-400"
             style={{
-              left: `${safePx}px`,
-              top: `${safePx}px`,
-              right: `${safePx}px`,
-              bottom: `${safePx}px`,
+              left: `${bleedPx + safePx}px`,
+              top: `${bleedPx + safePx}px`,
+              right: `${bleedPx + safePx}px`,
+              bottom: `${bleedPx + safePx}px`,
               borderRadius: `${Math.max(0, radiusPx - safePx)}px`,
             }}
             title="Zona segura para escribir (dentro del corte)"
           />
         )}
 
-        {/* Capa caja: sin recorte, encima, rotada */}
+        {/* Capa caja: sin recorte, encima, rotada. Coords del CORTE, desplazadas
+            por el sangrado para caer dentro del corte. */}
         {slot && box && (
           <div
             onPointerDown={startDrag('move')}
             className="absolute cursor-move border-2 border-accent-500 bg-accent-500/20"
             style={{
-              left: `${box.x * scale}px`,
-              top: `${box.y * scale}px`,
+              left: `${bleedPx + box.x * scale}px`,
+              top: `${bleedPx + box.y * scale}px`,
               width: `${box.w * scale}px`,
               height: `${box.h * scale}px`,
               borderRadius: `${Math.min(box.w, box.h) * 0.2 * scale}px`,
@@ -726,6 +752,8 @@ export default function RotulosManagerModal({ open, onClose }) {
                   Cambiá su tamaño desde cualquier lado o esquina (los cuadraditos).
                   La <span className="text-red-400">línea roja</span> es el corte y la{' '}
                   <span className="text-green-400">verde punteada</span> es la zona segura para escribir.
+                  Lo que queda POR FUERA de la línea roja es el sangrado (1 mm): el arte
+                  tiene que llegar hasta el borde. Si ahí ves blanco, ese blanco va a salir impreso.
                 </p>
               </div>
 
