@@ -253,6 +253,40 @@ export default function App() {
     (cp) => updateActiveTab({ customPaper: cp }),
     [updateActiveTab],
   );
+  // Deja el "Tamaño de hoja" fijo EN LA PLANTILLA (no solo en la pestaña): lo
+  // guarda en la plantilla del almacén (persiste entre sesiones) para que cada
+  // vez que se abra salga centrada en esa hoja. `cp` null = quitarlo. Se guarda
+  // localmente (no viaja por la sincronización de plantillas).
+  const saveCustomPaperToTemplate = useCallback(
+    (cp) => {
+      const srcId = activeTab?.template?.sourceTemplateId;
+      if (!srcId) {
+        setToast({ kind: 'error', text: 'Esta hoja no viene de una plantilla guardada.' });
+        return;
+      }
+      const stored = templates.find((t) => t.id === srcId);
+      if (!stored) {
+        setToast({ kind: 'error', text: 'No encuentro la plantilla en la lista.' });
+        return;
+      }
+      const value = cp || null;
+      update({ ...stored, customPaper: value })
+        .then(() => {
+          // Reflejarlo en la pestaña abierta para que quede consistente.
+          updateActiveTab((tab) => (tab.template
+            ? { template: { ...tab.template, customPaper: value }, customPaper: value }
+            : {}));
+          setToast({
+            kind: 'success',
+            text: value
+              ? `Tamaño de hoja ${value.widthMm}×${value.heightMm} mm guardado en la plantilla.`
+              : 'Se quitó el tamaño de hoja fijo de la plantilla.',
+          });
+        })
+        .catch((e) => setToast({ kind: 'error', text: `No se pudo guardar: ${e.message}` }));
+    },
+    [activeTab, templates, update, updateActiveTab],
+  );
 
   const layout = useLayoutEditor(selected, viewingFace);
 
@@ -498,7 +532,9 @@ export default function App() {
         isDirty: false,
         viewingFace: 'front',
         currentPage: 0,
-        customPaper: null,
+        // La plantilla puede traer su propio "Tamaño de hoja" fijo (customPaper):
+        // se aplica al abrir. Si no, arranca en null (= tamaño de la plantilla).
+        customPaper: rawTemplate?.customPaper ?? null,
       });
     } else {
       tabId = `tab_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
@@ -509,6 +545,7 @@ export default function App() {
         name,
         jobId,
         isDirty: false,
+        customPaper: rawTemplate?.customPaper ?? null,
       });
     }
 
@@ -3605,6 +3642,8 @@ export default function App() {
           template={selected}
           customPaper={customPaper}
           onCustomPaperChange={selected ? setCustomPaper : undefined}
+          onSavePaperToTemplate={selected?.sourceTemplateId ? saveCustomPaperToTemplate : undefined}
+          templateHasSavedPaper={!!selected?.customPaper}
           bladeOffsetMm={bladeOffsetMm}
           onBladeOffsetChange={setBladeOffsetMm}
           cellsPerPage={(() => {

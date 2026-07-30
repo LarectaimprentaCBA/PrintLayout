@@ -7,7 +7,7 @@ function fmtMm(n) {
   return Number.isInteger(r) ? String(r) : r.toFixed(1);
 }
 
-function PaperSizeControl({ template, customPaper, onChange }) {
+function PaperSizeControl({ template, customPaper, onChange, onSaveToTemplate, templateHasSavedPaper = false }) {
   const tpW = template?.pageWidthMm ?? 0;
   const tpH = template?.pageHeightMm ?? 0;
   const isCustom = !!customPaper;
@@ -118,6 +118,31 @@ function PaperSizeControl({ template, customPaper, onChange }) {
               mas grande/chico que la plantilla.
             </p>
           </div>
+          {onSaveToTemplate && (
+            <div className="mt-2 border-t border-ink-700 pt-2">
+              <button
+                type="button"
+                onClick={() => onSaveToTemplate(customPaper)}
+                disabled={!isCustom}
+                title="Deja este tamaño de hoja guardado en la plantilla: cada vez que la abras, sale centrada en esta hoja."
+                className="block w-full rounded bg-ink-700 px-2 py-1.5 text-xs font-medium text-ink-100 hover:bg-ink-600 disabled:opacity-40"
+              >
+                Fijar en la plantilla
+              </button>
+              {templateHasSavedPaper && (
+                <button
+                  type="button"
+                  onClick={() => onSaveToTemplate(null)}
+                  className="mt-1 block w-full rounded px-2 py-1 text-[11px] text-ink-400 hover:bg-ink-700 hover:text-ink-200"
+                >
+                  Quitar de la plantilla
+                </button>
+              )}
+              <p className="mt-1 text-[10px] leading-snug text-ink-500">
+                Queda guardado en esta PC.
+              </p>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -269,6 +294,8 @@ export default function TopBar({
   template,
   customPaper,
   onCustomPaperChange,
+  onSavePaperToTemplate,
+  templateHasSavedPaper = false,
   bladeOffsetMm,
   onBladeOffsetChange,
   // nuevas
@@ -692,6 +719,8 @@ export default function TopBar({
               template={template}
               customPaper={customPaper}
               onChange={onCustomPaperChange}
+              onSaveToTemplate={onSavePaperToTemplate}
+              templateHasSavedPaper={templateHasSavedPaper}
             />
           )}
 
