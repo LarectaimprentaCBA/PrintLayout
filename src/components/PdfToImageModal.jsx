@@ -93,9 +93,12 @@ export default function PdfToImageModal({ open, onClose }) {
   };
 
   const handlePick = (e) => {
-    const files = e.target.files;
+    // Copiar la lista a un array ANTES de resetear value: `e.target.files` es
+    // una FileList viva y `e.target.value = ''` la vacía en el acto (por eso no
+    // aparecía nada al elegir el PDF). Con el snapshot ya no se pierde.
+    const files = Array.from(e.target.files || []);
     e.target.value = '';
-    if (files?.length) addFiles(files);
+    if (files.length) addFiles(files);
   };
 
   const handleDrop = (e) => {
