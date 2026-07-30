@@ -99,6 +99,23 @@ function hashTemplateContent(tpl) {
     // el candado 🔒 de la plancha oficial.
     oficial: !!tpl.oficial,
     catalogoId: tpl.catalogoId || '',
+    // Ajustes persistentes de la plantilla que el usuario edita y espera que
+    // VIAJEN al compartir (antes no entraban en el hash → los cambios no se
+    // propagaban a las otras PCs). Normalizados para que dos plantillas
+    // equivalentes hasheen igual (undefined vs default no cuenta como cambio).
+    customPaper: (tpl.customPaper
+      && Number.isFinite(tpl.customPaper.widthMm)
+      && Number.isFinite(tpl.customPaper.heightMm))
+      ? { widthMm: tpl.customPaper.widthMm, heightMm: tpl.customPaper.heightMm }
+      : null,
+    cellWhiteBorderMm: Number.isFinite(tpl.cellWhiteBorderMm) ? tpl.cellWhiteBorderMm : 0,
+    cellBorderLineMm: Number.isFinite(tpl.cellBorderLineMm) ? tpl.cellBorderLineMm : 0,
+    cellBorderColor: tpl.cellBorderColor || '',
+    conQr: tpl.conQr !== false, // = gate (conQr ?? true): true salvo que sea explícito false
+    backMirror: tpl.backMirror || '',
+    backRotate180: !!tpl.backRotate180,
+    dobbleFondo: tpl.dobbleFondo ?? null,
+    cajaFondo: tpl.cajaFondo ?? null,
   };
   return crypto
     .createHash('sha256')
