@@ -112,6 +112,16 @@ function openPlotter(cfg, attempt = 1) {
   });
 }
 
+// GUARDAR-Y-REENVIAR: Corel (y otros emisores) hacen "fire-and-forget" — conectan,
+// mandan el .plt entero y CIERRAN enseguida, sin esperar. El modelo viejo (pipe en
+// vivo) descartaba esos cortes: cerraban durante la espera del candado (~settle) y
+// finish('cliente cerró') corría antes de conectar al plotter → "abre y cierra pero
+// no llega el corte". Ahora BUFFERIZAMOS lo que manda el cliente; aunque cierre al
+// toque, igual tomamos el plotter, volcamos TODO en orden y cerramos el envío. Si el
+// cliente queda abierto (protocolo persistente), seguimos en vivo y reenviamos lo
+// que responda el plotter.
+const GRACE_AFTER_FLUSH_MS = 4000; // tras volcar y con el cliente cerrado, esperar esto a que el plotter corte/cierre
+
 function handleClient(socket) {
   const cfg = configStore.load();
   const ip = normalizeIp(socket.remoteAddress);
@@ -125,9 +135,14 @@ function handleClient(socket) {
   let token = null;
   let plotter = null;
   let released = false;
-  let started = false;     // ya tomó el candado y quedó activo (piping)
+  let started = false;      // ya tomó el candado y conectó al plotter
+  let acquiring = false;    // tomando candado + conectando (aún sin plotter)
+  let clientEnded = false;  // el cliente terminó de mandar (FIN o cerró)
+  let sentAny = false;      // recibimos al menos un byte del cliente
+  const pending = [];       // bytes recibidos aún no escritos al plotter (buffer)
   let idleTimer = null;
   let absoluteTimer = null;
+  let graceTimer = null;
 
   waitingCount += 1;
   reportStatus();
@@ -137,13 +152,14 @@ function handleClient(socket) {
     idleTimer = setTimeout(() => finish('idle-timeout'), IDLE_TIMEOUT_MS);
   };
 
-  // ÚNICO camino de salida: cubre cierre normal, error de cualquier lado,
-  // idle-timeout y tope absoluto. Nunca deja el candado tomado.
+  // ÚNICO camino de salida: cubre cierre normal, error de cualquier lado, idle y
+  // tope absoluto. Nunca deja el candado tomado.
   const finish = (reason) => {
     if (released) return;
     released = true;
     if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
     if (absoluteTimer) { clearTimeout(absoluteTimer); absoluteTimer = null; }
+    if (graceTimer) { clearTimeout(graceTimer); graceTimer = null; }
     try { if (plotter) plotter.end(); } catch (_) { /* ignore */ }
     try { socket.end(); } catch (_) { /* ignore */ }
     activeClients.delete(socket);
@@ -154,16 +170,29 @@ function handleClient(socket) {
     qrServer.emitLog(`Relay: fin de ${ip} (${reason}).`);
   };
 
-  socket.on('error', () => finish('error del cliente'));
-  socket.on('close', () => finish('cliente cerró'));
+  const flushPending = () => {
+    if (!plotter) return;
+    while (pending.length) {
+      const d = pending.shift();
+      try { plotter.write(d); } catch (_) { /* ignore */ }
+    }
+  };
 
-  // Idle-timer ya desde el accept: si el cliente abre y NUNCA manda nada (o queda
-  // colgado), se cierra igual. Durante el pipe se resetea por cada byte/drain.
-  bumpIdle();
+  // El cliente ya mandó todo y cerró (fire-and-forget): volcamos lo que quede,
+  // cerramos el envío al plotter (FIN, para que corte) y esperamos una gracia
+  // corta a que termine/cierre. Si no cierra, finish() igual libera el candado.
+  const finishAfterFlush = () => {
+    if (released || graceTimer) return;
+    flushPending();
+    try { if (plotter) plotter.end(); } catch (_) { /* ignore */ }
+    graceTimer = setTimeout(() => finish('corte enviado'), GRACE_AFTER_FLUSH_MS);
+  };
 
-  // Pausa perezosa: recién con el primer byte tomamos el candado y conectamos.
-  socket.once('data', async (first) => {
-    socket.pause(); // dejar de fluir hasta tener el plotter listo (no perder bytes)
+  // Toma el candado + conecta al plotter una sola vez (al primer byte). Guarda lo
+  // que llegue mientras tanto en `pending` y lo vuelca al conectar.
+  const ensurePlotter = async () => {
+    if (acquiring || started) return;
+    acquiring = true;
     try {
       token = await qrServer.acquirePlotter(`relay:${ip}`);
     } catch (e) {
@@ -171,16 +200,7 @@ function handleClient(socket) {
       finish('sin candado');
       return;
     }
-    if (released) {
-      // El cliente ya cerró mientras esperaba el candado. finish() YA corrió (con
-      // token=null → no liberó) y es idempotente, así que NO libera si lo llamamos
-      // de nuevo. Soltamos el token directo para que el server QR reconecte ya
-      // (sin esperar al watchdog ~3min).
-      try { qrServer.releasePlotter(token); } catch (_) { /* ignore */ }
-      token = null;
-      return;
-    }
-    // Pasó de "esperando" a "activo".
+    if (released) { try { qrServer.releasePlotter(token); } catch (_) { /* ignore */ } token = null; return; }
     waitingCount = Math.max(0, waitingCount - 1);
     started = true;
     activeClientIp = ip;
@@ -195,8 +215,6 @@ function handleClient(socket) {
       return;
     }
     if (released) {
-      // Mismo caso que arriba pero el cliente cerró durante openPlotter: finish()
-      // ya corrió sin liberar el token → lo soltamos directo (y cerramos el plotter).
       try { plotter.end(); } catch (_) { /* ignore */ }
       try { qrServer.releasePlotter(token); } catch (_) { /* ignore */ }
       token = null;
@@ -207,17 +225,44 @@ function handleClient(socket) {
     absoluteTimer = setTimeout(() => finish('tope absoluto'), ABSOLUTE_MAX_MS);
     plotter.on('error', (e) => { qrServer.emitLog(`Relay: error del plotter (${e.message}).`, 'error'); finish('error del plotter'); });
     plotter.on('close', () => finish('plotter cerró'));
-
-    // Pipe transparente byte a byte, con reset del idle en ambos sentidos.
-    socket.on('data', (d) => { bumpIdle(); try { plotter.write(d); } catch (_) { /* ignore */ } });
     plotter.on('data', (d) => { bumpIdle(); try { socket.write(d); } catch (_) { /* ignore */ } });
-    socket.on('drain', bumpIdle);
     plotter.on('drain', bumpIdle);
 
     bumpIdle();
-    try { plotter.write(first); } catch (_) { /* ignore */ } // el primer byte que ya leímos
-    socket.resume(); // reanudar: los bytes buffered mientras conectábamos salen ahora, en orden
+    // Volcar TODO lo bufferizado en orden. Si el cliente ya cerró (Corel), cerramos
+    // el envío; si sigue abierto, seguimos en vivo (los 'data' nuevos van directo).
+    if (clientEnded) finishAfterFlush();
+    else flushPending();
+  };
+
+  socket.on('data', (d) => {
+    bumpIdle();
+    sentAny = true;
+    if (plotter) { try { plotter.write(d); } catch (_) { /* ignore */ } }
+    else { pending.push(d); ensurePlotter(); }
   });
+  socket.on('end', () => {
+    clientEnded = true;
+    if (plotter) finishAfterFlush();
+    // si aún estamos tomando el plotter, ensurePlotter verá clientEnded al terminar.
+  });
+  socket.on('error', () => {
+    // Un error DESPUÉS de mandar el corte no debe descartarlo (ya lo bufferizamos).
+    clientEnded = true;
+    if (!sentAny && !started && !acquiring) finish('error del cliente');
+    else if (plotter) finishAfterFlush();
+  });
+  socket.on('close', () => {
+    clientEnded = true;
+    // Cerró sin mandar NADA (sondeo/probe) → soltar sin tomar el plotter.
+    if (!sentAny && !started && !acquiring) finish('cliente cerró');
+    // Cerró después de mandar el corte (fire-and-forget) → NO abortar: volcar al
+    // plotter. Si el plotter ya está, finishAfterFlush; si no, ensurePlotter lo hará.
+    else if (plotter) finishAfterFlush();
+  });
+
+  // Idle-timer desde el accept: si abre y nunca manda nada ni cierra, se cierra igual.
+  bumpIdle();
 }
 
 function stopServer() {
