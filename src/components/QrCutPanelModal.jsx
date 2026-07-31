@@ -23,6 +23,8 @@ export default function QrCutPanelModal({ open, onClose }) {
   const [feedback, setFeedback] = useState(null); // { kind, text }
   const [status, setStatus] = useState(null); // { connected, activo, lastServed, ... }
   const [logs, setLogs] = useState([]);
+  const [fw, setFw] = useState(null); // null=desconocido | { exists: bool }
+  const [fwBusy, setFwBusy] = useState(false);
   const logBoxRef = useRef(null);
 
   const api = typeof window !== 'undefined' ? window.printlayout?.qrcut : null;
@@ -37,6 +39,7 @@ export default function QrCutPanelModal({ open, onClose }) {
       setLoaded(true);
     });
     api.getStatus().then((s) => setStatus(s || null));
+    api.checkFirewall?.().then((r) => setFw(r?.ok ? { exists: !!r.exists } : null)).catch(() => setFw(null));
   }, [open, api]);
 
   // Suscripción a estado + log mientras el panel está abierto.
@@ -84,6 +87,36 @@ export default function QrCutPanelModal({ open, onClose }) {
   const chooseDir = async () => {
     const r = await api.chooseDir?.();
     if (r?.ok && r.path) patch({ cortesDir: r.path });
+  };
+
+  // Permitir la entrada en el firewall (aparece el cartel de permisos de Windows).
+  // Tras lanzarlo, re-consulta el estado unas veces (el usuario tarda en aceptar).
+  const allowFirewall = async () => {
+    setFwBusy(true);
+    setFeedback(null);
+    try {
+      const r = await api.allowFirewall?.();
+      if (!r?.ok) {
+        setFeedback({ kind: 'err', text: r?.error || 'No se pudo abrir el permiso del firewall.' });
+        return;
+      }
+      setFeedback({ kind: 'ok', text: 'Aceptá el cartel de permisos de Windows para habilitar la entrada de cortes.' });
+      // Re-chequear varias veces mientras el usuario acepta el UAC.
+      for (let i = 0; i < 8; i++) {
+        await new Promise((res) => setTimeout(res, 1500));
+        const c = await api.checkFirewall?.();
+        if (c?.ok && c.exists) {
+          setFw({ exists: true });
+          setFeedback({ kind: 'ok', text: 'Firewall habilitado: ya se pueden recibir cortes de otras PC.' });
+          return;
+        }
+      }
+      // No confirmado (canceló el UAC o tarda): dejamos el estado como estaba.
+      const c = await api.checkFirewall?.();
+      setFw(c?.ok ? { exists: !!c.exists } : null);
+    } finally {
+      setFwBusy(false);
+    }
   };
 
   const reconnect = async () => {
@@ -319,6 +352,33 @@ export default function QrCutPanelModal({ open, onClose }) {
                 <span className="mt-1 block text-[10px] text-ink-500">
                   Solo se aceptan cortes de esa red (loopback siempre permitido). Las PC emisoras apuntan su corte a la IP de esta PC en ese puerto.
                 </span>
+
+                {/* Firewall de Windows: sin la regla de entrada, otra PC NO puede
+                    conectarse aunque el portero esté escuchando (anda solo local). */}
+                <div className="mt-2 flex items-center gap-2 border-t border-ink-800 pt-2">
+                  {fw?.exists ? (
+                    <span className="text-[11px] text-green-400">🟢 Firewall: entrada de cortes permitida.</span>
+                  ) : (
+                    <>
+                      <span className="text-[11px] text-amber-300">
+                        ⚠️ Firewall de Windows: la entrada de cortes de otras PC está bloqueada.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={allowFirewall}
+                        disabled={fwBusy}
+                        className="ml-auto rounded border border-accent-500/40 bg-accent-600/10 px-2.5 py-1 text-[11px] font-medium text-accent-200 hover:bg-accent-600/20 disabled:opacity-40"
+                      >
+                        {fwBusy ? 'Esperando permiso…' : 'Permitir cortes de otras PC'}
+                      </button>
+                    </>
+                  )}
+                </div>
+                {!fw?.exists && (
+                  <span className="mt-1 block text-[10px] text-ink-500">
+                    Al tocar el botón, Windows pide permiso de administrador una sola vez y crea la regla. Solo hace falta en la PC conectada al plotter.
+                  </span>
+                )}
               </div>
 
               {/* Log */}

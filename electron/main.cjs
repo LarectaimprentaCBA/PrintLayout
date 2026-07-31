@@ -2106,6 +2106,47 @@ ipcMain.handle('qrcut:choose-dir', async () => {
   }
 });
 
+// --- Firewall: permitir que OTRAS PC manden cortes al relay (puerto entrante) ---
+// Windows bloquea por default la conexión entrante al relay → anda en loopback
+// pero NO desde otra PC. Estos handlers consultan/crean una regla de entrada
+// para el puerto del relay. El nombre (sin espacios ni acentos) hace que la
+// detección sea independiente del idioma de Windows.
+const FW_RULE_NAME = 'PrintLayout-cortes-de-otras-PC';
+
+ipcMain.handle('qrcut:check-firewall', () => new Promise((resolve) => {
+  try {
+    const ps = spawn('netsh', ['advfirewall', 'firewall', 'show', 'rule', `name=${FW_RULE_NAME}`], { windowsHide: true });
+    let out = '';
+    ps.stdout.on('data', (d) => { out += d.toString(); });
+    ps.on('error', () => resolve({ ok: true, exists: false }));
+    ps.on('close', () => resolve({ ok: true, exists: out.includes(FW_RULE_NAME) }));
+  } catch (e) {
+    resolve({ ok: false, error: e.message });
+  }
+}));
+
+// Crea la regla de firewall (entrada TCP al puerto del relay) con ELEVACIÓN: se
+// lanza cmd elevado (aparece el cartel de permisos de Windows/UAC una vez). Hace
+// delete+add para no duplicar si se aprieta dos veces. Devolvemos ok apenas se
+// lanza; el panel re-consulta el estado con check-firewall tras aceptar el UAC.
+ipcMain.handle('qrcut:allow-firewall', () => {
+  try {
+    const cfg = qrCutServer.getConfig();
+    const port = Number(cfg.relayPort) || 8080;
+    // Nombres/valores sin espacios → no hace falta comillas internas (evita el
+    // infierno de escapes al pasar por PowerShell → Start-Process → cmd).
+    const chained = `/c netsh advfirewall firewall delete rule name=${FW_RULE_NAME} & netsh advfirewall firewall add rule name=${FW_RULE_NAME} dir=in action=allow protocol=TCP localport=${port} profile=private,domain`;
+    const launcher = `Start-Process cmd -Verb RunAs -WindowStyle Hidden -ArgumentList '${chained}'`;
+    const p = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', launcher], { windowsHide: true });
+    p.on('error', (e) => {
+      try { qrCutServer.emitLog?.(`Firewall: no se pudo lanzar el permiso (${e.message}).`, 'error'); } catch (_) { /* ignore */ }
+    });
+    return { ok: true, port };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 app.whenReady().then(() => {
   // Si no obtuvimos el lock de instancia única, esta copia ya llamó app.quit():
   // no armamos nada (la primera instancia es la que corre).

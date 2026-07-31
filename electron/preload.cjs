@@ -190,6 +190,9 @@ contextBridge.exposeInMainWorld('printlayout', {
     chooseDir: () => ipcRenderer.invoke('qrcut:choose-dir'),
     // Asegura el corte base <planchaId>.plt en la carpeta QR (lo genera si falta).
     ensureBaseCut: (payload) => ipcRenderer.invoke('qrcut:ensure-base-cut', payload),
+    // Firewall: ¿está permitida la entrada de cortes de otras PC? / permitirla (UAC).
+    checkFirewall: () => ipcRenderer.invoke('qrcut:check-firewall'),
+    allowFirewall: () => ipcRenderer.invoke('qrcut:allow-firewall'),
     // Eventos push del main:
     onStatus: (cb) => {
       const handler = (_evt, payload) => cb(payload);
