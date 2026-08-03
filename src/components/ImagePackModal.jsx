@@ -7,15 +7,29 @@ function parseNum(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-export default function ImagePackModal({ open, files = [], onConfirm, onCancel, qrConfig = null }) {
+// `presets` (opcional): usa las hojas guardadas del usuario (las mismas de la
+// grilla rápida). Si no viene, cae a los built-in (A4/A3).
+export default function ImagePackModal({
+  open, files = [], onConfirm, onCancel, qrConfig = null,
+  presets, onOpenPresetsEditor,
+}) {
+  const paperList = useMemo(
+    () => (Array.isArray(presets) && presets.length > 0 ? presets : PAPER_PRESETS),
+    [presets],
+  );
   const [fixedDim, setFixedDim] = useState('alto');
   const [fixedValue, setFixedValue] = useState('50'); // 5 cm
-  const [paperId, setPaperId] = useState('a4');
-  const [paperW, setPaperW] = useState('210');
-  const [paperH, setPaperH] = useState('297');
+  const [paperId, setPaperId] = useState(paperList[0]?.id || 'a4');
+  const [paperW, setPaperW] = useState(String(paperList[0]?.w ?? 210));
+  const [paperH, setPaperH] = useState(String(paperList[0]?.h ?? 297));
   const [margin, setMargin] = useState('5');
   const [spacingX, setSpacingX] = useState('2');
   const [spacingY, setSpacingY] = useState('2');
+  // Corte en plotter (opcional). markMargin=0 → sin corte (solo imprimir).
+  // El corte es el MISMO en todas las hojas (todas comparten el layout de la 1ª).
+  const [cutMargin, setCutMargin] = useState('0');
+  const [markMargin, setMarkMargin] = useState('0');
+  const [cutShape, setCutShape] = useState('rect'); // 'rect' | 'circle'
   const [repeatToFill, setRepeatToFill] = useState(false);
   // "Con QR": reserva simétrica arriba y abajo (para cortar por QR sin que pise
   // la última fila). Default OFF: el acomodar es primero para imprimir.
@@ -62,12 +76,15 @@ export default function ImagePackModal({ open, files = [], onConfirm, onCancel, 
   }, [open, onCancel]);
 
   useEffect(() => {
-    const preset = PAPER_PRESETS.find((p) => p.id === paperId);
+    if (paperId === 'custom') return;
+    const preset = paperList.find((p) => p.id === paperId);
     if (preset) {
       setPaperW(String(preset.w));
       setPaperH(String(preset.h));
+    } else {
+      setPaperId(paperList[0]?.id || 'custom');
     }
-  }, [paperId]);
+  }, [paperId, paperList]);
 
   const params = useMemo(() => ({
     paperW: parseNum(paperW),
@@ -179,6 +196,21 @@ export default function ImagePackModal({ open, files = [], onConfirm, onCancel, 
       repeated: repeatToFill,
       pageCount: pack.pageCount,
       conQr,
+      // Corte en plotter: mismo corte para todas las hojas (layout de la 1ª).
+      cutMarginMm: Math.max(0, parseNum(cutMargin) || 0),
+      markMarginMm: Math.max(0, parseNum(markMargin) || 0),
+      cutShape,
+      // Receta del acomodo "por tamaño": se guarda en la plantilla para poder
+      // RE-ACOMODAR después (ej. "cantidad por foto") respetando el tamaño físico.
+      autoPack: {
+        mode: 'size',
+        fixedDim,
+        fixedValueMm: params.fixedValueMm,
+        marginX: params.marginX,
+        marginY: params.marginY,
+        spacingX: params.spacingX,
+        spacingY: params.spacingY,
+      },
     });
   };
 
@@ -245,13 +277,24 @@ export default function ImagePackModal({ open, files = [], onConfirm, onCancel, 
             </label>
 
             <label className="block text-xs text-ink-300">
-              <span className="block mb-1">Tamaño de hoja</span>
+              <div className="mb-1 flex items-center justify-between">
+                <span>Tamaño de hoja</span>
+                {onOpenPresetsEditor && (
+                  <button
+                    type="button"
+                    onClick={onOpenPresetsEditor}
+                    className="text-[10px] text-accent-400 hover:text-accent-300"
+                  >
+                    Gestionar hojas…
+                  </button>
+                )}
+              </div>
               <select
                 value={paperId}
                 onChange={(e) => setPaperId(e.target.value)}
                 className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
               >
-                {PAPER_PRESETS.map((p) => (
+                {paperList.map((p) => (
                   <option key={p.id} value={p.id}>{p.label}</option>
                 ))}
                 <option value="custom">Custom (mm)</option>
@@ -304,6 +347,58 @@ export default function ImagePackModal({ open, files = [], onConfirm, onCancel, 
                   className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
                 />
               </label>
+            </div>
+
+            <div className="pt-2 mt-2 border-t border-ink-700">
+              <p className="mb-2 text-[10px] uppercase tracking-wide text-ink-500">
+                Corte en plotter (opcional)
+              </p>
+              <div className="mb-2">
+                <span className="block mb-1 text-xs text-ink-300">Forma de corte</span>
+                <div className="flex gap-1 rounded border border-ink-700 bg-ink-800 p-0.5 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setCutShape('rect')}
+                    className={`flex-1 rounded px-2 py-1 ${
+                      cutShape === 'rect' ? 'bg-accent-600 text-white' : 'text-ink-300 hover:bg-ink-700'
+                    }`}
+                  >
+                    Rectangular
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCutShape('circle')}
+                    className={`flex-1 rounded px-2 py-1 ${
+                      cutShape === 'circle' ? 'bg-accent-600 text-white' : 'text-ink-300 hover:bg-ink-700'
+                    }`}
+                  >
+                    Círculo
+                  </button>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs text-ink-300">
+                <label title="Cuánto se mete la cuchilla hacia adentro de cada celda. 0 = corta justo en el borde.">
+                  <span className="block mb-1">Margen de corte (mm)</span>
+                  <input
+                    value={cutMargin}
+                    onChange={(e) => setCutMargin(e.target.value)}
+                    className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
+                  />
+                </label>
+                <label title="Distancia del borde de la hoja a las marcas L. Poné más de 0 para poder cortar; 0 = sin corte (solo imprimir).">
+                  <span className="block mb-1">Margen de marcas (mm)</span>
+                  <input
+                    value={markMargin}
+                    onChange={(e) => setMarkMargin(e.target.value)}
+                    className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
+                  />
+                </label>
+              </div>
+              <p className="mt-1 text-[10px] leading-snug text-ink-500">
+                {parseNum(markMargin) > 0
+                  ? 'El mismo corte se aplica a todas las hojas (todas comparten el tamaño de celda de la 1ª).'
+                  : 'Margen de marcas en 0 = sin corte (solo imprimir). Poné más de 0 para cortar por plotter.'}
+              </p>
             </div>
 
             <label className="flex cursor-pointer items-center gap-2 text-xs text-ink-200">

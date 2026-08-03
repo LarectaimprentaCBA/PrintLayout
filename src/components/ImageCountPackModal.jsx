@@ -14,11 +14,20 @@ const ASPECT_OPTIONS = [
   { id: 'cuadrada', label: 'Cuadrada', ratio: 1 },
 ];
 
-export default function ImageCountPackModal({ open, files = [], onConfirm, onCancel, qrConfig = null }) {
+// `presets` (opcional): usa las hojas guardadas del usuario (las mismas de la
+// grilla rápida). Si no viene, cae a los built-in (A4/A3).
+export default function ImageCountPackModal({
+  open, files = [], onConfirm, onCancel, qrConfig = null,
+  presets, onOpenPresetsEditor,
+}) {
+  const paperList = useMemo(
+    () => (Array.isArray(presets) && presets.length > 0 ? presets : PAPER_PRESETS),
+    [presets],
+  );
   const [count, setCount] = useState('6');
-  const [paperId, setPaperId] = useState('a4');
-  const [paperW, setPaperW] = useState('210');
-  const [paperH, setPaperH] = useState('297');
+  const [paperId, setPaperId] = useState(paperList[0]?.id || 'a4');
+  const [paperW, setPaperW] = useState(String(paperList[0]?.w ?? 210));
+  const [paperH, setPaperH] = useState(String(paperList[0]?.h ?? 297));
   const [margin, setMargin] = useState('5');
   const [spacingX, setSpacingX] = useState('2');
   const [spacingY, setSpacingY] = useState('2');
@@ -66,12 +75,15 @@ export default function ImageCountPackModal({ open, files = [], onConfirm, onCan
   }, [open, onCancel]);
 
   useEffect(() => {
-    const preset = PAPER_PRESETS.find((p) => p.id === paperId);
+    if (paperId === 'custom') return;
+    const preset = paperList.find((p) => p.id === paperId);
     if (preset) {
       setPaperW(String(preset.w));
       setPaperH(String(preset.h));
+    } else {
+      setPaperId(paperList[0]?.id || 'custom');
     }
-  }, [paperId]);
+  }, [paperId, paperList]);
 
   const params = useMemo(() => ({
     paperW: parseNum(paperW),
@@ -221,13 +233,24 @@ export default function ImageCountPackModal({ open, files = [], onConfirm, onCan
             </div>
 
             <label className="block text-xs text-ink-300">
-              <span className="block mb-1">Tamaño de hoja</span>
+              <div className="mb-1 flex items-center justify-between">
+                <span>Tamaño de hoja</span>
+                {onOpenPresetsEditor && (
+                  <button
+                    type="button"
+                    onClick={onOpenPresetsEditor}
+                    className="text-[10px] text-accent-400 hover:text-accent-300"
+                  >
+                    Gestionar hojas…
+                  </button>
+                )}
+              </div>
               <select
                 value={paperId}
                 onChange={(e) => setPaperId(e.target.value)}
                 className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
               >
-                {PAPER_PRESETS.map((p) => (
+                {paperList.map((p) => (
                   <option key={p.id} value={p.id}>{p.label}</option>
                 ))}
                 <option value="custom">Custom (mm)</option>

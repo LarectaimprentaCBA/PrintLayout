@@ -49,6 +49,7 @@ import { useTabs } from './hooks/useTabs.js';
 import { BUILTIN_PAPER_PRESETS } from './lib/grid.js';
 import { useLayoutEditor } from './hooks/useLayoutEditor.js';
 import { readImageFiles, readImageFile } from './lib/images.js';
+import { packImagesByFixedDimension } from './lib/imagePacking.js';
 import { prepareIncomingImageFiles } from './lib/heic.js';
 import { setImportSkipReporter, reportImportSkips } from './lib/importReport.js';
 import {
@@ -107,6 +108,33 @@ function slugCutId(name) {
 function cutIdSuffix(storeId) {
   const s = String(storeId || '').replace(/[^a-z0-9]/gi, '').slice(-4).toLowerCase();
   return s || 'x';
+}
+
+// Reconstruye las páginas de un acomodo con GRILLA ÚNICA: toma la geometría de
+// la hoja más llena (una hoja completa) y la repite en todas las hojas, así
+// TODAS quedan alineadas (mismo corte) y los sobrantes de la última quedan como
+// HUECOS en vez de re-centrarse (que dejaba las fotos "fuera de la grilla").
+// `packPages` = [[{x,y,w,h}...]...] (salida del packer). `seq` = valores de slot
+// (índices) en orden de colocación. Devuelve { pages, cellMapping, numPages, perPage }.
+function buildUniformCutPages(packPages, seq) {
+  let baseGeom = packPages[0] ?? [];
+  for (const pg of packPages) if (pg.length > baseGeom.length) baseGeom = pg;
+  baseGeom = baseGeom.map((c) => ({ x: c.x, y: c.y, w: c.w, h: c.h }));
+  const perPage = Math.max(1, baseGeom.length);
+  const numPages = Math.max(1, Math.ceil(seq.length / perPage));
+  const pages = [];
+  let cid = 0;
+  for (let p = 0; p < numPages; p++) {
+    pages.push({ celdas: baseGeom.map((c) => ({ id: cid++, x: c.x, y: c.y, w: c.w, h: c.h })) });
+  }
+  const cellMapping = [];
+  for (let p = 0; p < numPages; p++) {
+    for (let i = 0; i < perPage; i++) {
+      const g = p * perPage + i;
+      cellMapping.push(g < seq.length ? seq[g] : -1);
+    }
+  }
+  return { pages, cellMapping, numPages, perPage };
 }
 
 export default function App() {
@@ -1942,6 +1970,7 @@ export default function App() {
   const submitAutoPack = async ({
     paperWidthMm, paperHeightMm, pages, files, cellMapping,
     totalCells, uniqueUsed, totalInput, repeated, pageCount, conQr = false,
+    autoPack = null, cutMarginMm = 0, markMarginMm = 0, cutShape = 'rect',
   }) => {
     setAutoPackFiles(null);
     if (!files?.length) return;
@@ -1956,31 +1985,54 @@ export default function App() {
         : pageCount > 1
           ? `Auto-acomodar (${loaded.length} imgs · ${pageCount} hojas)`
           : `Auto-acomodar (${loaded.length})`;
+      // Corte: el MISMO para todas las hojas → se genera desde las celdas de la
+      // 1ª hoja. Solo si markMarginMm>0 (necesita marcas L para que el plotter
+      // alinee). Además, con corte NORMALIZAMOS a grilla única (todas las hojas
+      // con el layout de la más llena; sobrantes = huecos) para que el corte
+      // coincida en todas y nada quede "fuera de la grilla".
+      let outPages = pages;
+      let outCellMapping = cellMapping;
+      let outPageCount = pageCount;
+      if (markMarginMm > 0) {
+        const packPages = pages.map((pg) => pg.celdas ?? []);
+        const norm = buildUniformCutPages(packPages, cellMapping);
+        outPages = norm.pages;
+        outCellMapping = norm.cellMapping;
+        outPageCount = norm.numPages;
+      }
+      const cortes = markMarginMm > 0
+        ? generateCuts(outPages[0]?.celdas ?? [], { cutShape, cutMarginMm })
+        : [];
       const tpl = {
         name,
         pdfBase64: null,
         pageWidthMm: paperWidthMm,
         pageHeightMm: paperHeightMm,
-        pageCount,
+        pageCount: outPageCount,
         // Modelo multi-page: cada hoja tiene sus propias celdas. celdas legacy
         // queda como las de la primera hoja (para compatibilidad de helpers
         // que aun lo usan, como templateOrientation).
-        celdas: pages[0]?.celdas ?? [],
-        pages,
+        celdas: outPages[0]?.celdas ?? [],
+        pages: outPages,
         celdasDorso: [],
-        cortes: [],
-        markMarginMm: 0,
+        cortes,
+        cutMarginMm,
+        markMarginMm,
+        cutShape,
         doubleSided: false,
         singlePage: true,
         // "Con QR": el acomodo ya reservó la franja del QR (celdas centradas con
         // lugar). conQr controla si el QR se dibuja al agregar las marcas.
         conQr,
+        // Receta del acomodo "por tamaño" → habilita RE-ACOMODAR por cantidad
+        // respetando el tamaño físico (ver repackByQuantity).
+        autoPack,
       };
       const tabId = openInTab(tpl, { name, forceNew: true });
       setPendingAutoAssign({
         templateId: `tabtpl_${tabId}`,
         images: loaded,
-        cellMapping,
+        cellMapping: outCellMapping,
       });
       if (repeated) {
         setToast({
@@ -2002,6 +2054,140 @@ export default function App() {
       console.error(err);
       setToast({ kind: 'error', text: `Error en auto-acomodar: ${err.message}` });
     }
+  };
+
+  // Recupera la receta de acomodo "por tamaño" de una plantilla. Las nuevas la
+  // traen en template.autoPack; las viejas (creadas antes de guardarla) se
+  // reconstruyen mirando las celdas: si todas comparten alto → dim fija 'alto';
+  // si comparten ancho → 'ancho'. Márgenes/separación caen a los defaults del
+  // modal (el re-acomodo queda parejo aunque no sea idéntico al original).
+  const getSizeRecipe = (tpl) => {
+    if (!tpl) return null;
+    if (tpl.autoPack?.mode === 'size' && tpl.autoPack.fixedValueMm > 0) {
+      return {
+        fixedDim: tpl.autoPack.fixedDim === 'ancho' ? 'ancho' : 'alto',
+        fixedValueMm: tpl.autoPack.fixedValueMm,
+        marginX: tpl.autoPack.marginX ?? 5,
+        marginY: tpl.autoPack.marginY ?? 5,
+        spacingX: tpl.autoPack.spacingX ?? 2,
+        spacingY: tpl.autoPack.spacingY ?? 2,
+      };
+    }
+    // Detección para plantillas viejas: sólo si es un acomodo "por tamaño"
+    // (celdas de tamaños distintos que comparten UNA dimensión).
+    const cells = tpl.pages?.[0]?.celdas ?? tpl.celdas ?? [];
+    if (cells.length < 2) return null;
+    const round = (n) => Math.round(n * 100) / 100;
+    const hs = new Set(cells.map((c) => round(c.h)));
+    const ws = new Set(cells.map((c) => round(c.w)));
+    // Grilla uniforme (mismo w y h) = NO es "por tamaño" (es por cantidad/grilla).
+    if (hs.size === 1 && ws.size === 1) return null;
+    let fixedDim = null;
+    let fixedValueMm = null;
+    if (hs.size === 1) { fixedDim = 'alto'; fixedValueMm = cells[0].h; }
+    else if (ws.size === 1) { fixedDim = 'ancho'; fixedValueMm = cells[0].w; }
+    else return null;
+    return { fixedDim, fixedValueMm, marginX: 5, marginY: 5, spacingX: 2, spacingY: 2 };
+  };
+
+  const isSizePackTemplate = (tpl) =>
+    fixedPageCount(tpl) !== null && getSizeRecipe(tpl) !== null;
+
+  // "Cantidad por foto" sobre una plantilla "por tamaño": reacomoda TODAS las
+  // copias pedidas (countsById) respetando el tamaño físico de cada foto,
+  // paginando en cuantas hojas hagan falta. Abre el resultado en una pestaña
+  // nueva (mismo camino probado que auto-acomodar). Devuelve true si acomodó.
+  const repackByQuantity = (countsById) => {
+    const imgs = layout.images;
+    const recipe = getSizeRecipe(selected);
+    if (!imgs?.length || !recipe) return false;
+
+    // Expandir: cada foto repetida según su cantidad. Cada entrada recuerda a
+    // qué imagen original pertenece (_imgId).
+    const expanded = [];
+    for (const img of imgs) {
+      const q = Math.max(0, Math.floor(Number(countsById?.[img.id]) || 0));
+      for (let k = 0; k < q; k++) {
+        expanded.push({ naturalWidth: img.width, naturalHeight: img.height, _imgId: img.id });
+      }
+    }
+    if (expanded.length === 0) return false;
+
+    const paperW = selected.pageWidthMm ?? selected.pages?.[0]?.pageWidthMm ?? 210;
+    const paperH = selected.pageHeightMm ?? 297;
+    const pack = packImagesByFixedDimension({
+      images: expanded,
+      fixedDim: recipe.fixedDim,
+      fixedValueMm: recipe.fixedValueMm,
+      paperW,
+      paperH,
+      marginX: recipe.marginX,
+      marginY: recipe.marginY,
+      spacingX: recipe.spacingX,
+      spacingY: recipe.spacingY,
+      repeatToFill: false,
+      multiPage: true,
+    });
+    if (!pack || pack.cells.length === 0) {
+      setToast({ kind: 'error', text: 'No se pudo reacomodar con esas cantidades.' });
+      return false;
+    }
+
+    // Secuencia de imágenes en orden de colocación (agrupadas: 15 de A, luego B…).
+    const seqImgIds = pack.cells.map((c) => expanded[c.imageIndex]._imgId);
+
+    // Imágenes únicas usadas (en orden de primera aparición) + índice para el mapeo.
+    const imgById = new Map(imgs.map((i) => [i.id, i]));
+    const usedOrder = [];
+    const remap = new Map();
+    for (const imgId of seqImgIds) {
+      if (!remap.has(imgId)) { remap.set(imgId, usedOrder.length); usedOrder.push(imgId); }
+    }
+    const usedImages = usedOrder.map((id) => imgById.get(id));
+
+    // GRILLA ÚNICA para todas las hojas (sobrantes = huecos, todas alineadas).
+    const seq = seqImgIds.map((id) => remap.get(id));
+    const { pages, cellMapping, numPages, perPage } = buildUniformCutPages(pack.pages, seq);
+
+    // Hereda el corte del template original (mismo corte en todas las hojas).
+    const markMarginMm = selected.markMarginMm ?? 0;
+    const cutMarginMm = selected.cutMarginMm ?? 0;
+    const cutShape = selected.cutShape ?? 'rect';
+    const cortes = markMarginMm > 0
+      ? generateCuts(pages[0]?.celdas ?? [], { cutShape, cutMarginMm })
+      : [];
+    const placed = seqImgIds.length;
+    const name = `Por cantidad (${placed} copias · ${numPages} hoja${numPages === 1 ? '' : 's'})`;
+    const tpl = {
+      name,
+      pdfBase64: null,
+      pageWidthMm: paperW,
+      pageHeightMm: paperH,
+      pageCount: numPages,
+      celdas: pages[0]?.celdas ?? [],
+      pages,
+      celdasDorso: [],
+      cortes,
+      cutMarginMm,
+      markMarginMm,
+      cutShape,
+      doubleSided: false,
+      singlePage: true,
+      conQr: selected.conQr ?? false,
+      autoPack: { mode: 'size', ...recipe },
+    };
+    const tabId = openInTab(tpl, { name, forceNew: true });
+    setPendingAutoAssign({
+      templateId: `tabtpl_${tabId}`,
+      images: usedImages,
+      cellMapping,
+    });
+    const holes = numPages * perPage - placed;
+    setToast({
+      kind: 'success',
+      text: `${placed} copia${placed === 1 ? '' : 's'} en ${numPages} hoja${numPages === 1 ? '' : 's'}${holes > 0 ? ` (${holes} lugar${holes === 1 ? '' : 'es'} libre${holes === 1 ? '' : 's'})` : ''} (pestaña nueva).`,
+    });
+    return true;
   };
 
   // Cortes por contorno. Separamos dos clases de cambio:
@@ -3967,14 +4153,28 @@ export default function App() {
           images={layout.images}
           cellsPerPage={layout.cellsPerPage}
           onConfirm={(counts) => {
-            const res = layout.applyImageQuantities(counts);
             setQuantitiesOpen(false);
+            // Plantilla "por tamaño" (multi-página): reacomoda respetando el
+            // tamaño físico y pagina en hojas nuevas (applyImageQuantities no
+            // aplica en multi-página). Si no, camino legacy (grilla que crece).
+            if (isSizePackTemplate(selected)) {
+              repackByQuantity(counts);
+              return;
+            }
+            const res = layout.applyImageQuantities(counts);
             setCurrentPage(0);
             layout.setSelectedCell(null);
             if (res) {
               setToast({
                 kind: 'success',
                 text: `${res.totalCopies} copia${res.totalCopies === 1 ? '' : 's'} acomodada${res.totalCopies === 1 ? '' : 's'} en ${res.pages} hoja${res.pages === 1 ? '' : 's'}.`,
+              });
+            } else {
+              // Multi-página que no es "por tamaño" (ej. grilla por cantidad):
+              // "cantidad por foto" no aplica. Avisar en vez de quedar en silencio.
+              setToast({
+                kind: 'info',
+                text: 'Para esta plantilla usá "Repartir parejo", o creá el acomodo desde "Acomodar por cantidad/por tamaño".',
               });
             }
           }}
@@ -4077,6 +4277,8 @@ export default function App() {
           onConfirm={submitAutoPack}
           onCancel={() => setAutoPackFiles(null)}
           qrConfig={qrConfig}
+          presets={paperPresetList}
+          onOpenPresetsEditor={() => setPresetsModalOpen(true)}
         />
 
         <ImageCountPackModal
@@ -4085,6 +4287,8 @@ export default function App() {
           onConfirm={submitCountPack}
           onCancel={() => setCountPackFiles(null)}
           qrConfig={qrConfig}
+          presets={paperPresetList}
+          onOpenPresetsEditor={() => setPresetsModalOpen(true)}
         />
 
         <PublishMazoModal
