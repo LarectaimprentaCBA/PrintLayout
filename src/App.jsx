@@ -21,6 +21,8 @@ import PdfImageExtractModal from './components/PdfImageExtractModal.jsx';
 import PdfToImageModal from './components/PdfToImageModal.jsx';
 import GridUploadModal from './components/GridUploadModal.jsx';
 import ImagePackModal from './components/ImagePackModal.jsx';
+import MultiSizeModal from './components/MultiSizeModal.jsx';
+import PhotoSizeModal from './components/PhotoSizeModal.jsx';
 import ImageCountPackModal from './components/ImageCountPackModal.jsx';
 import ImageQuantitiesModal from './components/ImageQuantitiesModal.jsx';
 import ImageFrontBackPoseModal from './components/ImageFrontBackPoseModal.jsx';
@@ -69,8 +71,11 @@ import {
   findCellPageInfo,
   backMirrorAxis,
   backRotate180,
+  cutsForPage,
+  cutIdForPage,
+  cutPageCount,
 } from './lib/templates.js';
-import { generateCuts } from './lib/grid.js';
+import { generateCuts, generateCutsPerCell } from './lib/grid.js';
 import { buildOrderJobs } from './intake/buildOrderJob.js';
 import { contourCutsByAssignments } from './lib/stickerContour.js';
 import {
@@ -334,6 +339,7 @@ export default function App() {
   // — asi el modal funciona aunque la sidebar deje de estar en Fase D).
   const newTabAutoPickerRef = useRef(null);
   const newTabCountPickerRef = useRef(null);
+  const newTabPhotoSizePickerRef = useRef(null);
 
   const [activeDrag, setActiveDrag] = useState(null);
   const [exporting, setExporting] = useState(false);
@@ -497,6 +503,9 @@ export default function App() {
   const contourCacheRef = useRef(new Map());
   // Acomodar por cantidad (N por hoja, maximo tamano).
   const [countPackFiles, setCountPackFiles] = useState(null);
+  // Medidas múltiples (receta de casilleros de distintos tamaños) y Fotos con medida.
+  const [multiSizeOpen, setMultiSizeOpen] = useState(false);
+  const [photoSizeFiles, setPhotoSizeFiles] = useState(null);
   // Imagenes precargadas que se asignan a una plantilla recien creada.
   const [pendingAutoAssign, setPendingAutoAssign] = useState(null); // { templateId, images }
   const processedAutoAssignRef = useRef(null); // guard idempotencia (StrictMode doble-run)
@@ -1252,8 +1261,14 @@ export default function App() {
       const cutM = next.cutMarginMm ?? 0;
       const markM = next.markMarginMm ?? 0;
       const shape = next.cutShape ?? 'rect';
+      const celdas = next.celdas ?? [];
+      // Si las celdas tienen forma propia (medidas múltiples: rect + círculo
+      // mezclados), el corte se regenera POR CELDA respetando cada forma.
+      const perCellShapes = celdas.some((c) => c.shape);
       next.cortes = markM > 0
-        ? generateCuts(next.celdas ?? [], { cutShape: shape, cutMarginMm: cutM })
+        ? (perCellShapes
+            ? generateCutsPerCell(celdas, { cutMarginMm: cutM })
+            : generateCuts(celdas, { cutShape: shape, cutMarginMm: cutM }))
         : [];
       return { template: next };
     });
@@ -1965,6 +1980,115 @@ export default function App() {
       console.error(err);
       setToast({ kind: 'error', text: `Error en acomodar por cantidad: ${err.message}` });
     }
+  };
+
+  const handleStartPhotoSize = async (files) => {
+    if (!files?.length) return;
+    const prepared = await convertHeicWithToast(files);
+    if (prepared.length) setPhotoSizeFiles(prepared);
+  };
+
+  // "Fotos con medida": cada foto a su tamaño, empaquetadas y paginadas. Arma la
+  // plantilla multi-hoja con las fotos ya asignadas. Las caras se detectan al
+  // leer las fotos (readImageFiles) → "Enfocar caras"/rellenado centrado andan.
+  const submitPhotoSize = async ({
+    paperWidthMm, paperHeightMm, pages, files, cellMapping, pageCount, placed, skipped,
+  }) => {
+    setPhotoSizeFiles(null);
+    if (!files?.length || !placed) return;
+    try {
+      const loaded = await readImageFiles(files);
+      if (loaded.length === 0) {
+        setToast({ kind: 'error', text: 'No se pudieron leer las fotos.' });
+        return;
+      }
+      const name = pageCount > 1
+        ? `Fotos con medida (${placed} · ${pageCount} hojas)`
+        : `Fotos con medida (${placed} fotos)`;
+      const tpl = {
+        name,
+        pdfBase64: null,
+        pageWidthMm: paperWidthMm,
+        pageHeightMm: paperHeightMm,
+        pageCount,
+        celdas: pages[0]?.celdas ?? [],
+        pages,
+        celdasDorso: [],
+        cortes: [],
+        markMarginMm: 0,
+        doubleSided: false,
+        singlePage: true,
+      };
+      const tabId = openInTab(tpl, { name, forceNew: true });
+      setPendingAutoAssign({
+        templateId: `tabtpl_${tabId}`,
+        images: loaded,
+        cellMapping,
+      });
+      setToast({
+        kind: 'success',
+        text: skipped > 0
+          ? `Hoja armada: ${placed} fotos (${skipped} no entraron).`
+          : `Hoja armada: ${placed} fotos en ${pageCount} hoja${pageCount === 1 ? '' : 's'}.`,
+      });
+    } catch (err) {
+      console.error(err);
+      setToast({ kind: 'error', text: `Error al armar por medida: ${err.message}` });
+    }
+  };
+
+  // "Medidas múltiples": receta de casilleros de distintos tamaños, empaquetados
+  // y paginados. Crea una plantilla multi-hoja con casilleros VACÍOS para llenar
+  // después con fotos (mismos botones que cualquier plantilla).
+  const submitMultiSize = ({
+    paperWidthMm, paperHeightMm, pages, pageCount, placed, skipped,
+    cutMarginMm = 0, markMarginMm = 0, conQr: wantQr = true, doubleSided = false,
+  }) => {
+    setMultiSizeOpen(false);
+    if (!pages?.length || !placed) return;
+    // Corte POR CELDA (cada casillero con su forma: rect o círculo). Como cada
+    // hoja puede ser distinta, guardamos los cortes POR PÁGINA (cortesPorPagina):
+    // al imprimir se guarda un .plt por hoja y cada hoja lleva su PROPIO QR.
+    const hasCut = markMarginMm > 0;
+    const cortesPorPagina = hasCut
+      ? pages.map((pg) => generateCutsPerCell(pg.celdas ?? [], { cutMarginMm }))
+      : [];
+    const cortes = cortesPorPagina[0] ?? [];
+    const name = pageCount > 1
+      ? `Medidas múltiples (${placed} casilleros · ${pageCount} hojas)`
+      : `Medidas múltiples (${placed} casilleros)`;
+    const tpl = {
+      name,
+      pdfBase64: null,
+      pageWidthMm: paperWidthMm,
+      pageHeightMm: paperHeightMm,
+      pageCount,
+      celdas: pages[0]?.celdas ?? [],
+      pages,
+      celdasDorso: [],
+      cortes,
+      // Solo guardamos cortesPorPagina si hay más de una hoja (si es una sola,
+      // alcanza con `cortes` y el flujo de QR de siempre).
+      cortesPorPagina: hasCut && pages.length > 1 ? cortesPorPagina : undefined,
+      cutMarginMm,
+      markMarginMm: hasCut ? markMarginMm : 0,
+      cutShape: 'rect',
+      // "Con QR" (cada hoja lleva el suyo) solo si hay corte y el usuario lo dejó
+      // tildado. El packer ya reservó la franja para que no pise los casilleros.
+      conQr: wantQr && hasCut,
+      doubleSided,
+      backMirror: doubleSided ? 'x' : undefined,
+      backRotate180: doubleSided ? false : undefined,
+      singlePage: true,
+    };
+    openInTab(tpl, { name, forceNew: true });
+    setToast({
+      kind: 'success',
+      text: (skipped > 0
+        ? `Plantilla creada: ${placed} casilleros (${skipped} no entraron).`
+        : `Plantilla creada: ${placed} casilleros en ${pageCount} hoja${pageCount === 1 ? '' : 's'}.`)
+        + (wantQr && hasCut && pageCount > 1 ? ' Cada hoja lleva su propio QR y corte.' : ''),
+    });
   };
 
   const submitAutoPack = async ({
@@ -3460,22 +3584,39 @@ export default function App() {
   // estado de UI (toast/cutting). Lo usa el guardado automático al imprimir.
   // Mismo destino y payload que el botón manual "Guardar corte QR"
   // (handleExportCutToQr), que queda intacto. Devuelve {ok, error?}.
+  // Guarda un .plt por HOJA en la carpeta del server QR. Si la plantilla tiene
+  // cortes distintos por página (cortesPorPagina), guarda uno por hoja con su
+  // nombre (base, base-h2, base-h3…) para que cada QR impreso pida el suyo. Si el
+  // corte es único (una hoja o el mismo en todas), guarda un solo <cutId>.plt.
   const saveCutToQrFolder = async () => {
     try {
       const cfg = await window.printlayout.qrcut.getConfig();
       const dir = (cfg?.cortesDir || '').trim();
       if (!dir) return { ok: false, error: 'no hay carpeta de cortes configurada' };
       const sep = dir.includes('\\') || !dir.includes('/') ? '\\' : '/';
-      const outPath = `${dir.replace(/[\\/]+$/, '')}${sep}${selected.cutId}.plt`;
-      const result = await window.printlayout.plotter.exportCut({
-        cortes: selected.cortes,
-        pageWidthMm: selected.pageWidthMm,
-        pageHeightMm: selected.pageHeightMm,
-        markMarginMm: selected.markMarginMm ?? 10,
-        bladeOffsetMm,
-        outPath,
-      });
-      return result?.ok ? { ok: true, bytes: result.bytes } : { ok: false, error: result?.error ?? 'desconocido' };
+      const base = dir.replace(/[\\/]+$/, '');
+      const nPages = cutPageCount(selected);
+      let saved = 0;
+      let bytes = 0;
+      for (let p = 0; p < nPages; p++) {
+        const cortes = cutsForPage(selected, p);
+        if (!cortes || cortes.length === 0) continue;
+        const id = cutIdForPage(selected, p);
+        if (!id) continue;
+        const outPath = `${base}${sep}${id}.plt`;
+        const result = await window.printlayout.plotter.exportCut({
+          cortes,
+          pageWidthMm: selected.pageWidthMm,
+          pageHeightMm: selected.pageHeightMm,
+          markMarginMm: selected.markMarginMm ?? 10,
+          bladeOffsetMm,
+          outPath,
+        });
+        if (!result?.ok) return { ok: false, error: result?.error ?? 'desconocido', saved };
+        saved++;
+        bytes += result.bytes || 0;
+      }
+      return saved > 0 ? { ok: true, saved, bytes } : { ok: false, error: 'no había cortes para guardar' };
     } catch (err) {
       return { ok: false, error: err.message };
     }
@@ -3554,7 +3695,9 @@ export default function App() {
         if (!isBack && (selected.conQr ?? true) && hasCuts(selected) && selected.cutId && qrConfig) {
           const cut = await saveCutToQrFolder();
           cutNote = cut.ok
-            ? ` Corte "${selected.cutId}.plt" guardado en la carpeta QR.`
+            ? (cut.saved > 1
+                ? ` ${cut.saved} cortes guardados en la carpeta QR (uno por hoja, cada QR pide el suyo).`
+                : ` Corte "${selected.cutId}.plt" guardado en la carpeta QR.`)
             : ` ⚠ No se pudo guardar el corte automáticamente (${cut.error}). Usá "Guardar corte QR".`;
         }
         setToast({ kind: 'success', text: base + cutNote });
@@ -3572,8 +3715,16 @@ export default function App() {
   const handleCut = async () => {
     if (!selected || !hasCuts(selected) || cutting) return;
     const margin = selected.markMarginMm ?? 10;
+    // Envío directo: manda el corte de la HOJA ACTUAL (por-página si aplica).
+    const pageCortes = cutsForPage(selected, currentPage);
+    if (!pageCortes || pageCortes.length === 0) {
+      setToast({ kind: 'error', text: 'Esta hoja no tiene corte.' });
+      return;
+    }
+    const multi = cutPageCount(selected) > 1;
     if (!confirm(
-      `Vas a enviar ${selected.cortes.length} polilíneas al plotter.\n` +
+      `Vas a enviar ${pageCortes.length} líneas de corte al plotter` +
+      (multi ? ` (hoja ${currentPage + 1}).\n` : `.\n`) +
       `Margen de marcas: ${margin} mm.\n` +
       `Asegurate de que la hoja ya esté impresa y posicionada en la máquina.`
     )) return;
@@ -3581,7 +3732,7 @@ export default function App() {
     setToast(null);
     try {
       const result = await window.printlayout.plotter.sendCut({
-        cortes: selected.cortes,
+        cortes: pageCortes,
         pageWidthMm: selected.pageWidthMm,
         pageHeightMm: selected.pageHeightMm,
         markMarginMm: margin,
@@ -3619,30 +3770,17 @@ export default function App() {
     setCutting(true);
     setToast(null);
     try {
-      const cfg = await window.printlayout.qrcut.getConfig();
-      const dir = (cfg?.cortesDir || '').trim();
-      if (!dir) {
-        setToast({ kind: 'error', text: 'No hay carpeta de cortes configurada. Abrí el panel "Corte QR" y elegí una.' });
-        return;
-      }
-      // Respetar el separador propio de la carpeta (Windows/UNC vs POSIX).
-      const sep = dir.includes('\\') || !dir.includes('/') ? '\\' : '/';
-      const outPath = `${dir.replace(/[\\/]+$/, '')}${sep}${cutId}.plt`;
-      const result = await window.printlayout.plotter.exportCut({
-        cortes: selected.cortes,
-        pageWidthMm: selected.pageWidthMm,
-        pageHeightMm: selected.pageHeightMm,
-        markMarginMm: selected.markMarginMm ?? 10,
-        bladeOffsetMm,
-        outPath,
-      });
-      if (result?.ok) {
+      // Guarda un .plt por hoja (por-página si la plantilla lo trae).
+      const cut = await saveCutToQrFolder();
+      if (cut.ok) {
         setToast({
           kind: 'success',
-          text: `Corte "${cutId}.plt" guardado en la carpeta QR (${result.bytes} bytes). El QR de la hoja apunta a ese nombre — imprimí y escaneá.`,
+          text: cut.saved > 1
+            ? `${cut.saved} cortes guardados en la carpeta QR (uno por hoja). Imprimí y escaneá el QR de cada hoja.`
+            : `Corte "${cutId}.plt" guardado en la carpeta QR. El QR de la hoja apunta a ese nombre — imprimí y escaneá.`,
         });
       } else {
-        setToast({ kind: 'error', text: `No se pudo guardar: ${result?.error ?? 'desconocido'}` });
+        setToast({ kind: 'error', text: `No se pudo guardar: ${cut.error ?? 'desconocido'}` });
       }
     } catch (err) {
       console.error(err);
@@ -3926,7 +4064,7 @@ export default function App() {
             showCuts={showCuts}
             showSafety={showSafety}
             qr={(selected?.conQr ?? true) && hasCuts(selected) && selected.cutId && qrConfig ? {
-              text: selected.cutId,
+              text: cutIdForPage(selected, currentPage) || selected.cutId,
               sizeMm: qrConfig.qrSizeMm,
               bottomMm: qrConfig.qrBottomMm,
               centered: qrConfig.qrCentered,
@@ -4291,6 +4429,25 @@ export default function App() {
           onOpenPresetsEditor={() => setPresetsModalOpen(true)}
         />
 
+        {multiSizeOpen && (
+          <MultiSizeModal
+            open
+            onConfirm={submitMultiSize}
+            onCancel={() => setMultiSizeOpen(false)}
+            presets={paperPresetList}
+            onOpenPresetsEditor={() => setPresetsModalOpen(true)}
+            qrConfig={qrConfig}
+          />
+        )}
+
+        <PhotoSizeModal
+          open={!!photoSizeFiles}
+          files={photoSizeFiles ?? []}
+          onConfirm={submitPhotoSize}
+          onCancel={() => setPhotoSizeFiles(null)}
+          presets={paperPresetList}
+        />
+
         <PublishMazoModal
           open={!!publishMazoPrompt}
           defaultName={selected?.name || ''}
@@ -4390,6 +4547,8 @@ export default function App() {
           onCreateGrid={() => { setNewTabModalOpen(false); setGridModalOpen(true); }}
           onAutoPack={() => newTabAutoPickerRef.current?.click()}
           onCountPack={() => newTabCountPickerRef.current?.click()}
+          onMultiSize={() => { setNewTabModalOpen(false); setMultiSizeOpen(true); }}
+          onPhotoSize={() => newTabPhotoSizePickerRef.current?.click()}
           onUploadPdf={() => blankPdfInputRef.current?.click()}
           onOpenJobsList={() => setJobsListOpen(true)}
           onImportDobble={() => { setNewTabModalOpen(false); handleImportDobble(); }}
@@ -4437,6 +4596,18 @@ export default function App() {
             const files = Array.from(e.target.files || []);
             e.target.value = '';
             if (files.length > 0) handleStartCountPack(files);
+          }}
+        />
+        <input
+          ref={newTabPhotoSizePickerRef}
+          type="file"
+          accept="image/jpeg,image/png,image/jpg,image/heic,image/heif,.heic,.heif"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            const files = Array.from(e.target.files || []);
+            e.target.value = '';
+            if (files.length > 0) handleStartPhotoSize(files);
           }}
         />
 

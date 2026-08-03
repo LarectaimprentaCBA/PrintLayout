@@ -5,6 +5,7 @@ import {
   pageStartOffset,
   fixedPageCount,
   safetyMm,
+  cutsForPage,
 } from '../lib/templates.js';
 import { offsetPolygons } from '../lib/contour/offset.js';
 import { coverObjectPosition, coverCropRect, focalPoint } from '../lib/faceDetection.js';
@@ -121,7 +122,7 @@ export default function LayoutCanvas({
   const safeCuts = useMemo(() => {
     // OJO: corre antes del early-return por template null.
     if (!showSafety || !template) return null;
-    const cortes = template.cortes ?? [];
+    const cortes = cutsForPage(template, currentPage ?? 0);
     if (cortes.length === 0) return null;
     const s = safetyMm(template);
     if (!(s > 0)) return null;
@@ -139,7 +140,7 @@ export default function LayoutCanvas({
       }
     }
     return out.length ? out : null;
-  }, [showSafety, template?.cortes, template?.safetyMm]);
+  }, [showSafety, template?.cortes, template?.cortesPorPagina, template?.safetyMm, currentPage]);
 
   const scrollRef = useRef(null);
   const [fitScale, setFitScale] = useState(1);
@@ -368,7 +369,7 @@ export default function LayoutCanvas({
                     onClick={onCellClick}
                     onContextMenu={onCellContextMenu}
                     style={{ left: x, top: y, width: w, height: h }}
-                    cutShape={template.cutShape ?? 'rect'}
+                    cutShape={cell.shape ?? template.cutShape ?? 'rect'}
                     cellWmm={cell.w}
                     cellHmm={cell.h}
                     cutMarginMm={template.cutMarginMm ?? 0}
@@ -409,24 +410,29 @@ export default function LayoutCanvas({
                 </Fragment>
               );
             })}
-            {showCuts && template.cortes && template.cortes.length > 0 && (
-              <svg
-                viewBox={`0 0 ${template.pageWidthMm} ${template.pageHeightMm}`}
-                preserveAspectRatio="none"
-                className="pointer-events-none absolute inset-0 z-20 h-full w-full"
-              >
-                {template.cortes.map((poly, i) => (
-                  <polyline
-                    key={i}
-                    points={poly.map(([x, y]) => `${x},${y}`).join(' ')}
-                    fill="none"
-                    stroke="#ef4444"
-                    strokeWidth={1.2}
-                    vectorEffect="non-scaling-stroke"
-                  />
-                ))}
-              </svg>
-            )}
+            {showCuts && (() => {
+              // Corte de la HOJA ACTUAL (por-página si la plantilla lo trae).
+              const pageCortes = cutsForPage(template, currentPage ?? 0);
+              if (!pageCortes.length) return null;
+              return (
+                <svg
+                  viewBox={`0 0 ${template.pageWidthMm} ${template.pageHeightMm}`}
+                  preserveAspectRatio="none"
+                  className="pointer-events-none absolute inset-0 z-20 h-full w-full"
+                >
+                  {pageCortes.map((poly, i) => (
+                    <polyline
+                      key={i}
+                      points={poly.map(([x, y]) => `${x},${y}`).join(' ')}
+                      fill="none"
+                      stroke="#ef4444"
+                      strokeWidth={1.2}
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  ))}
+                </svg>
+              );
+            })()}
             {safeCuts && (
               <svg
                 viewBox={`0 0 ${template.pageWidthMm} ${template.pageHeightMm}`}

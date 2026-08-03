@@ -207,6 +207,33 @@ export function hasCustomBackCells(template) {
   return Array.isArray(template?.celdasDorso) && template.celdasDorso.length > 0;
 }
 
+// Cortes de UNA hoja. Si la plantilla trae cortes POR PÁGINA (cada hoja
+// distinta, ej. "medidas múltiples" multi-hoja) usa los de esa página; si no,
+// usa el corte único (el MISMO en todas las hojas: grillas, por-tamaño, etc.).
+export function cutsForPage(template, pageIdx) {
+  if (!template) return [];
+  const per = template.cortesPorPagina;
+  if (Array.isArray(per)) return per[pageIdx] ?? [];
+  return template.cortes ?? [];
+}
+
+// Cantidad de hojas con corte (para guardar un .plt por hoja).
+export function cutPageCount(template) {
+  if (Array.isArray(template?.cortesPorPagina)) return template.cortesPorPagina.length;
+  return 1;
+}
+
+// Nombre del .plt / texto del QR de una hoja. Solo se numera (base-h2, base-h3…)
+// cuando los cortes DIFIEREN por página (cortesPorPagina con >1 hoja); si no, el
+// MISMO nombre en todas (una hoja, o multi-hoja con el mismo corte).
+export function cutIdForPage(template, pageIdx) {
+  const base = template?.cutId;
+  if (!base) return null;
+  const per = template?.cortesPorPagina;
+  if (Array.isArray(per) && per.length > 1 && pageIdx > 0) return `${base}-h${pageIdx + 1}`;
+  return base;
+}
+
 // Orientacion target de la plantilla: tomamos la primera celda (asumimos
 // que las plantillas tienen celdas todas con la misma orientacion, que es
 // el caso comun: Polaroid vertical, tarjetas horizontal, etc).

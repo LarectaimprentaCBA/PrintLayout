@@ -239,6 +239,20 @@ export function generateCuts(cells, { cutShape = 'rect', cutMarginMm = 0 } = {})
   return cellsToCuts(cells, { cutMarginMm });
 }
 
+// Corte con forma POR CELDA (cada celda define su propia forma en cell.shape:
+// 'circle' → círculo inscripto; cualquier otra → rectángulo). Para hojas con
+// medidas/formas mezcladas (ej. "medidas múltiples" con rectángulos y círculos).
+export function generateCutsPerCell(cells, { cutMarginMm = 0 } = {}) {
+  const polylines = [];
+  for (const c of cells) {
+    const one = c.shape === 'circle'
+      ? cellsToCircleCuts([c], { cutMarginMm })
+      : cellsToCuts([c], { cutMarginMm });
+    polylines.push(...one);
+  }
+  return polylines;
+}
+
 // Centra un conjunto de celdas dentro del area util de la hoja. Pensado para los
 // "acomodar": cuando la ultima fila/columna queda incompleta, los disenos no
 // quedan pegados arriba-izquierda sino centrados.

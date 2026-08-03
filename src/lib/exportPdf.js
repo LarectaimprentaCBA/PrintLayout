@@ -6,6 +6,7 @@ import {
   pageStartOffset,
   fixedPageCount,
   backRotate180,
+  cutIdForPage,
 } from './templates.js';
 import { coverCropRect, coverObjectPosition } from './faceDetection.js';
 import { cropImageDataUrl } from './imageCrop.js';
@@ -416,12 +417,17 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
     }
 
     // QR de corte (SOLO frente): una vez por hoja, en la franja inferior de la
-    // hoja física. La cámara del cabezal lo lee y pide <text>.plt. En layouts
-    // multipágina va el MISMO QR en cada hoja del frente (cualquiera sirve para
-    // escanear). Ausente (callers actuales) → no dibuja nada.
-    if (qr && qr.text && !(template.doubleSided && face === 'back')) {
+    // hoja física. La cámara del cabezal lo lee y pide <text>.plt. Si la plantilla
+    // tiene cortes DISTINTOS por hoja (cortesPorPagina), cada hoja lleva su
+    // PROPIO QR (base, base-h2, base-h3…) → escaneás cada hoja y corta la suya.
+    // Si el corte es el mismo en todas (grillas, por-tamaño), va el mismo QR.
+    // Ausente (callers actuales) → no dibuja nada.
+    const qrTextForThisPage = qr && qr.text
+      ? (cutIdForPage(template, p) || qr.text)
+      : null;
+    if (qrTextForThisPage && !(template.doubleSided && face === 'back')) {
       drawQr(page, {
-        text: qr.text,
+        text: qrTextForThisPage,
         pageWmm: paperWmm,
         pageHmm: paperHmm,
         sizeMm: qr.sizeMm,

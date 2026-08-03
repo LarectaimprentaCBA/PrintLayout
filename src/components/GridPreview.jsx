@@ -187,9 +187,9 @@ export default function GridPreview({
           />
         ))}
 
-      {/* 4) Celdas */}
+      {/* 4) Celdas (forma por celda: c.shape override del cutShape global) */}
       {cells.map((c) =>
-        cutShape === 'circle' ? (
+        (c.shape ?? cutShape) === 'circle' ? (
           <ellipse
             key={`c-${c.id}`}
             cx={c.x + c.w / 2}
@@ -220,7 +220,7 @@ export default function GridPreview({
       {showCutLines &&
         cells.map((c) => {
           const m = cutMarginMm;
-          if (cutShape === 'circle') {
+          if ((c.shape ?? cutShape) === 'circle') {
             const r = Math.min(c.w, c.h) / 2 - m;
             if (r <= 0) return null;
             return (

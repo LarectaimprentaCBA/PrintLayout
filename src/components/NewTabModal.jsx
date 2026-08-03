@@ -29,6 +29,8 @@ export default function NewTabModal({
   onCreateGrid,
   onAutoPack,
   onCountPack,
+  onMultiSize,
+  onPhotoSize,
   onUploadPdf,
   onOpenJobsList,
   onImportDobble,
@@ -221,6 +223,35 @@ export default function NewTabModal({
               )}
               onClick={handleOption(onCountPack)}
             />
+            {onMultiSize && (
+              <OptionCard
+                title="Medidas múltiples"
+                subtitle="Casilleros de distintos tamaños (ancho×alto + cantidad), se acomodan solos"
+                icon={(
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+                    <rect x="3" y="3" width="10" height="7" rx="1" />
+                    <rect x="15" y="3" width="6" height="5" rx="1" />
+                    <rect x="3" y="12" width="6" height="9" rx="1" />
+                    <rect x="11" y="12" width="10" height="6" rx="1" />
+                  </svg>
+                )}
+                onClick={handleOption(onMultiSize)}
+              />
+            )}
+            {onPhotoSize && (
+              <OptionCard
+                title="Fotos con medida"
+                subtitle="Subís fotos y a cada una le ponés su tamaño; se acomodan y paginan solas"
+                icon={(
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+                    <rect x="3" y="4" width="18" height="16" rx="2" />
+                    <circle cx="8.5" cy="9.5" r="1.8" />
+                    <path d="M4 18 L10 12 L14 16 L17 13 L20 16" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                )}
+                onClick={handleOption(onPhotoSize)}
+              />
+            )}
             <OptionCard
               title="Subir PDF de plantilla"
               subtitle="PDF con paginas de marcas / cajas / cortes"
