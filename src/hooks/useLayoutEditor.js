@@ -696,6 +696,22 @@ export function useLayoutEditor(template, face = 'front') {
     [isMultiPage, cellsPerPage, images, applyMutation],
   );
 
+  // Asigna imagenes YA cargadas a celdas segun un array flat
+  // (cellFlatIdx -> imageId|null). Reemplaza el contenido de la cara ACTIVA sin
+  // agregar imagenes ni cambiar la geometria. Pensado para plantillas de celdas
+  // FIJAS (medidas multiples): "cantidad por foto por tamaño" arma el array y lo
+  // aplica de una (1 solo snapshot → 1 Ctrl+Z revierte todo). Devuelve la
+  // cantidad de celdas asignadas (no nulas), o null si no aplica.
+  const assignCellsExplicit = useCallback(
+    (flatArr) => {
+      if (!Array.isArray(flatArr) || flatArr.length === 0) return null;
+      applyMutation(() => flatArr.slice());
+      setSelectedCell(null);
+      return flatArr.filter((id) => id != null).length;
+    },
+    [applyMutation],
+  );
+
   // Posa pares frente/dorso emparejados por indice. `cards` es una lista YA
   // expandida por cantidad: [{ front: imageObj|null, back: imageObj|null }, ...].
   // La tarjeta i ocupa la celda i del frente (front) y la celda i del dorso
@@ -854,6 +870,7 @@ export function useLayoutEditor(template, face = 'front') {
     fillAllWith,
     distributeImagesEvenly,
     applyImageQuantities,
+    assignCellsExplicit,
     applyFrontBackPairs,
     swapCells,
     clearCell,

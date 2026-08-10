@@ -11,7 +11,7 @@ const EMPTY = {
   cortesDir: '', activo: true,
   qrSizeMm: 8, qrBottomMm: 9.5, qrCentered: true, cutPrefix: '',
   relayActivo: true, relayPort: 8080, relayAllowlistCidr: '192.168.100.0/24',
-  plotterSettleMs: 1200,
+  plotterSettleMs: 1200, machineName: '',
 };
 
 export default function QrCutPanelModal({ open, onClose }) {
@@ -316,6 +316,15 @@ export default function QrCutPanelModal({ open, onClose }) {
                   <input value={cfg.cutPrefix} onChange={(e) => patch({ cutPrefix: e.target.value })}
                     placeholder="ej: PC1  (se antepone al timestamp)"
                     className="w-full rounded border border-ink-700 bg-ink-800 px-3 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500" />
+                </label>
+                <label className="mt-2 block text-xs text-ink-300">
+                  <span className="mb-1 block">Nombre de esta PC (para la cola de impresión)</span>
+                  <input value={cfg.machineName} onChange={(e) => patch({ machineName: e.target.value })}
+                    placeholder="ej: PC 1  (el trabajo sale como «PC 1 - nombre de la solapa»)"
+                    className="w-full rounded border border-ink-700 bg-ink-800 px-3 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500" />
+                  <span className="mt-1 block text-[10px] text-ink-500">
+                    Aparece en la cola de la impresora, así se ve de qué PC y qué trabajo salió. Vacío = solo el nombre de la solapa.
+                  </span>
                 </label>
               </div>
 

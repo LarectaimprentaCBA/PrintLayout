@@ -579,6 +579,8 @@ export async function printLayoutPdf(template, assignments, imageMap, options) {
   const paperHeightMm = options?.paperHeightMm ?? template.pageHeightMm;
   const result = await window.printlayout.pdf.print({
     defaultName: safePdfName(template, options),
+    // Nombre del trabajo en la cola de la impresora (ej. "PC 1 - Grilla rápida").
+    docName: options?.docName,
     images,
     pageWidthMm: paperWidthMm,
     pageHeightMm: paperHeightMm,

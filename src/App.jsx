@@ -25,6 +25,7 @@ import MultiSizeModal from './components/MultiSizeModal.jsx';
 import PhotoSizeModal from './components/PhotoSizeModal.jsx';
 import ImageCountPackModal from './components/ImageCountPackModal.jsx';
 import ImageQuantitiesModal from './components/ImageQuantitiesModal.jsx';
+import ImageSizeGroupsModal from './components/ImageSizeGroupsModal.jsx';
 import ImageFrontBackPoseModal from './components/ImageFrontBackPoseModal.jsx';
 import IntakePanelModal from './components/IntakePanelModal.jsx';
 import QrCutPanelModal from './components/QrCutPanelModal.jsx';
@@ -66,6 +67,7 @@ import {
   templateOrientation,
   imageOrientation,
   fixedPageCount,
+  totalCells,
   cellsCountOnPage,
   pageStartOffset,
   findCellPageInfo,
@@ -2080,6 +2082,9 @@ export default function App() {
       backMirror: doubleSided ? 'x' : undefined,
       backRotate180: doubleSided ? false : undefined,
       singlePage: true,
+      // Marca: plantilla de MEDIDAS MEZCLADAS (casilleros de tamaños varios).
+      // Habilita "cantidad por foto POR TAMAÑO" (ver getCellSizeGroups).
+      multiSize: true,
     };
     openInTab(tpl, { name, forceNew: true });
     setToast({
@@ -2216,6 +2221,72 @@ export default function App() {
 
   const isSizePackTemplate = (tpl) =>
     fixedPageCount(tpl) !== null && getSizeRecipe(tpl) !== null;
+
+  // Agrupa las celdas de una plantilla por TAMAÑO (ancho×alto + forma), en el
+  // orden plano de asignación (mismas hojas/celdas que el array de assignments
+  // del frente). Cada grupo trae los índices planos de sus celdas. Se usa para
+  // "cantidad por foto por tamaño" en plantillas de medidas mezcladas. Ordena
+  // por área descendente (los tamaños grandes primero).
+  const getCellSizeGroups = (tpl) => {
+    if (!tpl) return [];
+    const pages = Array.isArray(tpl.pages) && tpl.pages.length > 0
+      ? tpl.pages
+      : [{ celdas: tpl.celdas ?? [] }];
+    const round = (n) => Math.round((Number(n) || 0) * 100) / 100;
+    const map = new Map();
+    let flat = 0;
+    for (const pg of pages) {
+      const cells = pg?.celdas ?? [];
+      for (const c of cells) {
+        const shape = c.shape ?? tpl.cutShape ?? 'rect';
+        const w = round(c.w);
+        const h = round(c.h);
+        const key = shape === 'circle' ? `c:${w}` : `r:${w}x${h}`;
+        if (!map.has(key)) map.set(key, { key, w, h, shape, cellFlatIdxs: [] });
+        map.get(key).cellFlatIdxs.push(flat);
+        flat += 1;
+      }
+    }
+    return [...map.values()]
+      .map((g) => ({ ...g, count: g.cellFlatIdxs.length }))
+      .sort((a, b) => (b.w * b.h) - (a.w * a.h));
+  };
+
+  // ¿Usar el modal "cantidad por foto POR TAMAÑO" (agrupado)? Sí para plantillas
+  // de celdas FIJAS que NO son "por tamaño" (esas re-empaquetan con
+  // repackByQuantity): medidas mezcladas y también grillas multi-hoja fijas
+  // (quedan como 1 solo grupo). Las legacy (una hoja que crece) siguen con el
+  // modal plano de siempre (applyImageQuantities).
+  const isMultiSizeQtyTemplate = (tpl) => {
+    if (!tpl) return false;
+    if (isSizePackTemplate(tpl)) return false;
+    if (fixedPageCount(tpl) === null) return false;
+    return getCellSizeGroups(tpl).length >= 1 && totalCells(tpl) > 0;
+  };
+
+  // Aplica el plan del modal agrupado: { [groupKey]: [imageId, ...] }. Arma el
+  // array plano de asignaciones (celda → foto) respetando el orden de celdas de
+  // cada tamaño y lo aplica sobre la plantilla actual (no crea pestaña: la
+  // geometría es fija, solo cambia el contenido). Deja huecos donde no se asignó.
+  const applySizeGroups = (plan) => {
+    const groups = getCellSizeGroups(selected);
+    if (!groups.length) return;
+    const flat = Array(totalCells(selected)).fill(null);
+    for (const g of groups) {
+      const seq = plan?.[g.key] ?? [];
+      g.cellFlatIdxs.forEach((flatIdx, i) => {
+        if (seq[i]) flat[flatIdx] = seq[i];
+      });
+    }
+    const assigned = layout.assignCellsExplicit(flat);
+    setCurrentPage(0);
+    layout.setSelectedCell(null);
+    setToast({
+      kind: 'success',
+      text: `${assigned || 0} casillero${assigned === 1 ? '' : 's'} acomodado${assigned === 1 ? '' : 's'} por tamaño.`
+        + (selected?.doubleSided ? ' (frente; el dorso se completa aparte)' : ''),
+    });
+  };
 
   // "Cantidad por foto" sobre una plantilla "por tamaño": reacomoda TODAS las
   // copias pedidas (countsById) respetando el tamaño físico de cada foto,
@@ -3629,6 +3700,12 @@ export default function App() {
     const face = prompt.face;
     const isBack = face === 'back';
     const assignments = isBack ? layout.assignmentsBack : layout.assignmentsFront;
+    // Nombre del trabajo en la cola de la impresora: "<máquina> - <solapa>".
+    // La máquina la configura cada PC en Corte por QR; la solapa es la pestaña
+    // activa. Si no hay nombre de máquina, va solo la solapa.
+    const machineName = (qrConfig?.machineName || '').trim();
+    const tabName = (activeTab?.name || selected?.name || 'PrintLayout').trim();
+    const docName = machineName ? `${machineName} - ${tabName}` : tabName;
     setPrinting(face);
     setToast(null);
     try {
@@ -3645,6 +3722,7 @@ export default function App() {
         if (Array.isArray(pages) && pages.length > 0) images = pages.map((i) => allImages[i]).filter(Boolean);
         result = await window.printlayout.pdf.print({
           defaultName: `${(selected.name || 'Rotulos').replace(/[\\/:*?"<>|]+/g, '_')}.pdf`,
+          docName,
           images,
           pageWidthMm: selected.pageWidthMm,
           pageHeightMm: selected.pageHeightMm,
@@ -3676,6 +3754,7 @@ export default function App() {
           deviceName,
           copies,
           pages,
+          docName,
           drawMarks: cutMarks !== false,
           showDialog: false,
         });
@@ -4286,38 +4365,54 @@ export default function App() {
           />
         )}
 
-        <ImageQuantitiesModal
-          open={quantitiesOpen}
-          images={layout.images}
-          cellsPerPage={layout.cellsPerPage}
-          onConfirm={(counts) => {
-            setQuantitiesOpen(false);
-            // Plantilla "por tamaño" (multi-página): reacomoda respetando el
-            // tamaño físico y pagina en hojas nuevas (applyImageQuantities no
-            // aplica en multi-página). Si no, camino legacy (grilla que crece).
-            if (isSizePackTemplate(selected)) {
-              repackByQuantity(counts);
-              return;
-            }
-            const res = layout.applyImageQuantities(counts);
-            setCurrentPage(0);
-            layout.setSelectedCell(null);
-            if (res) {
-              setToast({
-                kind: 'success',
-                text: `${res.totalCopies} copia${res.totalCopies === 1 ? '' : 's'} acomodada${res.totalCopies === 1 ? '' : 's'} en ${res.pages} hoja${res.pages === 1 ? '' : 's'}.`,
-              });
-            } else {
-              // Multi-página que no es "por tamaño" (ej. grilla por cantidad):
-              // "cantidad por foto" no aplica. Avisar en vez de quedar en silencio.
-              setToast({
-                kind: 'info',
-                text: 'Para esta plantilla usá "Repartir parejo", o creá el acomodo desde "Acomodar por cantidad/por tamaño".',
-              });
-            }
-          }}
-          onCancel={() => setQuantitiesOpen(false)}
-        />
+        {quantitiesOpen && isMultiSizeQtyTemplate(selected) ? (
+          // Plantilla de MEDIDAS MEZCLADAS: "cantidad por foto POR TAMAÑO"
+          // (agrupado). Asigna las fotos a los casilleros fijos por tamaño +
+          // "rellenar parejo" el resto, sobre la misma plantilla.
+          <ImageSizeGroupsModal
+            open
+            images={layout.images}
+            groups={getCellSizeGroups(selected)}
+            onConfirm={(plan) => {
+              setQuantitiesOpen(false);
+              applySizeGroups(plan);
+            }}
+            onCancel={() => setQuantitiesOpen(false)}
+          />
+        ) : (
+          <ImageQuantitiesModal
+            open={quantitiesOpen}
+            images={layout.images}
+            cellsPerPage={layout.cellsPerPage}
+            onConfirm={(counts) => {
+              setQuantitiesOpen(false);
+              // Plantilla "por tamaño" (multi-página): reacomoda respetando el
+              // tamaño físico y pagina en hojas nuevas (applyImageQuantities no
+              // aplica en multi-página). Si no, camino legacy (grilla que crece).
+              if (isSizePackTemplate(selected)) {
+                repackByQuantity(counts);
+                return;
+              }
+              const res = layout.applyImageQuantities(counts);
+              setCurrentPage(0);
+              layout.setSelectedCell(null);
+              if (res) {
+                setToast({
+                  kind: 'success',
+                  text: `${res.totalCopies} copia${res.totalCopies === 1 ? '' : 's'} acomodada${res.totalCopies === 1 ? '' : 's'} en ${res.pages} hoja${res.pages === 1 ? '' : 's'}.`,
+                });
+              } else {
+                // Multi-página que no es "por tamaño" (ej. grilla por cantidad):
+                // "cantidad por foto" no aplica. Avisar en vez de quedar en silencio.
+                setToast({
+                  kind: 'info',
+                  text: 'Para esta plantilla usá "Repartir parejo", o creá el acomodo desde "Acomodar por cantidad/por tamaño".',
+                });
+              }
+            }}
+            onCancel={() => setQuantitiesOpen(false)}
+          />
+        )}
 
         <ImageFrontBackPoseModal
           open={poseFrontBackOpen}

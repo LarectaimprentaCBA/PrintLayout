@@ -82,6 +82,7 @@ namespace PrintLayoutHelper {
                 int copies = 1;
                 bool showDialog = true;
                 string devmodeFile = null;
+                string docName = "PrintLayout";
 
                 string line;
                 while ((line = Console.In.ReadLine()) != null) {
@@ -97,6 +98,7 @@ namespace PrintLayoutHelper {
                     else if (k == "WIDTH_MM") float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out _widthMm);
                     else if (k == "HEIGHT_MM") float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out _heightMm);
                     else if (k == "DEVMODE_FILE") devmodeFile = v;
+                    else if (k == "DOC_NAME") { if (!string.IsNullOrEmpty(v)) docName = v; }
                     else if (k == "PAGE") PagePaths.Add(v);
                 }
                 Log("read input: mode=" + mode + " pages=" + PagePaths.Count + " device=" + device + " copies=" + copies + " showDialog=" + showDialog + " devmodeFile=" + devmodeFile);
@@ -122,13 +124,14 @@ namespace PrintLayoutHelper {
                 if (!string.IsNullOrEmpty(devmodeFile) && File.Exists(devmodeFile) && !string.IsNullOrEmpty(device)) {
                     try {
                         byte[] dm = File.ReadAllBytes(devmodeFile);
-                        return PrintViaCreateDC(device, dm, copies);
+                        return PrintViaCreateDC(device, dm, copies, docName);
                     } catch (Exception dmEx) {
                         Log("CreateDC path fallo: " + dmEx.Message + " — cayendo a PrintDocument");
                     }
                 }
 
                 var doc = new PrintDocument();
+                doc.DocumentName = docName;
                 doc.OriginAtMargins = false;
                 doc.PrintPage += OnPrintPage;
                 doc.QueryPageSettings += OnQueryPageSettings;
@@ -275,7 +278,7 @@ namespace PrintLayoutHelper {
         // que segun driver puede no aplicar paper size / bandeja del DEVMODE
         // guardado. CreateDC le pasa el DEVMODE directo al spooler — el driver
         // imprime con exactamente esas opciones.
-        static int PrintViaCreateDC(string deviceName, byte[] devmode, int copiesOverride) {
+        static int PrintViaCreateDC(string deviceName, byte[] devmode, int copiesOverride, string docName) {
             if (devmode == null || devmode.Length == 0) {
                 WriteResult(false, "DEVMODE vacio para CreateDC.");
                 return 1;
@@ -319,7 +322,7 @@ namespace PrintLayoutHelper {
                 try {
                     var di = new DOCINFO {
                         cbSize = Marshal.SizeOf(typeof(DOCINFO)),
-                        lpszDocName = "PrintLayout",
+                        lpszDocName = string.IsNullOrEmpty(docName) ? "PrintLayout" : docName,
                         lpszOutput = null,
                         lpszDatatype = null,
                         fwType = 0,

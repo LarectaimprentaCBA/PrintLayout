@@ -33,6 +33,10 @@ const DEFAULTS = {
   // Prefijo opcional para el nombre del corte (por PC/turno). Vacío = solo el
   // timestamp. Se sanea igual que el nombre (QR/filesystem-safe).
   cutPrefix: '',
+  // Nombre de ESTA máquina/PC (ej. "PC 1", "Mostrador"). Se usa como nombre del
+  // trabajo de impresión: "<machineName> - <solapa>", así en la cola de la
+  // impresora se ve de qué PC y qué trabajo salió. Vacío = solo la solapa.
+  machineName: '',
   // --- Portero / relay de cortes (multiplexar el plotter desde varias PC) ---
   // Esta PC (la conectada al plotter) escucha en 0.0.0.0:relayPort y reenvía los
   // cortes de emisores externos (otra PC / Corel / otro software) al plotter,
@@ -81,6 +85,11 @@ function sanitize(cfg) {
     cutPrefix: typeof c.cutPrefix === 'string'
       ? c.cutPrefix.trim().replace(/[^A-Za-z0-9_-]/g, '')
       : DEFAULTS.cutPrefix,
+    // Nombre de máquina: texto libre (se muestra en la cola de impresión). Se
+    // limpian saltos de línea (romperían el protocolo del helper) y se acota.
+    machineName: typeof c.machineName === 'string'
+      ? c.machineName.replace(/[\r\n]+/g, ' ').trim().slice(0, 60)
+      : DEFAULTS.machineName,
     relayActivo: c.relayActivo === undefined ? DEFAULTS.relayActivo : !!c.relayActivo,
     relayPort: (() => {
       let p = Number(c.relayPort);

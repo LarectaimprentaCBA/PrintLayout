@@ -1813,6 +1813,7 @@ ipcMain.handle('print:pdf', async (_evt, payload) => {
     deviceName,
     copies,
     showDialog,
+    docName,
   } = payload ?? {};
   if (!Array.isArray(images) || images.length === 0) {
     return { ok: false, error: 'No hay paginas para imprimir.' };
@@ -1853,6 +1854,11 @@ ipcMain.handle('print:pdf', async (_evt, payload) => {
   lines.push(`SHOW_DIALOG=${showDialog === false ? '0' : '1'}`);
   lines.push(`WIDTH_MM=${pageWidthMm}`);
   lines.push(`HEIGHT_MM=${pageHeightMm}`);
+  // Nombre del trabajo en la cola de la impresora (ej. "PC 1 - Grilla rápida").
+  // Saneado de saltos de línea (romperían el protocolo key=value del helper).
+  if (typeof docName === 'string' && docName.trim()) {
+    lines.push(`DOC_NAME=${docName.replace(/[\r\n]+/g, ' ').trim().slice(0, 120)}`);
+  }
   // Si existe un DEVMODE guardado por PrintLayout para esta impresora, lo
   // pasamos para que el job use esas preferencias (papel/calidad/color/duplex).
   if (deviceName) {
