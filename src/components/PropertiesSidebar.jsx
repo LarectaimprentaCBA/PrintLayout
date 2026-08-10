@@ -147,7 +147,6 @@ export default function PropertiesSidebar({
     && typeof onChangeMinPages === 'function';
   const multiInputRef = useRef(null);
   const singleInputRef = useRef(null);
-  const pdfInputRef = useRef(null);
   const dobbleImgInputRef = useRef(null);
   const dobbleCajaInputRef = useRef(null);
   const [dragKind, setDragKind] = useState(null); // 'pdf' | 'image' | null
@@ -161,20 +160,6 @@ export default function PropertiesSidebar({
     }
   }
 
-  const handleMultiPick = async (e) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    const loaded = await readImageFiles(files);
-    onAddImages?.(loaded);
-    e.target.value = '';
-  };
-
-  const handlePdfPick = async (e) => {
-    const files = Array.from(e.target.files || []);
-    e.target.value = '';
-    if (files.length) onImportPdfImages?.(files);
-  };
-
   const isPdf = (f) =>
     (f?.type || '').toLowerCase() === 'application/pdf'
     || /\.pdf$/i.test(f?.name || '');
@@ -182,6 +167,23 @@ export default function PropertiesSidebar({
   const isImg = (f) =>
     /^image\/(jpe?g|png|heic|heif)$/i.test(f?.type || '')
     || /\.(jpe?g|png|heic|heif)$/i.test(f?.name || '');
+
+  // Un solo botón "Cargar": acepta imágenes Y PDF sin que el usuario tenga que
+  // elegir el tipo. Cada archivo se manda a donde corresponde (imágenes se
+  // agregan directo; PDF va al extractor de imágenes embebidas). Mismo criterio
+  // que el drag&drop.
+  const handleCombinedPick = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (files.length === 0) return;
+    const imgs = files.filter(isImg);
+    const pdfs = files.filter(isPdf);
+    if (imgs.length) {
+      const loaded = await readImageFiles(imgs);
+      if (loaded.length) onAddImages?.(loaded);
+    }
+    if (pdfs.length) onImportPdfImages?.(pdfs);
+  };
 
   const handleDragEnter = (e) => {
     if (!e.dataTransfer?.types?.includes('Files')) return;
@@ -267,10 +269,10 @@ export default function PropertiesSidebar({
       <input
         ref={multiInputRef}
         type="file"
-        accept="image/jpeg,image/png,image/jpg,image/heic,image/heif,.heic,.heif"
+        accept="image/jpeg,image/png,image/jpg,image/heic,image/heif,.heic,.heif,application/pdf,.pdf"
         multiple
         className="hidden"
-        onChange={handleMultiPick}
+        onChange={handleCombinedPick}
       />
       <input
         ref={singleInputRef}
@@ -279,14 +281,6 @@ export default function PropertiesSidebar({
         className="hidden"
         onChange={handleSinglePick}
       />
-      <input
-        ref={pdfInputRef}
-        type="file"
-        accept="application/pdf,.pdf"
-        multiple
-        className="hidden"
-        onChange={handlePdfPick}
-      />
 
       <div className="flex items-center justify-between border-b border-ink-700 px-3 py-2">
         <h2 className="text-xs font-semibold uppercase tracking-wider text-ink-300">
@@ -294,19 +288,12 @@ export default function PropertiesSidebar({
         </h2>
         <div className="flex gap-1">
           <button
-            disabled={!template}
+            disabled={!template || extractingPdf}
             onClick={() => multiInputRef.current?.click()}
+            title="Cargar imágenes (JPG, PNG, HEIC) o PDF"
             className="rounded bg-accent-600 px-2 py-1 text-xs font-medium text-white hover:bg-accent-500 disabled:opacity-40"
           >
-            + Cargar
-          </button>
-          <button
-            disabled={!template || extractingPdf}
-            onClick={() => pdfInputRef.current?.click()}
-            title="Importar imágenes embebidas en un PDF"
-            className="rounded border border-ink-700 px-2 py-1 text-[11px] text-ink-200 hover:bg-ink-800 disabled:opacity-40"
-          >
-            {extractingPdf ? 'Extrayendo…' : '+ PDF'}
+            {extractingPdf ? 'Extrayendo…' : '+ Cargar'}
           </button>
           {images && images.length > 0 && (
             <button
@@ -339,7 +326,7 @@ export default function PropertiesSidebar({
           </p>
         ) : !images || images.length === 0 ? (
           <p className="px-2 py-3 text-xs text-ink-400">
-            Hacé clic en <b>+ Cargar</b> para subir imágenes (JPG, PNG).
+            Hacé clic en <b>+ Cargar</b> para subir imágenes (JPG, PNG, HEIC) o un PDF.
           </p>
         ) : (
           <ul className="space-y-1.5">
