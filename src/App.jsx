@@ -3156,6 +3156,11 @@ export default function App() {
       setToast({ kind: 'error', text: 'Las plantillas de PDF se editan subiendo el PDF de nuevo, no acá.' });
       return;
     }
+    // Cerramos "Administrar plantillas" ANTES de abrir el editor de medidas. Si
+    // no, quedan dos modales encimados y el buscador (autoFocus) del de abajo le
+    // roba el foco a los campos del editor → "no puedo escribir los números".
+    // Regla: nunca encimar dos modales que ambos manejan foco/teclado.
+    setTemplatesManagerOpen(false);
     setEditGeometryTemplate(template);
   };
 

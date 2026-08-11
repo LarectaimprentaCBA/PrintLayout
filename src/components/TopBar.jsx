@@ -19,11 +19,20 @@ function PaperSizeControl({ template, customPaper, onChange, onSaveToTemplate, t
   const [draftH, setDraftH] = useState(String(dispH));
   const rootRef = useRef(null);
 
-  // Sync drafts cuando cambia tamano externo (cambio de plantilla, etc.).
+  // Sincronizamos los campos con el tamaño real SOLO al ABRIR el menú. Antes el
+  // efecto corría con [dispW, dispH]: cualquier re-render de fondo (autoguardado,
+  // refresco de la plantilla, un tpW recalculado con mínima diferencia) volvía a
+  // setear los drafts y PISABA lo que el usuario estaba tipeando → el bug
+  // aleatorio de "borro y no me deja escribir". Mientras el menú está abierto, el
+  // draft es del usuario y nadie lo toca. Los campos solo se usan con el menú
+  // abierto; el botón de afuera muestra dispW/dispH directo, así que no hace
+  // falta mantenerlos sincronizados cuando está cerrado.
   useEffect(() => {
+    if (!open) return;
     setDraftW(String(dispW));
     setDraftH(String(dispH));
-  }, [dispW, dispH]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   // Cerrar al click afuera.
   useEffect(() => {
@@ -36,8 +45,9 @@ function PaperSizeControl({ template, customPaper, onChange, onSaveToTemplate, t
   }, [open]);
 
   const apply = () => {
-    const w = parseFloat(draftW);
-    const h = parseFloat(draftH);
+    // Aceptamos coma o punto como separador decimal (locale es-AR).
+    const w = parseFloat(String(draftW).replace(',', '.'));
+    const h = parseFloat(String(draftH).replace(',', '.'));
     if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return;
     if (Math.abs(w - tpW) < 0.01 && Math.abs(h - tpH) < 0.01) {
       onChange(null);
@@ -86,9 +96,8 @@ function PaperSizeControl({ template, customPaper, onChange, onSaveToTemplate, t
             </div>
             <div className="flex items-center gap-1">
               <input
-                type="number"
-                min="10"
-                step="0.1"
+                type="text"
+                inputMode="decimal"
                 value={draftW}
                 onChange={(e) => setDraftW(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') apply(); }}
@@ -96,9 +105,8 @@ function PaperSizeControl({ template, customPaper, onChange, onSaveToTemplate, t
               />
               <span className="text-ink-400">×</span>
               <input
-                type="number"
-                min="10"
-                step="0.1"
+                type="text"
+                inputMode="decimal"
                 value={draftH}
                 onChange={(e) => setDraftH(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') apply(); }}
