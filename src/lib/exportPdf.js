@@ -1,4 +1,4 @@
-import { PDFDocument, rgb, degrees, StandardFonts } from 'pdf-lib';
+import { PDFDocument, rgb, cmyk, degrees, StandardFonts } from 'pdf-lib';
 import qrcode from 'qrcode-generator';
 import {
   cellPositions,
@@ -54,14 +54,76 @@ function fitContain(cellW, cellH, imgW, imgH) {
   return { drawW, drawH, dx, dy };
 }
 
-// 4 marcas L vectoriales en las esquinas del area de la plantilla. Las usa el
-// plotter A3 Max 4 Pro para alinear el corte opticamente. Se dibujan solo
-// cuando la plantilla no tiene fondo propio (grilla rapida, auto-pack) y
-// `markMarginMm > 0`.
+// 4 marcas de registro en las esquinas de la HOJA FÍSICA. Las usa el plotter
+// A3 Max 4 Pro para alinear el corte ópticamente. Se dibujan solo cuando la
+// plantilla no tiene fondo propio (grilla rápida, auto-pack) y `markMarginMm>0`.
 //
-// El brazo de cada L apunta hacia adentro del area de corte: la esquina
-// interior de la L coincide con la esquina de la ventana de corte (es decir,
-// la posicion que el plotter espera). Brazo 10 mm, trazo 0.3 mm, color negro.
+// IMPORTANTE — van contra la HOJA física (pageWpt/pageHpt), NO contra la
+// plantilla: el .plt (send_to_plotter) calcula la ventana como hoja − 2×margen,
+// así que si las marcas se ubicaran contra la plantilla (centrada en una hoja
+// más grande) el corte saldría corrido. Misma verdad que el QR (qrPlacementMm).
+//
+// markType:
+//   'circle' (default) = círculo relleno Ø5mm (radio 2,5mm), negro K puro,
+//                        con disco blanco de 9mm detrás (resguardo, como el QR),
+//                        que coincide con CMD:103,5 del plugin de Corel.
+//   'L'                = marcas L de antes (brazo 10mm, trazo 0.3mm) = CMD:103,0.
+//                        Se deja seleccionable para poder volver atrás.
+export function drawRegistrationMarks(page, {
+  pageWpt, pageHpt, markMarginMm, markType = 'circle',
+}) {
+  if (!markMarginMm || markMarginMm <= 0) return;
+  const m = markMarginMm * MM_TO_PT;
+
+  // Centros de las marcas: a `markMarginMm` de cada borde de la hoja física.
+  // En coords PDF (Y arriba). top = Y alta, bottom = Y baja.
+  const left = m;
+  const right = pageWpt - m;
+  const top = pageHpt - m;
+  const bottom = m;
+  if (right <= left || top <= bottom) return;
+
+  const corners = [
+    [left, top], [right, top], [left, bottom], [right, bottom],
+  ];
+  // Negro de UNA sola tinta (K puro), no cuatro tintas → registro limpio.
+  const black = cmyk(0, 0, 0, 1);
+
+  if (markType === 'L') {
+    const arm = 10 * MM_TO_PT;
+    const thickness = 0.3 * MM_TO_PT;
+    const line = (x1, y1, x2, y2) => page.drawLine({
+      start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness, color: black,
+    });
+    // Cada brazo apunta hacia adentro del área.
+    line(left, top, left + arm, top);
+    line(left, top, left, top - arm);
+    line(right, top, right - arm, top);
+    line(right, top, right, top - arm);
+    line(left, bottom, left + arm, bottom);
+    line(left, bottom, left, bottom + arm);
+    line(right, bottom, right - arm, bottom);
+    line(right, bottom, right, bottom + arm);
+    return;
+  }
+
+  // Círculos (default): en pdf-lib `size` es el RADIO.
+  const radiusPt = 2.5 * MM_TO_PT;       // Ø 5 mm
+  const guardPt = 4.5 * MM_TO_PT;        // disco blanco Ø 9 mm (2 mm de resguardo)
+  // Primero todos los discos blancos, después los círculos negros (así ninguno
+  // tapa a otro si el margen fuera muy chico y llegaran a solaparse).
+  for (const [x, y] of corners) {
+    page.drawCircle({ x, y, size: guardPt, color: rgb(1, 1, 1) });
+  }
+  for (const [x, y] of corners) {
+    page.drawCircle({ x, y, size: radiusPt, color: black });
+  }
+}
+
+// Marcas L clásicas ubicadas contra el ÁREA dada (offset + tamaño). La usa el
+// export de Rótulos, que arma su propio layout y las quiere contra su caja. El
+// print-and-cut de grilla/auto-pack usa drawRegistrationMarks (círculos, contra
+// la hoja física). Brazo 10 mm, trazo 0.3 mm, negro.
 export function drawCornerMarks(page, {
   offsetXpt, offsetYpt, templateWpt, templateHpt, markMarginMm,
 }) {
@@ -71,36 +133,23 @@ export function drawCornerMarks(page, {
   const thickness = 0.3 * MM_TO_PT;
   const color = rgb(0, 0, 0);
 
-  // En coords PDF (Y arriba). top = Y alta, bottom = Y baja.
   const left = offsetXpt + m;
   const right = offsetXpt + templateWpt - m;
   const top = offsetYpt + templateHpt - m;
   const bottom = offsetYpt + m;
-
   if (right <= left || top <= bottom) return;
 
   const line = (x1, y1, x2, y2) => page.drawLine({
-    start: { x: x1, y: y1 },
-    end: { x: x2, y: y2 },
-    thickness,
-    color,
+    start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness, color,
   });
-
-  // Top-left: brazos a la derecha y hacia abajo.
   line(left, top, left + arm, top);
   line(left, top, left, top - arm);
-  // Top-right: brazos a la izquierda y hacia abajo.
   line(right, top, right - arm, top);
   line(right, top, right, top - arm);
-  // Bottom-left: brazos a la derecha y hacia arriba.
   line(left, bottom, left + arm, bottom);
   line(left, bottom, left, bottom + arm);
-  // Bottom-right: brazos a la izquierda y hacia arriba.
   line(right, bottom, right - arm, bottom);
   line(right, bottom, right, bottom + arm);
-
-  // (El punto guía se quitó: el QR de la hoja pasa a ser la referencia de
-  // orientación al cargar la hoja en el plotter.)
 }
 
 // Posición del QR en la HOJA física, en mm. ÚNICA fuente de la fórmula: la usan
@@ -297,29 +346,20 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
         width: templateWpt,
         height: templateHpt,
       });
-    } else if (
-      drawMarks
+    }
+
+    // ¿Dibujar marcas de registro propias? Solo para plantillas SIN fondo propio
+    // (grilla rápida / auto-pack con cortes generados) que van a cortarse en
+    // plotter. Con fondo de PDF las marcas ya vienen embebidas. La negación del
+    // dorso doble-faz evita dibujarlas dos veces. Se DIBUJAN AL FINAL (después de
+    // las imágenes) para que ninguna celda de esquina las tape — ver abajo.
+    const shouldDrawMarks = !bgPage
+      && drawMarks
       && typeof template.markMarginMm === 'number'
       && template.markMarginMm > 0
       && Array.isArray(template.cortes)
       && template.cortes.length > 0
-      && !(template.doubleSided && face === 'back')
-    ) {
-      // Plantillas sin fondo propio que SI van a cortarse en plotter (grilla
-      // rapida con cortes generados): dibujamos las marcas L para que el
-      // plotter pueda escanearlas. La negacion del dorso doble-faz evita
-      // dibujarlas dos veces (el frente de doble-faz ya las trae embebidas
-      // en el PDF original). En grillas no doubleSided el face default cae
-      // en 'back' por la logica vieja, pero como NO hay distincion de caras,
-      // igual queremos las marcas.
-      drawCornerMarks(page, {
-        offsetXpt,
-        offsetYpt,
-        templateWpt,
-        templateHpt,
-        markMarginMm: template.markMarginMm,
-      });
-    }
+      && !(template.doubleSided && face === 'back');
 
     // El marco (borde blanco + línea de filete) se resuelve POR-IMAGEN adentro
     // del loop: image.frame pisa el valor de plantilla campo por campo; si no hay
@@ -435,6 +475,19 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
         centered: qr.centered,
         showText: qr.showText,
         font: qrFont,
+      });
+    }
+
+    // Marcas de registro AL FINAL, sobre todo lo demás (imágenes incluidas), para
+    // que una celda de esquina no las tape. Van contra la HOJA física y con su
+    // disco blanco de resguardo detrás (ver drawRegistrationMarks). No colisionan
+    // con el QR (esquinas vs. centro-inferior).
+    if (shouldDrawMarks) {
+      drawRegistrationMarks(page, {
+        pageWpt: pageW,
+        pageHpt: pageH,
+        markMarginMm: template.markMarginMm,
+        markType: template.markType === 'L' ? 'L' : 'circle',
       });
     }
   }

@@ -49,7 +49,9 @@ def main():
     cortes = data.get("cortes", [])
     page_w = data.get("pageWidthMm")
     page_h = data.get("pageHeightMm")
-    margen = float(data.get("markMarginMm", 10))
+    margen = float(data.get("markMarginMm", 15))
+    # Tipo de marca de registro: 5 = circulos (nuevo default), 0 = L de antes.
+    mark_type = int(data.get("markType", generador.MARK_TYPE_CIRCULO))
     blade_offset = float(data.get("bladeOffsetMm",
                                   generador.BLADE_OFFSET_DEFAULT_MM))
     ip = data.get("ip", enviar.IP_DEFAULT)
@@ -115,6 +117,7 @@ def main():
             polilineas_plotter, plot_w, plot_h,
             margen_marcas_mm=margen,
             blade_offset_mm=blade_offset,
+            mark_type=mark_type,
         )
     except Exception as e:
         print(json.dumps({"ok": False, "error": f"Generando payload: {e}"}))

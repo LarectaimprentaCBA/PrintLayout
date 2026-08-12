@@ -53,7 +53,7 @@ export default function GridUploadModal({
   const [spacingX, setSpacingX] = useState(s(ini.spacingX, '0'));
   const [spacingY, setSpacingY] = useState(s(ini.spacingY, '0'));
   const [cutMargin, setCutMargin] = useState(s(ini.cutMargin, '0'));
-  const [markMargin, setMarkMargin] = useState(s(ini.markMargin, '10'));
+  const [markMargin, setMarkMargin] = useState(s(ini.markMargin, '15'));
   const [doubleSided, setDoubleSided] = useState(!!ini.doubleSided);
   // "Con QR": al crear, reserva la franja del QR abajo Y marca template.conQr.
   // Default ON (tanto al crear como al re-editar una plantilla que ya lo tenía).

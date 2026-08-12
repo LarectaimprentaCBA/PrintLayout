@@ -22,11 +22,18 @@ UNITS_PER_MM = 40
 # plotter cree que la hoja es 475×325mm y el cabezal se mueve como para esa hoja
 # gigante (registración corrida/rotada). Verificado contra .plt reales de Corel:
 # cartas/Caja (interior 452×302) traen CMD:32 = 472×322 = interior + 20mm.
+
+# CMD:103 = tipo de marca de registro. Descubierto comparando capturas:
+#   0 = marcas L (esquineras)      5 = marcas de circulo relleno
+# Verificado contra .plt del plugin de Corel con circulos (2026-08-12).
+MARK_TYPE_L = 0
+MARK_TYPE_CIRCULO = 5
+
 HEADER_CON_MARCAS = (
     "IN FSIZE{W},{H} "
     "CMD:32,{SW},{SH},{m},{m};"
     "CMD:18,1;"
-    "CMD:103,0;"
+    "CMD:103,{mt};"
     "CMD:35,2,1,0;"
     "TB26,{W},{H} "
 )
@@ -96,19 +103,22 @@ def generar_movimientos(polilineas_mm):
 
 def generar_payload_con_marcas(polilineas_mm, ancho_pagina_mm, alto_pagina_mm,
                                  margen_marcas_mm=10,
-                                 blade_offset_mm=BLADE_OFFSET_DEFAULT_MM):
+                                 blade_offset_mm=BLADE_OFFSET_DEFAULT_MM,
+                                 mark_type=MARK_TYPE_CIRCULO):
     """
     Modo con marcas de registro (TB26). Para print-and-cut donde imprimis
     la hoja con marcas y el plotter las escanea antes de cortar.
 
     ancho_pagina_mm / alto_pagina_mm = tamanio de la VENTANA INTERIOR
-    delimitada por las marcas L (== hoja_fisica - 2 * margen_marcas).
+    delimitada por las marcas (== hoja_fisica - 2 * margen_marcas).
 
     margen_marcas_mm = distancia entre el borde de la hoja fisica y la
-    marca L mas cercana. Va en el segundo par de CMD:32 (defecto 10mm,
-    que es lo que tenian todas las capturas historicas).
+    marca mas cercana. Va en el segundo par de CMD:32.
 
-    Park final = (W+200, 200) (constante observada).
+    mark_type = tipo de marca de registro (CMD:103). MARK_TYPE_CIRCULO (5,
+    default nuevo) = circulos rellenos; MARK_TYPE_L (0) = marcas L de antes.
+
+    Park final = (W, 0) (lo que manda el plugin de Corel).
     """
     W = mm_a_unidades(ancho_pagina_mm)
     H = mm_a_unidades(alto_pagina_mm)
@@ -116,9 +126,9 @@ def generar_payload_con_marcas(polilineas_mm, ancho_pagina_mm, alto_pagina_mm,
     # Hoja física = ventana interior + 2*margen (primer par de CMD:32).
     SW = W + 2 * m
     SH = H + 2 * m
-    header = HEADER_CON_MARCAS.format(W=W, H=H, SW=SW, SH=SH, m=m)
+    header = HEADER_CON_MARCAS.format(W=W, H=H, SW=SW, SH=SH, m=m, mt=int(mark_type))
     movs = generar_movimientos(polilineas_mm)
-    park = f" U{W + 200},200"
+    park = f" U{W},0"
     txt = header + prueba_cuchilla(blade_offset_mm) + movs + park + FIN_CON_MARCAS
     return txt.encode("ascii")
 
