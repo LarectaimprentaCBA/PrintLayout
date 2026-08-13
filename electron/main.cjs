@@ -1445,6 +1445,9 @@ ipcMain.handle('qrcut:ensure-base-cut', async (_evt, payload) => {
       w: payload.pageWidthMm,
       h: payload.pageHeightMm,
       b: payload.bladeOffsetMm,
+      // Tipo de marca (L/círculo): si cambia, hay que REGENERAR el .plt para que
+      // coincida con lo impreso (sino el cabezal busca el tipo equivocado).
+      mt: payload.markType,
       c: payload.cortes,
     })).digest('hex');
     if (fs.existsSync(outPath)) {
@@ -1460,6 +1463,7 @@ ipcMain.handle('qrcut:ensure-base-cut', async (_evt, payload) => {
       pageHeightMm: payload.pageHeightMm,
       markMarginMm: payload.markMarginMm,
       bladeOffsetMm: payload.bladeOffsetMm,
+      markType: payload.markType,
       outPath,
     });
     const { stdout } = await runPython('send_to_plotter.py', { stdin });

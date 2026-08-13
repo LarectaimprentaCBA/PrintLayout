@@ -117,6 +117,23 @@ function cutIdSuffix(storeId) {
   return s || 'x';
 }
 
+// Tipo de marca de registro que lleva el .plt (CMD:103). DEBE COINCIDIR con las
+// marcas que están IMPRESAS en la hoja, sino el cabezal no las encuentra:
+//   0 = L (líneas)      5 = círculos
+// - Plantillas con fondo PDF (marcas L embebidas de Corel) o rótulos (la app las
+//   dibuja como L con drawCornerMarks) → L (0).
+// - Grilla rápida / auto-acomodar / fotos (la app dibuja círculos con
+//   drawRegistrationMarks) → círculos (5).
+const PLT_MARK_L = 0;
+const PLT_MARK_CIRCULO = 5;
+function templateHasPdfBackground(tpl) {
+  return !!tpl?.pdfBase64
+    || (Array.isArray(tpl?.pages) && tpl.pages.some((p) => p?.pdfBase64));
+}
+function plotterMarkType(tpl) {
+  return (templateHasPdfBackground(tpl) || tpl?.rotulos) ? PLT_MARK_L : PLT_MARK_CIRCULO;
+}
+
 // Reconstruye las páginas de un acomodo con GRILLA ÚNICA: toma la geometría de
 // la hoja más llena (una hoja completa) y la repite en todas las hojas, así
 // TODAS quedan alineadas (mismo corte) y los sobrantes de la última quedan como
@@ -620,6 +637,8 @@ export default function App() {
           pageWidthMm: sheet.template.pageWidthMm,
           pageHeightMm: sheet.template.pageHeightMm,
           markMarginMm: sheet.template.markMarginMm,
+          // Rótulos: la app dibuja las marcas como L (drawCornerMarks) → L.
+          markType: PLT_MARK_L,
           bladeOffsetMm,
         });
       } catch { /* best-effort: el .plt no bloquea armar la pestaña */ }
@@ -2575,6 +2594,7 @@ export default function App() {
               pageWidthMm: spec.template.pageWidthMm,
               pageHeightMm: spec.template.pageHeightMm,
               markMarginMm: spec.template.markMarginMm ?? 10,
+              markType: plotterMarkType(spec.template),
               bladeOffsetMm,
             });
           } catch (_) { /* no bloquea la entrega del pedido */ }
@@ -2832,6 +2852,8 @@ export default function App() {
           pageWidthMm: tpl.pageWidthMm,
           pageHeightMm: tpl.pageHeightMm,
           markMarginMm: tpl.markMarginMm,
+          // Rótulos: marcas L (drawCornerMarks).
+          markType: PLT_MARK_L,
           bladeOffsetMm,
         });
       } catch { /* best-effort: el .plt no bloquea generar el PDF */ }
@@ -3685,6 +3707,7 @@ export default function App() {
           pageWidthMm: selected.pageWidthMm,
           pageHeightMm: selected.pageHeightMm,
           markMarginMm: selected.markMarginMm ?? 10,
+          markType: plotterMarkType(selected),
           bladeOffsetMm,
           outPath,
         });
@@ -3820,6 +3843,7 @@ export default function App() {
         pageWidthMm: selected.pageWidthMm,
         pageHeightMm: selected.pageHeightMm,
         markMarginMm: margin,
+        markType: plotterMarkType(selected),
         bladeOffsetMm,
       });
       if (result?.ok) {
