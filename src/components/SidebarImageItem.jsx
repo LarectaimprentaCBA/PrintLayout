@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useDraggable } from '@dnd-kit/core';
 
 const FIT_CYCLE = [
@@ -38,6 +38,13 @@ export default function SidebarImageItem({
     setNodeRef(el);
   };
 
+  // Preview grande flotante al pasar el mouse por la miniatura (las etiquetas
+  // se parecen y la miniatura de 40px no alcanza para distinguirlas).
+  // { x, y } coords de viewport del cursor | null.
+  const [hoverPos, setHoverPos] = useState(null);
+  // Nunca mostrar el preview mientras se arrastra la imagen a una celda.
+  const showPreview = hoverPos && !isDragging && image.dataUrl;
+
   useEffect(() => {
     if (isSelected && liRef.current) {
       liRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -66,7 +73,12 @@ export default function SidebarImageItem({
       {...listeners}
       {...attributes}
     >
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded bg-ink-950">
+      <div
+        className="flex h-10 w-10 shrink-0 cursor-zoom-in items-center justify-center overflow-hidden rounded bg-ink-950"
+        onMouseEnter={(e) => setHoverPos({ x: e.clientX, y: e.clientY })}
+        onMouseMove={(e) => setHoverPos({ x: e.clientX, y: e.clientY })}
+        onMouseLeave={() => setHoverPos(null)}
+      >
         <img
           src={image.dataUrl}
           alt={image.name}
@@ -258,6 +270,38 @@ export default function SidebarImageItem({
           ✕
         </button>
       </div>
+
+      {/* Preview grande flotante junto al cursor (position:fixed → no lo
+          recorta el overflow del panel). pointer-events-none para que nunca
+          bloquee el arrastre ni los botones. */}
+      {showPreview && (() => {
+        const BOX = 340; // ancho/alto máx del preview en px
+        const vw = typeof window !== 'undefined' ? window.innerWidth : 1280;
+        const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
+        // El panel está a la derecha: por defecto mostramos el preview a la
+        // IZQUIERDA del cursor para que no se salga de pantalla.
+        let left = hoverPos.x - BOX - 24;
+        if (left < 8) left = Math.min(hoverPos.x + 24, vw - BOX - 8);
+        if (left < 8) left = 8;
+        let top = hoverPos.y - BOX / 2;
+        top = Math.max(8, Math.min(top, vh - BOX - 8));
+        return (
+          <div
+            className="pointer-events-none fixed z-[60] flex flex-col overflow-hidden rounded-lg border border-ink-600 bg-ink-950/95 p-2 shadow-2xl ring-1 ring-black/40"
+            style={{ left, top, width: BOX }}
+          >
+            <img
+              src={image.dataUrl}
+              alt=""
+              className="max-h-[300px] w-full rounded object-contain"
+              draggable={false}
+            />
+            <span className="mt-1.5 break-all text-center text-[11px] text-ink-200">
+              {image.name}
+            </span>
+          </div>
+        );
+      })()}
     </li>
   );
 }
