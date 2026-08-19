@@ -73,6 +73,37 @@ export default function ImageQuantitiesModal({
 
   const pages = cellsPerPage > 0 ? Math.ceil(totalCopies / cellsPerPage) : 0;
 
+  // Cuántos casilleros quedan libres en las hojas que ya se van a imprimir
+  // (sin abrir hojas nuevas). Es lo que "repartir el resto parejo" completaría.
+  const remainingCells = useMemo(() => {
+    if (cellsPerPage <= 0 || images.length === 0) return 0;
+    const basePages = Math.max(1, Math.ceil(totalCopies / cellsPerPage));
+    return basePages * cellsPerPage - totalCopies;
+  }, [cellsPerPage, images.length, totalCopies]);
+
+  // Reparte los casilleros libres entre TODAS las fotos, de a uno por vuelta
+  // (round-robin). No agrega hojas: solo completa las que ya se imprimen.
+  const fillEven = () => {
+    if (cellsPerPage <= 0 || images.length === 0) return;
+    const next = {};
+    let total = 0;
+    for (const img of images) {
+      const n = Math.max(0, Math.floor(Number(counts[img.id]) || 0));
+      next[img.id] = n;
+      total += n;
+    }
+    const basePages = Math.max(1, Math.ceil(total / cellsPerPage));
+    let remaining = basePages * cellsPerPage - total;
+    let i = 0;
+    while (remaining > 0) {
+      const img = images[i % images.length];
+      next[img.id] += 1;
+      remaining -= 1;
+      i += 1;
+    }
+    setCounts(next);
+  };
+
   if (!open) return null;
 
   const submit = (e) => {
@@ -131,6 +162,18 @@ export default function ImageQuantitiesModal({
           >
             Aplicar a todas
           </button>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={fillEven}
+              disabled={remainingCells <= 0}
+              title="Completa los casilleros libres de las hojas que ya se van a imprimir, repartiéndolos parejo entre todas las fotos (no agrega hojas)."
+              className="rounded border border-emerald-500/50 bg-emerald-600/20 px-2 py-0.5 text-emerald-200 hover:bg-emerald-600/30 disabled:opacity-40"
+            >
+              Repartir el resto parejo
+              {remainingCells > 0 && <span className="ml-1 text-emerald-300/80">(+{remainingCells})</span>}
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-3">
