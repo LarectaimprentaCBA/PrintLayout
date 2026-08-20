@@ -162,28 +162,37 @@ export function packImagesByFixedDimension({
       }
     }
 
-    // Pasada 2: si repeatToFill, ciclar imagenes por cada hoja existente
-    // hasta que ninguna entre. Cap de ciclos por hoja.
+    // Pasada 2: si repeatToFill, rellenar cada hoja hasta que NINGUNA imagen
+    // entre (hoja realmente llena). Ciclamos las imagenes de a UNA (round-robin)
+    // en vez de "una pasada completa por ciclo": asi, con pocas imagenes (p.ej.
+    // 1 sola), igual se llena toda la hoja en vez de cortar a las N celdas.
+    // Cortamos cuando hay `validIndices.length` intentos seguidos sin colocar
+    // (no entra ninguna). El `guard` es un tope duro anti-loop que NO limita el
+    // llenado real: cada colocacion consume area, asi el corte real es la hoja
+    // llena, no un numero fijo de ciclos.
     if (repeatToFill) {
       const validIndices = [];
       for (let i = 0; i < images.length; i++) {
         if (computeWH(images[i])) validIndices.push(i);
       }
       if (validIndices.length > 0) {
+        const guardMax = 1000000;
         for (let p = 0; p < pageStates.length; p++) {
-          let cycle = 0;
-          while (cycle < maxRefillCycles) {
-            let placedInCycle = 0;
-            for (const i of validIndices) {
-              const dims = computeWH(images[i]);
-              const r = tryPlaceOnPage(pageStates[p], dims.w, dims.h);
-              if (r.cell) {
-                cells.push({ ...r.cell, imageIndex: i, page: p });
-                placedInCycle++;
-              }
+          let ptr = 0;
+          let missStreak = 0;
+          let guard = 0;
+          while (missStreak < validIndices.length && guard < guardMax) {
+            const i = validIndices[ptr % validIndices.length];
+            const dims = computeWH(images[i]);
+            const r = tryPlaceOnPage(pageStates[p], dims.w, dims.h);
+            if (r.cell) {
+              cells.push({ ...r.cell, imageIndex: i, page: p });
+              missStreak = 0;
+            } else {
+              missStreak += 1;
             }
-            cycle++;
-            if (placedInCycle === 0) break;
+            ptr += 1;
+            guard += 1;
           }
         }
       }

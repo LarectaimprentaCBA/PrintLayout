@@ -319,7 +319,7 @@ export default function PropertiesSidebar({
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto p-2">
+      <div className="shrink-0 max-h-[40vh] overflow-y-auto p-2">
         {!template ? (
           <p className="px-2 py-3 text-xs text-ink-400">
             Seleccioná una plantilla primero.
@@ -352,7 +352,7 @@ export default function PropertiesSidebar({
         )}
       </div>
 
-      <div className="border-t border-ink-700 px-3 py-2">
+      <div className="shrink-0 border-t border-ink-700 px-3 py-2">
         <h2 className="text-xs font-semibold uppercase tracking-wider text-ink-300">
           {selectedCell !== null
             ? `Celda seleccionada${
@@ -362,7 +362,7 @@ export default function PropertiesSidebar({
         </h2>
       </div>
 
-      <div className="px-3 py-3 text-xs">
+      <div className="flex-1 overflow-y-auto px-3 py-3 text-xs">
         {selectedCell !== null && template ? (
           <div className="space-y-2">
             <div className="text-ink-300">
