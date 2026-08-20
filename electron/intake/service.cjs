@@ -17,6 +17,7 @@ const path = require('node:path');
 const configStore = require('./config-store.cjs');
 const supabase = require('./supabase.cjs');
 const savePdf = require('./save-pdf.cjs');
+const retention = require('./retention-store.cjs');
 
 let win = null;
 let timer = null;
@@ -401,12 +402,84 @@ async function tickRotulos(manual = false) {
   }
 }
 
+// Barrido de RETENCIÓN (ORDEN 2). Dos partes:
+//  1) Bucket: borra los objetos de los pedidos procesados hace más de
+//     `retentionDays` (según el ledger). Si el borrado falla, la entrada queda
+//     para el próximo barrido (no se pierde).
+//  2) Temporal: borra del disco cualquier carpeta de pedido más vieja que el
+//     corte (por mtime) —incluye pedidos interrumpidos o a medio bajar—, salvo
+//     las que están EN VUELO ahora mismo.
+async function retentionSweep(cfgArg) {
+  const c = cfgArg || getConfig();
+  if (!configStore.isLaRecta(c)) return;
+  const days = Number.isFinite(c.retentionDays) ? c.retentionDays : 7;
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+
+  // 1) Bucket (ledger de pedidos procesados).
+  const canBucket = !!(c.supabaseUrl && c.serviceKey);
+  const ledger = retention.load();
+  if (ledger.length) {
+    const keep = [];
+    let borrados = 0;
+    for (const e of ledger) {
+      if ((Number(e.processedAt) || 0) > cutoff) { keep.push(e); continue; }
+      if (!canBucket) { keep.push(e); continue; }
+      try {
+        if (e.paths && e.paths.length) {
+          if (e.kind === 'dobble') await supabase.removeDobbleObjects(c, e.paths);
+          else await supabase.removeObjects(c, e.paths);
+        }
+        borrados += 1;
+      } catch (err) {
+        log(`Retención: no se pudo borrar del bucket el pedido ${e.numero || e.id}: ${err.message}. Se reintenta.`, 'warn');
+        keep.push(e); // reintentar en el próximo barrido
+      }
+    }
+    if (keep.length !== ledger.length) retention.save(keep);
+    if (borrados > 0) {
+      log(`Retención: ${borrados} pedido(s) borrado(s) del bucket (procesados hace > ${days} día/s).`);
+    }
+  }
+
+  // 2) Temporal (fotos: <root>/<id>; busca2: <root>/dobble/<id>).
+  try {
+    const root = tmpRoot(c);
+    const dirs = [];
+    const pushChildren = (base, isDobbleParent) => {
+      let entries = [];
+      try { entries = fs.readdirSync(base, { withFileTypes: true }); } catch (_) { return; }
+      for (const d of entries) {
+        if (!d.isDirectory()) continue;
+        const full = path.join(base, d.name);
+        if (isDobbleParent) { dirs.push(full); continue; }
+        if (d.name === 'dobble') { pushChildren(full, true); continue; }
+        dirs.push(full);
+      }
+    };
+    pushChildren(root, false);
+    const enVuelo = [...inFlight.values(), ...inFlightDobble.values()]
+      .map((e) => e.tmpDir && path.resolve(e.tmpDir))
+      .filter(Boolean);
+    let limpiadas = 0;
+    for (const dir of dirs) {
+      let mtime = 0;
+      try { mtime = fs.statSync(dir).mtimeMs; } catch (_) { continue; }
+      if (mtime > cutoff) continue;
+      if (enVuelo.includes(path.resolve(dir))) continue; // no tocar lo que está en vuelo
+      try { fs.rmSync(dir, { recursive: true, force: true }); limpiadas += 1; } catch (_) { /* ignore */ }
+    }
+    if (limpiadas > 0) log(`Retención: ${limpiadas} carpeta(s) temporal(es) vieja(s) borrada(s).`);
+  } catch (_) { /* best-effort */ }
+}
+
 // Un ciclo completo: fotos + Dobble + Rótulos (cada uno gateado por su propio
 // flag). Es lo que dispara el timer y el botón "Buscar ahora".
 async function pollBoth(manual = false) {
   const photos = await tick(manual).catch((e) => ({ ok: false, error: e.message }));
   const dobble = await tickDobble(manual).catch((e) => ({ ok: false, error: e.message }));
   const rotulos = await tickRotulos(manual).catch((e) => ({ ok: false, error: e.message }));
+  // Barrido de retención al final de cada ciclo (best-effort: no debe tumbar el poll).
+  await retentionSweep().catch((e) => log(`Retención: error en el barrido: ${e.message}`, 'warn'));
   return {
     ok: photos.ok || dobble.ok || rotulos.ok,
     found: (photos.found || 0) + (dobble.found || 0) + (rotulos.found || 0),
@@ -539,7 +612,8 @@ async function orderBuilt(payload) {
   if (payload.ok === false) {
     inFlight.delete(id);
     recordFailure(id, entry?.numero, payload.error || 'sin detalle');
-    log(`El armado del pedido ${id} falló: ${payload.error || 'sin detalle'}.`, 'error');
+    log(`El armado del pedido ${entry?.numero || id} falló: ${payload.error || 'sin detalle'}. `
+      + 'Las fotos siguen en el bucket (se reintenta).', 'error');
     return { ok: true };
   }
 
@@ -547,23 +621,21 @@ async function orderBuilt(payload) {
   try {
     await supabase.markProcessed(cfg, id);
   } catch (err) {
-    log(`No se pudo marcar procesado el pedido ${id}: ${err.message}`, 'error');
+    log(`No se pudo marcar procesado el pedido ${entry?.numero || id}: ${err.message}`, 'error');
     return { ok: false, error: err.message };
   }
-  // Best-effort: borrar fotos del bucket + temp local.
-  try {
-    if (entry?.paths?.length) await supabase.removeObjects(cfg, entry.paths);
-  } catch (err) {
-    log(`No se pudieron borrar las fotos del bucket (pedido ${id}): ${err.message}`, 'warn');
-  }
-  try {
-    if (entry?.tmpDir) fs.rmSync(entry.tmpDir, { recursive: true, force: true });
-  } catch (_) {
-    /* ignore */
-  }
+  // RETENCIÓN (ORDEN 2): NO borramos las fotos del bucket ni el temp en el acto.
+  // Anotamos el pedido para que el barrido las borre recién a los N días — así,
+  // si algo salió mal, hay una ventana para darse cuenta en vez de cero segundos.
+  retention.enqueue({ id, kind: 'fotos', paths: entry?.paths || [], numero: entry?.numero, processedAt: Date.now() });
   inFlight.delete(id);
   recordSuccess(id);
-  log(`Pedido ${id} procesado y limpiado.`);
+  const b = payload.built;
+  const d = payload.delivered;
+  const nums = (b != null && d != null)
+    ? ` (${d}/${b} hoja(s) entregada(s)${payload.skippedCount ? `, ${payload.skippedCount} salteada(s)` : ''})`
+    : '';
+  log(`Pedido ${entry?.numero || id} procesado${nums}. Fotos retenidas ${cfg.retentionDays} día(s) antes de borrar del bucket.`);
   return { ok: true };
 }
 
@@ -578,7 +650,8 @@ async function dobbleOrderBuilt(payload) {
   if (payload.ok === false) {
     inFlightDobble.delete(id);
     recordFailure(id, entry?.numero, payload.error || 'sin detalle');
-    log(`El armado del pedido Dobble ${id} falló: ${payload.error || 'sin detalle'}.`, 'error');
+    log(`El armado del pedido busca2 ${entry?.numero || id} falló: ${payload.error || 'sin detalle'}. `
+      + 'La receta sigue en el bucket (se reintenta).', 'error');
     return { ok: true };
   }
 
@@ -586,23 +659,18 @@ async function dobbleOrderBuilt(payload) {
   try {
     await supabase.markProcessedDobble(cfg, id);
   } catch (err) {
-    log(`No se pudo marcar procesado el pedido Dobble ${id}: ${err.message}`, 'error');
+    log(`No se pudo marcar procesado el pedido busca2 ${entry?.numero || id}: ${err.message}`, 'error');
     return { ok: false, error: err.message };
   }
-  // Best-effort: borrar receta/caja del bucket + temp local.
-  try {
-    if (entry?.paths?.length) await supabase.removeDobbleObjects(cfg, entry.paths);
-  } catch (err) {
-    log(`No se pudieron borrar los archivos del bucket dobble (pedido ${id}): ${err.message}`, 'warn');
-  }
-  try {
-    if (entry?.tmpDir) fs.rmSync(entry.tmpDir, { recursive: true, force: true });
-  } catch (_) {
-    /* ignore */
-  }
+  // RETENCIÓN (ORDEN 2): NO borramos receta/caja del bucket ni el temp en el
+  // acto. Se anotan para el barrido, que los borra recién a los N días.
+  retention.enqueue({ id, kind: 'dobble', paths: entry?.paths || [], numero: entry?.numero, processedAt: Date.now() });
   inFlightDobble.delete(id);
   recordSuccess(id);
-  log(`Pedido Dobble ${id} procesado y limpiado.`);
+  const nums = (payload.pages != null && payload.expectedPages != null)
+    ? ` (${payload.pages}/${payload.expectedPages} pág.)`
+    : '';
+  log(`Pedido busca2 ${entry?.numero || id} procesado${nums}. Receta retenida ${cfg.retentionDays} día(s) antes de borrar del bucket.`);
   return { ok: true };
 }
 
@@ -617,7 +685,7 @@ async function rotuloOrderBuilt(payload) {
   if (payload.ok === false) {
     inFlightRotulos.delete(id);
     recordFailure(id, entry?.numero, payload.error || 'sin detalle');
-    log(`El armado del pedido de rótulos ${id} falló: ${payload.error || 'sin detalle'}.`, 'error');
+    log(`El armado del pedido de rótulos ${entry?.numero || id} falló: ${payload.error || 'sin detalle'}.`, 'error');
     return { ok: true };
   }
 
@@ -625,12 +693,13 @@ async function rotuloOrderBuilt(payload) {
   try {
     await supabase.markProcessedRotulos(cfg, id);
   } catch (err) {
-    log(`No se pudo marcar procesado el pedido de rótulos ${id}: ${err.message}`, 'error');
+    log(`No se pudo marcar procesado el pedido de rótulos ${entry?.numero || id}: ${err.message}`, 'error');
     return { ok: false, error: err.message };
   }
   inFlightRotulos.delete(id);
   recordSuccess(id);
-  log(`Pedido de rótulos ${id} procesado.`);
+  // Rótulos no baja nada del bucket (receta inline) → no hay original que retener.
+  log(`Pedido de rótulos ${entry?.numero || id} procesado (1 PDF entregado).`);
   return { ok: true };
 }
 
@@ -673,6 +742,7 @@ module.exports = {
   orderBuilt,
   dobbleOrderBuilt,
   rotuloOrderBuilt,
+  retentionSweep,
   publishCatalog,
   publishConfig,
 };

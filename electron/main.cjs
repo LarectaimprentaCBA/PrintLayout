@@ -2053,7 +2053,11 @@ ipcMain.handle('dobble:save-pdf-silent', (_evt, { dir, numeroPresupuesto, nombre
     const fileName = dobblePdfFileName(numeroPresupuesto, nombreMazo);
     const filePath = path.join(dir, fileName);
     writePdfSilent(filePath, bytes);
-    return { ok: true, path: filePath, fileName };
+    // Tamaño real en disco: el renderer lo usa para verificar que el PDF quedó
+    // guardado y pesa > 0 antes de dar el pedido por procesado.
+    let size = 0;
+    try { size = fs.statSync(filePath).size; } catch (_) { /* best-effort */ }
+    return { ok: true, path: filePath, fileName, size };
   } catch (err) {
     return { ok: false, error: err.message };
   }

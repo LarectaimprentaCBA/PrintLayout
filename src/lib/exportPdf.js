@@ -493,6 +493,14 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
   }
 }
 
+// Cuenta las páginas de un PDF ya generado (bytes). Sirve para verificar, antes
+// de dar un pedido por procesado, que el PDF salió con la cantidad de páginas
+// esperada (no vacío ni truncado). Devuelve 0 si los bytes no son un PDF válido.
+export async function countPdfPages(bytes) {
+  const doc = await PDFDocument.load(bytes);
+  return doc.getPageCount();
+}
+
 export async function buildPdf(template, assignments, imageMap, options = {}) {
   const layoutFitMode = options.layoutFitMode ?? 'contain';
   // embedBackground: si true, pone la pag 1 del PDF (marcas) detras de las

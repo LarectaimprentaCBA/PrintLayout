@@ -10,6 +10,7 @@ const EMPTY = {
   dobbleActive: false, dobbleComboTemplateId: '', dobbleOutputDir: '', dobbleMazoPdfMap: {},
   dobbleBackMirror: 'x', dobbleBackRotate180: false,
   rotulosActive: false, rotulosOutputDir: '',
+  retentionDays: 7,
 };
 
 export default function IntakePanelModal({ open, onClose, onPublishCatalog }) {
@@ -460,6 +461,18 @@ export default function IntakePanelModal({ open, onClose, onPublishCatalog }) {
                     className="w-20 rounded border border-ink-700 bg-ink-800 px-2 py-1 text-center text-sm text-ink-100 outline-none focus:border-accent-500"
                   />
                   <span>segundos (mín. 15)</span>
+                </label>
+                <label className="flex items-center gap-2 text-xs text-ink-300" title="Días que se guardan las fotos/recetas originales en el bucket después de procesar un pedido, antes de borrarlas. Da tiempo a detectar un pedido que salió mal. Apuntes (PDFs pesados) se borran igual al toque.">
+                  <span>Guardar originales</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="90"
+                    value={cfg.retentionDays}
+                    onChange={(e) => patch({ retentionDays: e.target.value })}
+                    className="w-16 rounded border border-ink-700 bg-ink-800 px-2 py-1 text-center text-sm text-ink-100 outline-none focus:border-accent-500"
+                  />
+                  <span>días</span>
                 </label>
                 <label className="flex cursor-pointer items-center gap-2 text-xs text-ink-200">
                   <input

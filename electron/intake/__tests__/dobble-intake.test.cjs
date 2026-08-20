@@ -127,15 +127,22 @@ async function main() {
   ok(fs.readFileSync(written).slice(0, 5).toString() === '%PDF-', 'el archivo guardado es un PDF');
   ok(dobblePdfFileName('12/34', 'A:B*C') === 'PR-12_34 - A_B_C.pdf', 'saneo de caracteres inválidos');
 
-  // Confirmación OK → marca + limpia.
+  // Confirmación OK → marca procesado, PERO retiene (NO borra receta ni temp aún).
   const orderDir = path.dirname(pl.recetaPath);
   ok(fs.existsSync(orderDir), 'temp del pedido existe antes de confirmar');
   const built = await service.dobbleOrderBuilt({ id: PROPIO.id, ok: true });
   ok(built && built.ok, 'dobbleOrderBuilt ok');
   ok(calls.mark.includes(PROPIO.id), 'marcó procesado (markProcessedDobble)');
+  ok(calls.remove.length === 0, 'RETENCIÓN: NO borró la receta del bucket al confirmar');
+  ok(fs.existsSync(orderDir), 'RETENCIÓN: el temp del pedido sigue existiendo al confirmar');
+
+  // Barrido de retención con plazo 0 → ahora sí borra del bucket y del temp.
+  cfg.retentionDays = 0;
+  await service.retentionSweep();
   ok(Array.isArray(calls.remove[0]) && calls.remove[0].includes('uuid-abc-123/receta.json'),
-    'borró los objetos del bucket dobble');
-  ok(!fs.existsSync(orderDir), 'limpió el temp del pedido');
+    'el barrido borró los objetos del bucket dobble');
+  ok(!fs.existsSync(orderDir), 'el barrido limpió el temp del pedido');
+  cfg.retentionDays = 7; // restaurar para el resto del test
 
   const markBefore = calls.mark.length;
   const builtFail = await service.dobbleOrderBuilt({ id: 'otro-id', ok: false, error: 'x' });

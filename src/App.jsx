@@ -61,6 +61,7 @@ import {
   printLayoutPdf,
   buildPdf,
   buildDoubleSidedPdf,
+  countPdfPages,
 } from './lib/exportPdf.js';
 import {
   hasCuts,
@@ -2687,6 +2688,10 @@ export default function App() {
       await window.printlayout.intake.orderBuilt({
         id: order.id,
         ok,
+        // Números para el log del main (qué se esperaba vs qué se entregó).
+        built,
+        delivered,
+        skippedCount: skipped.length,
         error: ok ? undefined : ([...problems, skippedMsg].filter(Boolean).join('; ') || 'nada para armar'),
       });
 
@@ -2810,7 +2815,34 @@ export default function App() {
       if (!saved?.ok) throw new Error(saved?.error || 'No se pudo guardar el PDF.');
       const fileName = saved.fileName || 'PDF';
 
-      await window.printlayout.intake.dobbleOrderBuilt({ id, ok: true });
+      // VERIFICACIÓN antes de dar el pedido por procesado. Si algo no da, tiramos
+      // → el catch manda ok:false → el main NO marca procesado y la receta NO se
+      // borra del bucket (se reintenta / queda para revisar).
+      // 1) El PDF quedó en disco y pesa > 0.
+      if (!(Number(saved.size) > 0)) {
+        throw new Error('El PDF guardado quedó vacío (0 bytes en disco).');
+      }
+      // 2) Tiene la cantidad de páginas esperada. En el combo (multi-página) son
+      //    las páginas fijas de la plantilla; en doble faz, ×2 (frente + dorso).
+      const fpc = fixedPageCount(spec.template);
+      const perFace = fpc != null ? fpc : Math.max(1, spec.minPages || 1);
+      const expectedPages = spec.template.doubleSided ? perFace * 2 : perFace;
+      let gotPages = 0;
+      try {
+        gotPages = await countPdfPages(bytes);
+      } catch (e) {
+        throw new Error(`El PDF generado no se pudo leer (${e.message}).`);
+      }
+      if (gotPages !== expectedPages) {
+        throw new Error(`El PDF salió con ${gotPages} página(s), se esperaban ${expectedPages}.`);
+      }
+      // 3) No hubo aviso de que falte un símbolo o la caja (los avisos benignos,
+      //    p.ej. "sobran cartas", no llevan "falt" y no bloquean).
+      if (warning && /falt/i.test(warning)) {
+        throw new Error(`Faltan elementos en el mazo: ${warning}`);
+      }
+
+      await window.printlayout.intake.dobbleOrderBuilt({ id, ok: true, pages: gotPages, expectedPages });
       try {
         // eslint-disable-next-line no-new
         new Notification('Pedido busca2 procesado', {

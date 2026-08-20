@@ -46,6 +46,11 @@ const DEFAULTS = {
   // El combo guardado puede no traer estos campos → se estampan al posar.
   dobbleBackMirror: 'x',
   dobbleBackRotate180: false,
+  // Días de RETENCIÓN de los originales en el bucket tras procesar un pedido de
+  // fotos o busca2 (ORDEN 2). En vez de borrar en el acto, se borran en un
+  // barrido cuando superan este plazo. Fotos y busca2 son livianos → 7 días
+  // entran sin problema en el plan Free (apuntes, que son pesados, borran ya).
+  retentionDays: 7,
   // --- Pedidos Rótulos (exportador automático) ---
   // Toggle "Procesar pedidos de rótulos". Independiente del intake de fotos y de
   // Dobble: se pollea en el mismo ciclo pero sólo si está activo. La receta viene
@@ -86,6 +91,13 @@ function sanitize(cfg) {
       : {},
     dobbleBackMirror: c.dobbleBackMirror === 'y' ? 'y' : 'x',
     dobbleBackRotate180: !!c.dobbleBackRotate180,
+    // Retención en días (entero ≥ 0). 0 = borrar en el próximo barrido (sin
+    // ventana de gracia). Tope defensivo de 90 días.
+    retentionDays: (() => {
+      let d = Number(c.retentionDays);
+      if (!Number.isFinite(d)) d = DEFAULTS.retentionDays;
+      return Math.min(90, Math.max(0, Math.floor(d)));
+    })(),
     rotulosActive: !!c.rotulosActive,
     rotulosOutputDir: typeof c.rotulosOutputDir === 'string' ? c.rotulosOutputDir : '',
   };
