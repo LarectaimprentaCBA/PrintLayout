@@ -72,14 +72,42 @@ function buildCustomGridTemplate(wmm, hmm, label) {
 export async function buildOrderJobs(order, { templates, readFileBytes }) {
   const num = order?.numero_presupuesto || order?.id;
   const items = Array.isArray(order?.items) ? order.items : [];
-  const multi = items.length > 1;
   const specs = [];
   const skipped = [];
 
+  // Agrupar ítems por plantilla IDÉNTICA. Dos líneas del carrito del mismo
+  // preset (o del mismo custom wmm×hmm) se resuelven como UN solo spec con
+  // todas sus fotos juntas; si no, generarían dos jobs con el MISMO nombre y el
+  // segundo pisaría el .pljob/.pdf del primero (fotos perdidas sin aviso).
+  // Tamaños DISTINTOS siguen siendo specs separados, como hoy.
+  const groupKeyForTamano = (t) => {
+    if (t?.tipo === 'preset') return `preset:${t.id}`;
+    if (t?.tipo === 'custom') return `custom:${Number(t.wmm)}x${Number(t.hmm)}`;
+    return `otro:${t?.tipo || ''}`;
+  };
+  const groups = [];
+  const groupByKey = new Map();
   for (const item of items) {
     const tamano = item?.tamano || {};
+    const key = groupKeyForTamano(tamano);
+    let g = groupByKey.get(key);
+    if (!g) {
+      g = { tamano, fotos: [] };
+      groupByKey.set(key, g);
+      groups.push(g);
+    }
+    const itemFotos = Array.isArray(item?.fotos) ? item.fotos : [];
+    for (const f of itemFotos) g.fotos.push(f);
+  }
+  // "multi" (sufijo de tamaño en el nombre) depende ahora de la cantidad de
+  // GRUPOS, no de ítems: un pedido con 2 líneas del mismo tamaño = 1 grupo = 1
+  // archivo sin sufijo (igual que un pedido de un solo ítem).
+  const multi = groups.length > 1;
+
+  for (const group of groups) {
+    const tamano = group.tamano || {};
     const sizeLabel = tamano.label || (tamano.wmm && tamano.hmm ? `${tamano.wmm}x${tamano.hmm}` : 'tamaño');
-    const fotos = Array.isArray(item?.fotos) ? item.fotos : [];
+    const fotos = group.fotos;
     if (fotos.length === 0) {
       skipped.push({ label: sizeLabel, reason: 'sin fotos' });
       continue;

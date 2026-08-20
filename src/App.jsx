@@ -2574,9 +2574,23 @@ export default function App() {
       const qrcutCfg = await window.printlayout.qrcut?.getConfig?.().catch(() => null);
 
       let delivered = 0;
+      // Red de seguridad: ningún spec puede escribir sobre la ruta de otro del
+      // mismo pedido en esta corrida. Tras agrupar por plantilla (Parte 1) no
+      // debería haber nombres repetidos; si igual pasa, sufijamos ((2), (3)…)
+      // para NO pisar el archivo y marcamos colisión (el pedido no queda ok).
+      const usedNames = new Set();
+      let collisions = 0;
       for (const spec of specs) {
+        let specName = spec.name;
+        if (usedNames.has(specName)) {
+          collisions += 1;
+          let n = 2;
+          while (usedNames.has(`${spec.name} (${n})`)) n += 1;
+          specName = `${spec.name} (${n})`;
+        }
+        usedNames.add(specName);
         const payload = {
-          name: spec.name,
+          name: specName,
           template: spec.template,
           images: spec.images,
           assignmentsFront: spec.assignmentsFront,
@@ -2602,7 +2616,7 @@ export default function App() {
         if (modo === 'carpeta') {
           // <outputDir>/Pedidos/<nombre seguro>.pljob (autocontenido). El main
           // crea la subcarpeta "Pedidos" si no existe.
-          const filePath = `${outputDir}/Pedidos/${safeFileName(spec.name)}.pljob`;
+          const filePath = `${outputDir}/Pedidos/${safeFileName(specName)}.pljob`;
           try {
             const r = await window.printlayout.jobs.saveToPath(filePath, payload);
             if (r?.ok) delivered += 1;
@@ -2629,7 +2643,7 @@ export default function App() {
               // El PDF listo-para-imprimir va a la RAÍZ de la carpeta de entrega
               // (a la vista, como los PDF de Dobble); el .pljob queda en /Pedidos
               // como fallback para retocar.
-              const pdfPath = `${outputDir}/${safeFileName(spec.name)}.pdf`;
+              const pdfPath = `${outputDir}/${safeFileName(specName)}.pdf`;
               await window.printlayout.intake.savePhotoPdf(pdfPath, bytes);
             } catch (_) { /* el .pljob ya quedó entregado; el PDF es un extra */ }
           }
@@ -2640,7 +2654,7 @@ export default function App() {
             if (r?.ok && r.job) jobId = r.job.id;
           } catch (_) { /* si falla guardar, igual abrimos la tab para revisar */ }
           openInTab(spec.template, {
-            name: spec.name,
+            name: specName,
             jobId,
             forceNew: true,
             initialLayout: {
@@ -2654,11 +2668,26 @@ export default function App() {
         }
       }
 
-      const ok = delivered > 0;
+      // Solo damos el pedido por ENTREGADO si se escribieron TODAS las hojas
+      // que se pudieron armar y ninguna colisionó. Si falta alguna (error al
+      // guardar) o hubo nombre repetido, NO se marca ok: se reintenta y avisamos
+      // qué faltó. Nunca un pedido incompleto en silencio.
+      const built = specs.length;
+      const ok = built > 0 && delivered === built && collisions === 0;
+
+      const problems = [];
+      if (built > 0 && delivered < built) {
+        problems.push(`faltaron ${built - delivered} de ${built} hoja(s) por un error al guardar`);
+      }
+      if (collisions > 0) {
+        problems.push(`${collisions} hoja(s) con nombre repetido (se guardaron aparte para no pisarse)`);
+      }
+      const skippedMsg = skipped.map((s) => `${s.label}: ${s.reason}`).join('; ');
+
       await window.printlayout.intake.orderBuilt({
         id: order.id,
         ok,
-        error: ok ? undefined : (skipped.map((s) => `${s.label}: ${s.reason}`).join('; ') || 'nada para armar'),
+        error: ok ? undefined : ([...problems, skippedMsg].filter(Boolean).join('; ') || 'nada para armar'),
       });
 
       if (ok) {
@@ -2673,10 +2702,16 @@ export default function App() {
           kind: 'success',
           text: `${label}: ${delivered} hoja(s) ${enCarpeta ? 'guardada(s) en la carpeta (\\Pedidos)' : 'abiertas para revisar'}${skipped.length ? ` · ${skipped.length} tamaño(s) saltado(s)` : ''}.`,
         });
+      } else if (delivered > 0 || problems.length) {
+        // Se entregó algo pero NO todo (o hubo colisión): no marcamos ok.
+        setToast({
+          kind: 'error',
+          text: `${label}: pedido INCOMPLETO — ${[...problems, skippedMsg].filter(Boolean).join('; ') || 'faltan hojas'}. Revisá antes de entregar (se reintenta solo).`,
+        });
       } else {
         setToast({
           kind: 'error',
-          text: `${label}: no se pudo armar (${skipped.map((s) => s.reason).join('; ') || 'sin tamaños válidos'}).`,
+          text: `${label}: no se pudo armar (${skippedMsg || 'sin tamaños válidos'}).`,
         });
       }
     } catch (err) {
