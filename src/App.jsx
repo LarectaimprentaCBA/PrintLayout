@@ -3838,8 +3838,10 @@ export default function App() {
           paperHeightMm: customPaper?.heightMm,
           // El QR es parte de la hoja con corte: se imprime SOLO en el frente, en
           // la misma posición que la vista previa. Solo si la hoja tiene cortes,
-          // nombre, config cargada y el interruptor "QR" prendido (conQr).
-          qr: (!isBack && (selected.conQr ?? true) && hasCuts(selected) && selected.cutId && qrConfig) ? {
+          // nombre, config cargada y el interruptor "QR" prendido (conQr). Va
+          // atado a "imprimir marcas de corte": si destildás las marcas, tampoco
+          // sale el QR (sin marcas no se puede cortar → el QR no tiene sentido).
+          qr: (!isBack && cutMarks !== false && (selected.conQr ?? true) && hasCuts(selected) && selected.cutId && qrConfig) ? {
             text: selected.cutId,
             sizeMm: qrConfig.qrSizeMm,
             bottomMm: qrConfig.qrBottomMm,
