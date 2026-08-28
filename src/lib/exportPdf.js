@@ -636,8 +636,13 @@ export async function printLayoutPdf(template, assignments, imageMap, options) {
       return { ok: false, error: 'No hay páginas válidas para imprimir.' };
     }
   }
-  const paperWidthMm = options?.paperWidthMm ?? template.pageWidthMm;
-  const paperHeightMm = options?.paperHeightMm ?? template.pageHeightMm;
+  // Calibración de tamaño de impresión: escalamos los mm que le pasamos al
+  // helper (que dibuja a esos mm y centra). Así el tamaño físico calza con el
+  // corte del plotter (que va a mm exactos) aunque la impresora saque un poco
+  // más chico. 1 = sin ajuste. Escala uniforme → preserva el aspecto y el centro.
+  const printScale = Number(options?.printScale) > 0 ? Number(options.printScale) : 1;
+  const paperWidthMm = (options?.paperWidthMm ?? template.pageWidthMm) * printScale;
+  const paperHeightMm = (options?.paperHeightMm ?? template.pageHeightMm) * printScale;
   const result = await window.printlayout.pdf.print({
     defaultName: safePdfName(template, options),
     // Nombre del trabajo en la cola de la impresora (ej. "PC 1 - Grilla rápida").

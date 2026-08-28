@@ -37,6 +37,12 @@ const DEFAULTS = {
   // trabajo de impresión: "<machineName> - <solapa>", así en la cola de la
   // impresora se ve de qué PC y qué trabajo salió. Vacío = solo la solapa.
   machineName: '',
+  // Ajuste de tamaño de impresión (%). Muchas impresoras sacan el diseño un
+  // poquito más chico que los mm reales; como el corte del plotter va a mm
+  // exactos, ese ~0.x% se nota en piezas chicas. Este factor agranda (o achica)
+  // lo que se manda a imprimir para que el tamaño físico calce con el corte.
+  // 100 = sin ajuste. Es POR PC (cada impresora tiene su desvío).
+  printScalePct: 100,
   // --- Portero / relay de cortes (multiplexar el plotter desde varias PC) ---
   // Esta PC (la conectada al plotter) escucha en 0.0.0.0:relayPort y reenvía los
   // cortes de emisores externos (otra PC / Corel / otro software) al plotter,
@@ -90,6 +96,8 @@ function sanitize(cfg) {
     machineName: typeof c.machineName === 'string'
       ? c.machineName.replace(/[\r\n]+/g, ' ').trim().slice(0, 60)
       : DEFAULTS.machineName,
+    // Escala de impresión: acotada 90–110% (un desvío mayor sería otro problema).
+    printScalePct: num(c.printScalePct, DEFAULTS.printScalePct, 90, 110),
     relayActivo: c.relayActivo === undefined ? DEFAULTS.relayActivo : !!c.relayActivo,
     relayPort: (() => {
       let p = Number(c.relayPort);

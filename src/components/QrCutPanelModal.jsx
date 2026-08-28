@@ -11,7 +11,7 @@ const EMPTY = {
   cortesDir: '', activo: true,
   qrSizeMm: 8, qrBottomMm: 9.5, qrCentered: true, cutPrefix: '',
   relayActivo: true, relayPort: 8080, relayAllowlistCidr: '192.168.100.0/24',
-  plotterSettleMs: 1200, machineName: '',
+  plotterSettleMs: 1200, machineName: '', printScalePct: 100,
 };
 
 export default function QrCutPanelModal({ open, onClose }) {
@@ -25,6 +25,9 @@ export default function QrCutPanelModal({ open, onClose }) {
   const [logs, setLogs] = useState([]);
   const [fw, setFw] = useState(null); // null=desconocido | { exists: bool }
   const [fwBusy, setFwBusy] = useState(false);
+  // Mini-calculadora de la escala de impresión: medida esperada vs. medida real.
+  const [calibExp, setCalibExp] = useState('');
+  const [calibMeas, setCalibMeas] = useState('');
   const logBoxRef = useRef(null);
 
   const api = typeof window !== 'undefined' ? window.printlayout?.qrcut : null;
@@ -324,6 +327,50 @@ export default function QrCutPanelModal({ open, onClose }) {
                     className="w-full rounded border border-ink-700 bg-ink-800 px-3 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500" />
                   <span className="mt-1 block text-[10px] text-ink-500">
                     Aparece en la cola de la impresora, así se ve de qué PC y qué trabajo salió. Vacío = solo el nombre de la solapa.
+                  </span>
+                </label>
+
+                <label className="mt-3 block text-xs text-ink-300">
+                  <span className="mb-1 block">Ajuste de tamaño de impresión (%)</span>
+                  <input
+                    type="number" step="0.1" min="90" max="110"
+                    value={cfg.printScalePct ?? 100}
+                    onChange={(e) => patch({ printScalePct: e.target.value })}
+                    className="w-28 rounded border border-ink-700 bg-ink-800 px-3 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500" />
+                  <span className="mt-1 block text-[10px] text-ink-500">
+                    Corrige que la impresora saque el diseño un poco más chico (se nota en cortes chicos). <b>100 = sin ajuste.</b> Es de esta PC/impresora.
+                  </span>
+                  {/* Calculadora: imprimí algo de tamaño conocido, medilo con regla. */}
+                  <div className="mt-1.5 flex flex-wrap items-end gap-2 rounded border border-ink-800 bg-ink-950/40 p-2 text-[10px] text-ink-400">
+                    <span className="pb-1.5">Calcular desde una medición:</span>
+                    <label className="block">
+                      <span className="mb-0.5 block">Medida esperada (mm)</span>
+                      <input type="number" step="0.1" value={calibExp}
+                        onChange={(e) => setCalibExp(e.target.value)} placeholder="100"
+                        className="w-20 rounded border border-ink-700 bg-ink-800 px-2 py-1 text-center text-xs text-ink-100 outline-none focus:border-accent-500" />
+                    </label>
+                    <label className="block">
+                      <span className="mb-0.5 block">Medida real (mm)</span>
+                      <input type="number" step="0.1" value={calibMeas}
+                        onChange={(e) => setCalibMeas(e.target.value)} placeholder="99.6"
+                        className="w-20 rounded border border-ink-700 bg-ink-800 px-2 py-1 text-center text-xs text-ink-100 outline-none focus:border-accent-500" />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const exp = parseFloat(String(calibExp).replace(',', '.'));
+                        const meas = parseFloat(String(calibMeas).replace(',', '.'));
+                        if (exp > 0 && meas > 0) {
+                          const pct = Math.round((exp / meas) * 100 * 100) / 100; // 2 decimales
+                          patch({ printScalePct: Math.min(110, Math.max(90, pct)) });
+                        }
+                      }}
+                      className="rounded border border-accent-500/50 bg-accent-600/20 px-2 py-1 text-accent-200 hover:bg-accent-600/30">
+                      Usar
+                    </button>
+                  </div>
+                  <span className="mt-1 block text-[10px] text-ink-500">
+                    Imprimí una hoja con algo de tamaño conocido (ej. un recuadro de 100 mm), medilo con regla y poné los dos valores.
                   </span>
                 </label>
               </div>

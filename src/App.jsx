@@ -3795,12 +3795,22 @@ export default function App() {
     const face = prompt.face;
     const isBack = face === 'back';
     const assignments = isBack ? layout.assignmentsBack : layout.assignmentsFront;
+    // Config del QR/impresión FRESCA (así toma el nombre de máquina y el ajuste
+    // de tamaño apenas se guardan, sin reiniciar). Cae al state si falla.
+    const qc = (await window.printlayout.qrcut?.getConfig?.().catch(() => null)) || qrConfig || {};
     // Nombre del trabajo en la cola de la impresora: "<máquina> - <solapa>".
     // La máquina la configura cada PC en Corte por QR; la solapa es la pestaña
     // activa. Si no hay nombre de máquina, va solo la solapa.
-    const machineName = (qrConfig?.machineName || '').trim();
+    const machineName = (qc.machineName || '').trim();
     const tabName = (activeTab?.name || selected?.name || 'PrintLayout').trim();
     const docName = machineName ? `${machineName} - ${tabName}` : tabName;
+    // Calibración de tamaño de impresión (por PC, config del panel Corte QR).
+    // Agranda/achica lo impreso para que el tamaño físico calce con el corte del
+    // plotter (que va a mm exactos). 100% = sin ajuste.
+    const printScalePct = Number(qc.printScalePct);
+    const printScale = (Number.isFinite(printScalePct) && printScalePct >= 90 && printScalePct <= 110)
+      ? printScalePct / 100
+      : 1;
     setPrinting(face);
     setToast(null);
     try {
@@ -3819,8 +3829,8 @@ export default function App() {
           defaultName: `${(selected.name || 'Rotulos').replace(/[\\/:*?"<>|]+/g, '_')}.pdf`,
           docName,
           images,
-          pageWidthMm: selected.pageWidthMm,
-          pageHeightMm: selected.pageHeightMm,
+          pageWidthMm: selected.pageWidthMm * printScale,
+          pageHeightMm: selected.pageHeightMm * printScale,
           deviceName,
           copies,
           showDialog: false,
@@ -3853,6 +3863,7 @@ export default function App() {
           pages,
           docName,
           drawMarks: cutMarks !== false,
+          printScale,
           showDialog: false,
         });
       }
