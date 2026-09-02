@@ -34,12 +34,16 @@ export default function ImageCountPackModal({
   const [aspectMode, setAspectMode] = useState('auto');
   // "Con QR": reserva simétrica arriba y abajo para cortar por QR sin pisar.
   const [conQr, setConQr] = useState(false);
+  // "Completar la plancha": llena el espacio que sobra con más celdas del mismo
+  // tamaño (cuando entran más que las pedidas).
+  const [fillSheet, setFillSheet] = useState(false);
   const [imageDims, setImageDims] = useState(null);
   const inputRef = useRef(null);
 
   useEffect(() => {
     if (!open) return;
     setImageDims(null);
+    setFillSheet(false);
     setTimeout(() => inputRef.current?.select(), 0);
     let cancelled = false;
     const urls = files.map((f) => URL.createObjectURL(f));
@@ -125,8 +129,12 @@ export default function ImageCountPackModal({
       spacingX: params.spacingX,
       spacingY: params.spacingY,
       cellAspect,
+      fillSheet,
     });
-  }, [valid, imageDims, params, cellAspect, qrReserveMm]);
+  }, [valid, imageDims, params, cellAspect, qrReserveMm, fillSheet]);
+
+  // Cuántas celdas MÁS entran a este mismo tamaño para completar la hoja.
+  const extraFit = pack ? Math.max(0, (pack.capacity ?? 0) - params.count) : 0;
 
   const [previewPage, setPreviewPage] = useState(0);
   useEffect(() => {
@@ -173,7 +181,7 @@ export default function ImageCountPackModal({
       uniqueUsed: usedFiles.length,
       totalInput: pack.total,
       pageCount: pack.pageCount,
-      countPerPage: params.count,
+      countPerPage: fillSheet ? (pack.capacity ?? params.count) : params.count,
       grid: pack.grid,
       conQr,
     });
@@ -400,6 +408,34 @@ export default function ImageCountPackModal({
                     />
                   ))}
                 </div>
+                {(fillSheet || extraFit > 0) && (
+                  <div className="flex flex-col items-center gap-1">
+                    {fillSheet ? (
+                      <button
+                        type="button"
+                        onClick={() => setFillSheet(false)}
+                        className="rounded border border-emerald-500/50 bg-emerald-600/20 px-3 py-1 text-xs font-medium text-emerald-200 hover:bg-emerald-600/30"
+                        title="Volver a la cantidad que pediste (sin completar)."
+                      >
+                        ✓ Plancha completa — volver a {params.count}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setFillSheet(true)}
+                        className="rounded border border-emerald-500/50 bg-emerald-600/20 px-3 py-1 text-xs font-medium text-emerald-200 hover:bg-emerald-600/30"
+                        title="Llena el espacio que sobra con más celdas del mismo tamaño."
+                      >
+                        Completar la plancha (+{extraFit})
+                      </button>
+                    )}
+                    <span className="text-[10px] text-ink-500">
+                      {fillSheet
+                        ? 'Se llenó todo el espacio con celdas del mismo tamaño.'
+                        : `Entran ${extraFit} más a este tamaño para llenar la hoja.`}
+                    </span>
+                  </div>
+                )}
                 {pack.pageCount > 1 && (
                   <div className="flex items-center gap-2 text-xs text-ink-300">
                     <button

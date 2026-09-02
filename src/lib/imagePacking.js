@@ -268,6 +268,9 @@ export function packImagesByCount({
   spacingX = 2,
   spacingY = 2,
   cellAspect = null, // W/H del cell; si null, se calcula del promedio de imagenes
+  fillSheet = false, // true = completar la hoja: extiende la grilla a TODO el
+                     // espacio que entra a ese MISMO tamaño de celda (mismo
+                     // tamaño, mas celdas), en vez de usar solo `count`.
 }) {
   const empty = () => ({
     cells: [], pages: [], pageCount: 0, placed: 0, uniqueUsed: 0,
@@ -276,7 +279,7 @@ export function packImagesByCount({
 
   const innerW = paperW - 2 * marginX;
   const innerH = paperH - 2 * marginY;
-  const N = Math.floor(Number(count) || 0);
+  let N = Math.floor(Number(count) || 0);
 
   if (innerW <= 0 || innerH <= 0 || N <= 0) return empty();
 
@@ -329,7 +332,23 @@ export function packImagesByCount({
 
   if (!best) return empty();
 
-  const { rows, cols, cw, ch } = best;
+  const { cw, ch } = best;
+  let { rows, cols } = best;
+
+  // Cuántas filas/columnas de ESTE tamaño de celda entran realmente en la hoja.
+  // Puede haber lugar para más que las rows×cols elegidas para `count` (cuando
+  // el aspecto de la celda deja margen en una dirección) → eso es lo que
+  // "completar la plancha" aprovecha.
+  const colsMax = Math.max(cols, Math.floor((innerW + spacingX) / (cw + spacingX) + 1e-6));
+  const rowsMax = Math.max(rows, Math.floor((innerH + spacingY) / (ch + spacingY) + 1e-6));
+  const capacity = Math.max(N, colsMax * rowsMax);
+
+  // "Completar la plancha": mismo tamaño de celda, pero se usa TODO el espacio.
+  if (fillSheet) {
+    rows = rowsMax;
+    cols = colsMax;
+    N = capacity;
+  }
 
   // Construir grilla centrada en la hoja
   const totalGridW = cols * cw + (cols - 1) * spacingX;
@@ -420,5 +439,8 @@ export function packImagesByCount({
     total: images.length,
     skipped,
     grid: { rows, cols, cellW: cw, cellH: ch },
+    // Máximo de celdas que entran a ESTE tamaño de celda (para ofrecer
+    // "completar la plancha"). Con fillSheet, cells.length ya llega a esto.
+    capacity,
   };
 }
