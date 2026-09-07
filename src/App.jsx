@@ -1987,14 +1987,16 @@ export default function App() {
         setToast({ kind: 'error', text: 'No se pudo cargar ninguna carta del PDF.' });
         return;
       }
-      const res = layout.applyFrontBackPairs(cards);
+      const added = cards.length;
+      // AGREGAR al mazo ya posado (no reemplaza): los 5 PDF son el mismo mazo.
+      const res = layout.appendFrontBackPairs(cards);
       if (!res) {
         setToast({ kind: 'error', text: 'No se pudo posar (¿la plantilla es doble faz?).' });
         return;
       }
       setToast({
         kind: 'success',
-        text: `Posadas ${res.cards} carta${res.cards === 1 ? '' : 's'} (frente + dorso) en ${res.pages} hoja${res.pages === 1 ? '' : 's'}. Ya podés editar y cortar.`,
+        text: `+${added} carta${added === 1 ? '' : 's'} agregada${added === 1 ? '' : 's'}. Mazo: ${res.cards} carta${res.cards === 1 ? '' : 's'} en ${res.pages} hoja${res.pages === 1 ? '' : 's'}. Ya podés editar y cortar.`,
       });
     } catch (err) {
       console.error(err);

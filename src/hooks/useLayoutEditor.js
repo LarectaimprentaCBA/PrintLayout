@@ -752,6 +752,30 @@ export function useLayoutEditor(template, face = 'front') {
     [isMultiPage, cellsPerPage],
   );
 
+  // Igual que applyFrontBackPairs pero AGREGA al mazo ya posado (no reemplaza):
+  // toma las tarjetas ya puestas (frente/dorso, compactadas) y les concatena las
+  // nuevas, después repagina en hojas completas. Para armar UN mazo desde varios
+  // PDF (cada PDF suma sus cartas). Con la hoja vacía = igual que posar de cero.
+  const appendFrontBackPairs = useCallback(
+    (newCards) => {
+      if (isMultiPage || cellsPerPage === 0) return null;
+      if (!Array.isArray(newCards) || newCards.length === 0) return null;
+      const imgMap = new Map(images.map((i) => [i.id, i]));
+      const f = assignmentsFrontRef.current || [];
+      const b = assignmentsBackRef.current || [];
+      const len = Math.max(f.length, b.length);
+      const existing = [];
+      for (let i = 0; i < len; i++) {
+        const fi = f[i] ?? null;
+        const bi = b[i] ?? null;
+        if (fi == null && bi == null) continue; // saltea celdas vacías (compacta)
+        existing.push({ front: fi ? imgMap.get(fi) : null, back: bi ? imgMap.get(bi) : null });
+      }
+      return applyFrontBackPairs([...existing, ...newCards]);
+    },
+    [isMultiPage, cellsPerPage, images, applyFrontBackPairs],
+  );
+
   const clearCell = useCallback(
     (cellIdx) => {
       applyMutation((arr) => {
@@ -872,6 +896,7 @@ export function useLayoutEditor(template, face = 'front') {
     applyImageQuantities,
     assignCellsExplicit,
     applyFrontBackPairs,
+    appendFrontBackPairs,
     swapCells,
     clearCell,
     removeImage,

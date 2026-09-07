@@ -200,8 +200,9 @@ export default function PdfImageExtractModal({
             <div className="mt-2 rounded border border-accent-500/30 bg-accent-500/5 px-3 py-2 text-[11px] text-ink-300">
               <b className="text-accent-200">Posar frente y dorso:</b> marcá cuál pieza es el{' '}
               <b>dorso</b> (botón «Dorso» en cada una). Las demás son frentes. Al tocar{' '}
-              <b>«Posar frente y dorso»</b> se arma la hoja doble faz emparejando cada frente
-              con el dorso. Si hay 2 dorsos, cada frente usa el dorso que aparece antes (podés
+              <b>«Agregar al mazo»</b> se emparejan frente+dorso y se{' '}
+              <b>suman</b> a lo que ya tengas posado (no reemplaza) — así armás un mazo con
+              varios PDF. Si hay 2 dorsos, cada frente usa el dorso que aparece antes (podés
               cambiarlo en el selector de cada frente).
             </div>
           )}
@@ -407,8 +408,9 @@ export default function PdfImageExtractModal({
               type="button"
               onClick={submitPose}
               className="rounded bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-500"
+              title="Empareja cada frente con su dorso y lo SUMA al mazo ya posado (no reemplaza)."
             >
-              Posar frente y dorso
+              Agregar al mazo (frente y dorso)
             </button>
           )}
           <button
