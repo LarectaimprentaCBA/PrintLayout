@@ -3862,6 +3862,25 @@ export default function App() {
   // cortes distintos por página (cortesPorPagina), guarda uno por hoja con su
   // nombre (base, base-h2, base-h3…) para que cada QR impreso pida el suyo. Si el
   // corte es único (una hoja o el mismo en todas), guarda un solo <cutId>.plt.
+  // Ajusta el corte al PAPEL REAL cuando hay HOJA distinta (customPaper). La
+  // impresión CENTRA el diseño de la plantilla en el papel real; el corte tiene
+  // que ir con ESE tamaño de papel y con los cortes trasladados por el mismo
+  // centrado. Si no, el plotter usa el tamaño de la plantilla (más grande) y
+  // "espera la hoja grande" / corta corrido. Sin customPaper = sin cambios.
+  const cutForSheet = (cortes) => {
+    const tW = selected.pageWidthMm;
+    const tH = selected.pageHeightMm;
+    const cW = customPaper?.widthMm ?? tW;
+    const cH = customPaper?.heightMm ?? tH;
+    if (!(cW > 0) || !(cH > 0) || (Math.abs(cW - tW) < 0.001 && Math.abs(cH - tH) < 0.001)) {
+      return { cortes, pageWidthMm: tW, pageHeightMm: tH };
+    }
+    const dx = (cW - tW) / 2;
+    const dy = (cH - tH) / 2;
+    const shifted = (cortes || []).map((poly) => poly.map(([x, y]) => [x + dx, y + dy]));
+    return { cortes: shifted, pageWidthMm: cW, pageHeightMm: cH };
+  };
+
   const saveCutToQrFolder = async () => {
     try {
       const cfg = await window.printlayout.qrcut.getConfig();
@@ -3878,10 +3897,11 @@ export default function App() {
         const id = cutIdForPage(selected, p);
         if (!id) continue;
         const outPath = `${base}${sep}${id}.plt`;
+        const sheet = cutForSheet(cortes);
         const result = await window.printlayout.plotter.exportCut({
-          cortes,
-          pageWidthMm: selected.pageWidthMm,
-          pageHeightMm: selected.pageHeightMm,
+          cortes: sheet.cortes,
+          pageWidthMm: sheet.pageWidthMm,
+          pageHeightMm: sheet.pageHeightMm,
           markMarginMm: selected.markMarginMm ?? 10,
           markType: plotterMarkType(selected),
           bladeOffsetMm,
@@ -4027,10 +4047,11 @@ export default function App() {
     setCutting(true);
     setToast(null);
     try {
+      const sheet = cutForSheet(pageCortes);
       const result = await window.printlayout.plotter.sendCut({
-        cortes: pageCortes,
-        pageWidthMm: selected.pageWidthMm,
-        pageHeightMm: selected.pageHeightMm,
+        cortes: sheet.cortes,
+        pageWidthMm: sheet.pageWidthMm,
+        pageHeightMm: sheet.pageHeightMm,
         markMarginMm: margin,
         markType: plotterMarkType(selected),
         bladeOffsetMm,
