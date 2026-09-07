@@ -752,48 +752,38 @@ export function useLayoutEditor(template, face = 'front') {
     [isMultiPage, cellsPerPage],
   );
 
-  // AGREGA al mazo ya posado (no reemplaza) pero CADA LOTE (cada PDF) arranca en
-  // una HOJA NUEVA — nunca mezcla cartas de PDF distintos en la misma hoja. Así
-  // se puede cortar y editar por PDF sin tocar lo anterior. Con la hoja vacía =
-  // igual que posar de cero. Devuelve la 1ª hoja del lote nuevo (startPage) para
-  // que la vista salte ahí.
+  // AGREGA al mazo ya posado (no reemplaza) APROVECHANDO EL ESPACIO LIBRE: toma
+  // las tarjetas ya puestas (compactando los huecos) y les concatena las nuevas,
+  // así el lote nuevo empieza a llenar las celdas que quedaron libres en la
+  // última hoja (y recién después abre hojas nuevas). El editar/cortar por PDF
+  // no depende de la hoja (se agrupa por pdfGroup de cada imagen). Con la hoja
+  // vacía = igual que posar de cero. Devuelve dónde arrancó el lote (startPage).
   const appendFrontBackPairs = useCallback(
     (newCards) => {
       if (isMultiPage || cellsPerPage === 0) return null;
       if (!Array.isArray(newCards) || newCards.length === 0) return null;
+      const imgMap = new Map(images.map((i) => [i.id, i]));
       const f = assignmentsFrontRef.current || [];
       const b = assignmentsBackRef.current || [];
-      // Base = lo existente redondeado a HOJAS COMPLETAS → el lote nuevo empieza
-      // en el borde de una hoja nueva (no rellena la última hoja del PDF anterior).
-      const usedLen = Math.max(f.length, b.length);
-      const base = Math.ceil(usedLen / cellsPerPage) * cellsPerPage;
-      const want = base + Math.ceil(newCards.length / cellsPerPage) * cellsPerPage;
-      const front = Array(want).fill(null);
-      const back = Array(want).fill(null);
-      for (let i = 0; i < f.length; i++) front[i] = f[i] ?? null;
-      for (let i = 0; i < b.length; i++) back[i] = b[i] ?? null;
-      // Imágenes: conservar las que ya estaban + sumar las nuevas (dedupe por id).
-      const imgById = new Map(images.map((i) => [i.id, i]));
-      for (const c of newCards) {
-        if (c?.front) imgById.set(c.front.id, c.front);
-        if (c?.back) imgById.set(c.back.id, c.back);
+      const len = Math.max(f.length, b.length);
+      const existing = [];
+      for (let i = 0; i < len; i++) {
+        const fi = f[i] ?? null;
+        const bi = b[i] ?? null;
+        if (fi == null && bi == null) continue; // saca huecos (compacta)
+        existing.push({ front: fi ? imgMap.get(fi) : null, back: bi ? imgMap.get(bi) : null });
       }
-      for (let i = 0; i < newCards.length; i++) {
-        front[base + i] = newCards[i]?.front?.id ?? null;
-        back[base + i] = newCards[i]?.back?.id ?? null;
-      }
-      setImages([...imgById.values()]);
-      setAssignmentsFront(front);
-      setAssignmentsBack(back);
-      setSelectedCell(null);
+      const startIndex = existing.length; // 1ª celda del lote nuevo
+      const res = applyFrontBackPairs([...existing, ...newCards]);
+      if (!res) return null;
       return {
         cards: newCards.length,
-        pages: Math.ceil(newCards.length / cellsPerPage),
-        startPage: base / cellsPerPage,
-        totalPages: want / cellsPerPage,
+        startPage: Math.floor(startIndex / cellsPerPage),
+        totalPages: res.pages,
+        totalCards: res.cards,
       };
     },
-    [isMultiPage, cellsPerPage, images],
+    [isMultiPage, cellsPerPage, images, applyFrontBackPairs],
   );
 
   const clearCell = useCallback(

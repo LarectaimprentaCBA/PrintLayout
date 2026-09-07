@@ -200,10 +200,11 @@ export default function PdfImageExtractModal({
             <div className="mt-2 rounded border border-accent-500/30 bg-accent-500/5 px-3 py-2 text-[11px] text-ink-300">
               <b className="text-accent-200">Posar frente y dorso:</b> marcá cuál pieza es el{' '}
               <b>dorso</b> (botón «Dorso» en cada una). Las demás son frentes. Al tocar{' '}
-              <b>«Agregar al mazo»</b> se emparejan frente+dorso y este PDF se suma en{' '}
-              <b>hojas nuevas</b> (no reemplaza ni mezcla con lo anterior) — así cortás y
-              editás cada PDF en su hoja sin afectar los demás. Si hay 2 dorsos, cada frente
-              usa el dorso que aparece antes (podés cambiarlo en el selector de cada frente).
+              <b>«Agregar al mazo»</b> se emparejan frente+dorso y este PDF se{' '}
+              <b>suma aprovechando el espacio libre</b> de lo que ya tengas posado (no
+              reemplaza). Para editar solo las cartas de este PDF, entrá a editar una y usá{' '}
+              <b>«Aplicar a este PDF»</b>. Si hay 2 dorsos, cada frente usa el dorso que
+              aparece antes (podés cambiarlo en el selector de cada frente).
             </div>
           )}
 
