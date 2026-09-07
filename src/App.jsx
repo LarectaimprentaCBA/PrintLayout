@@ -1283,6 +1283,12 @@ export default function App() {
       const cutM = next.cutMarginMm ?? 0;
       const markM = next.markMarginMm ?? 0;
       const shape = next.cutShape ?? 'rect';
+      // Radio de las puntas redondeadas (solo forma 'rounded'). Si eligen
+      // redondeado y todavía no hay radio, arranca en 3 mm y se persiste.
+      if (shape === 'rounded' && !(Number(next.cornerRadiusMm) > 0)) {
+        next.cornerRadiusMm = 3;
+      }
+      const cornerR = Number(next.cornerRadiusMm) || 0;
       const celdas = next.celdas ?? [];
       // Si las celdas tienen forma propia (medidas múltiples: rect + círculo
       // mezclados), el corte se regenera POR CELDA respetando cada forma.
@@ -1290,7 +1296,7 @@ export default function App() {
       next.cortes = markM > 0
         ? (perCellShapes
             ? generateCutsPerCell(celdas, { cutMarginMm: cutM })
-            : generateCuts(celdas, { cutShape: shape, cutMarginMm: cutM }))
+            : generateCuts(celdas, { cutShape: shape, cutMarginMm: cutM, cornerRadiusMm: cornerR }))
         : [];
       return { template: next };
     });

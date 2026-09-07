@@ -191,7 +191,7 @@ export const ROUNDED_RADIUS_BY_SIZE = { grande: 3.15, intermedio: 1.57, chico: 1
 // esquina, radio según cell.size (ROUNDED_RADIUS_BY_SIZE), sampleados con
 // segmentsPerCorner puntos por esquina. Pensado para la plancha de rótulos, cuyo
 // layout es fijo → el corte también.
-export function cellsToRoundedRectCuts(cells, { cutMarginMm = 0, segmentsPerCorner = 8 } = {}) {
+export function cellsToRoundedRectCuts(cells, { cutMarginMm = 0, cornerRadiusMm = 0, segmentsPerCorner = 8 } = {}) {
   const m = Math.max(0, Number(cutMarginMm) || 0);
   const seg = Math.max(1, Math.round(segmentsPerCorner));
   const D = Math.PI / 180;
@@ -204,7 +204,12 @@ export function cellsToRoundedRectCuts(cells, { cutMarginMm = 0, segmentsPerCorn
     const w = x1 - x0;
     const h = y1 - y0;
     if (w <= 0 || h <= 0) continue;
-    const rWanted = ROUNDED_RADIUS_BY_SIZE[c.size] || 0;
+    // Radio: si viene un cornerRadiusMm explícito (>0) manda ese (grillas /
+    // cartas donde el usuario elige el redondeo); si no, cae al fijo por tamaño
+    // (rótulos). Se acota a la mitad del lado más corto.
+    const rWanted = Number(cornerRadiusMm) > 0
+      ? Number(cornerRadiusMm)
+      : (ROUNDED_RADIUS_BY_SIZE[c.size] || 0);
     const r = Math.max(0, Math.min(rWanted, w / 2, h / 2));
     const poly = [];
     if (r <= 0) {
@@ -233,9 +238,9 @@ export function cellsToRoundedRectCuts(cells, { cutMarginMm = 0, segmentsPerCorn
 
 // Dispatcher: forma 'rect' (default) usa cellsToCuts, 'circle' usa cellsToCircleCuts,
 // 'rounded' usa cellsToRoundedRectCuts (radio por cell.size).
-export function generateCuts(cells, { cutShape = 'rect', cutMarginMm = 0 } = {}) {
+export function generateCuts(cells, { cutShape = 'rect', cutMarginMm = 0, cornerRadiusMm = 0 } = {}) {
   if (cutShape === 'circle') return cellsToCircleCuts(cells, { cutMarginMm });
-  if (cutShape === 'rounded') return cellsToRoundedRectCuts(cells, { cutMarginMm });
+  if (cutShape === 'rounded') return cellsToRoundedRectCuts(cells, { cutMarginMm, cornerRadiusMm });
   return cellsToCuts(cells, { cutMarginMm });
 }
 

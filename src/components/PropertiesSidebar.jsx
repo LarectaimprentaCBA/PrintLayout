@@ -869,6 +869,18 @@ export default function PropertiesSidebar({
                       </button>
                       <button
                         type="button"
+                        onClick={() => onUpdateTemporal({ cutShape: 'rounded' })}
+                        title="Corte rectangular con las puntas redondeadas (elegís el radio abajo)"
+                        className={`rounded px-2 py-0.5 text-[10px] ${
+                          template.cutShape === 'rounded'
+                            ? 'bg-accent-600 text-white'
+                            : 'text-ink-300 hover:bg-ink-700'
+                        }`}
+                      >
+                        Redond.
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => onUpdateTemporal({ cutShape: 'contour' })}
                         title="Corta por el contorno de cada imagen (saca el fondo y sigue la silueta)"
                         className={`rounded px-2 py-0.5 text-[10px] ${
@@ -882,6 +894,22 @@ export default function PropertiesSidebar({
                     </div>
                   </dd>
                 </div>
+                {template.cutShape === 'rounded' && (
+                  <div className="flex items-center justify-between">
+                    <dt className="text-ink-400">Radio puntas (mm)</dt>
+                    <dd className="flex items-center gap-1">
+                      <input
+                        type="number" min="0" step="0.5"
+                        value={template.cornerRadiusMm ?? 3}
+                        onChange={(e) => {
+                          const v = parseFloat(String(e.target.value).replace(',', '.'));
+                          onUpdateTemporal({ cornerRadiusMm: Number.isFinite(v) && v >= 0 ? v : 0 });
+                        }}
+                        className="w-16 rounded border border-ink-700 bg-ink-900 px-1.5 py-0.5 text-right text-[11px] text-ink-100 outline-none focus:border-accent-500"
+                      />
+                    </dd>
+                  </div>
+                )}
                 {template.cutShape === 'contour' && (
                   <ContourControls
                     template={template}
