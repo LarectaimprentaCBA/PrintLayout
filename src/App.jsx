@@ -1988,15 +1988,21 @@ export default function App() {
         return;
       }
       const added = cards.length;
-      // AGREGAR al mazo ya posado (no reemplaza): los 5 PDF son el mismo mazo.
+      // AGREGAR al mazo (no reemplaza) EN HOJAS NUEVAS: este PDF arranca en su
+      // propia hoja, sin mezclarse con lo anterior → se corta/edita por PDF.
       const res = layout.appendFrontBackPairs(cards);
       if (!res) {
         setToast({ kind: 'error', text: 'No se pudo posar (¿la plantilla es doble faz?).' });
         return;
       }
+      // Saltar a la 1ª hoja de este PDF (lo recién agregado).
+      if (typeof res.startPage === 'number') setCurrentPage(res.startPage);
+      const firstSheet = res.startPage + 1;
+      const lastSheet = res.startPage + res.pages;
+      const rango = res.pages === 1 ? `hoja ${firstSheet}` : `hojas ${firstSheet}–${lastSheet}`;
       setToast({
         kind: 'success',
-        text: `+${added} carta${added === 1 ? '' : 's'} agregada${added === 1 ? '' : 's'}. Mazo: ${res.cards} carta${res.cards === 1 ? '' : 's'} en ${res.pages} hoja${res.pages === 1 ? '' : 's'}. Ya podés editar y cortar.`,
+        text: `+${added} carta${added === 1 ? '' : 's'} en ${rango} (este PDF). Mazo: ${res.totalPages} hoja${res.totalPages === 1 ? '' : 's'} en total. Cortá/editá cada PDF en su hoja.`,
       });
     } catch (err) {
       console.error(err);
