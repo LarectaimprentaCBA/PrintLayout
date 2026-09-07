@@ -1912,6 +1912,98 @@ export default function App() {
     }
   };
 
+  // ¿Se puede posar frente/dorso sobre la plantilla actual? Requiere doble faz
+  // legacy (grilla con celdas/celdasDorso, no multi-página) con celdas.
+  const canPoseFrontBack = !!selected
+    && !!selected.doubleSided
+    && fixedPageCount(selected) === null
+    && (layout.cellsPerPage || 0) > 0;
+
+  // Lee una PIEZA del PDF (del modal de extracción) a un objeto imagen editable,
+  // respetando su tamaño físico (placementMm). Mismo criterio que submitPdfExtract.
+  const pieceToImage = async (piece, label) => {
+    let bytes;
+    if (piece.dataUrl) {
+      const base64 = piece.dataUrl.slice(piece.dataUrl.indexOf(',') + 1);
+      const bin = atob(base64);
+      bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    } else {
+      const r = await window.printlayout.pdf.readExtractedImage(piece.path);
+      if (!r?.ok || !r.bytes) return null;
+      bytes = r.bytes;
+    }
+    const mime = piece.ext === 'png' ? 'image/png' : 'image/jpeg';
+    const ext = piece.ext === 'png' ? 'png' : 'jpg';
+    const file = new File([bytes], `${label}.${ext}`, { type: mime });
+    return readImageFile(file, { physicalSizeMmOverride: piece.placementMm ?? null });
+  };
+
+  // Posar frente/dorso desde el modal de importación del PDF: cada frente se
+  // empareja con su dorso y se arma la hoja doble faz sobre la plantilla actual.
+  // El corte queda por PDF (esta hoja), y las imágenes quedan editables.
+  const submitPdfExtractPose = async (plan) => {
+    const ctx = pdfExtract;
+    setPdfExtract(null);
+    setPdfExtractDest(null);
+    setPdfExtractPending([]);
+    const pairs = Array.isArray(plan?.pairs) ? plan.pairs : [];
+    if (!ctx || pairs.length === 0) {
+      if (ctx?.tmpDir) { try { await window.printlayout.pdf.cleanupExtracted(ctx.tmpDir); } catch {} }
+      return;
+    }
+    if (!canPoseFrontBack) {
+      setToast({ kind: 'error', text: 'Necesitás una plantilla DOBLE FAZ seleccionada para posar frente y dorso.' });
+      if (ctx?.tmpDir) { try { await window.printlayout.pdf.cleanupExtracted(ctx.tmpDir); } catch {} }
+      return;
+    }
+    setToast({ kind: 'info', text: 'Posando frente y dorso…' });
+    try {
+      const baseName = (ctx.fileName || 'pdf').replace(/\.pdf$/i, '');
+      // Cargar cada pieza única (frentes + dorsos) UNA vez → objeto imagen.
+      const imgByXref = new Map();
+      const ensureLoaded = async (piece, label) => {
+        if (!piece) return null;
+        if (imgByXref.has(piece.xref)) return imgByXref.get(piece.xref);
+        const img = await pieceToImage(piece, label);
+        if (img) imgByXref.set(piece.xref, img);
+        return img;
+      };
+      let counter = 1;
+      for (const pair of pairs) {
+        await ensureLoaded(pair.front, `${baseName} - ${counter++}`);
+        await ensureLoaded(pair.back, `${baseName} - dorso`);
+      }
+      // Armar las tarjetas: cada frente (expandido por copias) con su dorso.
+      const cards = [];
+      for (const pair of pairs) {
+        const frontImg = imgByXref.get(pair.front?.xref);
+        const backImg = pair.back ? imgByXref.get(pair.back.xref) : null;
+        if (!frontImg) continue;
+        const copies = Math.max(1, pair.front?.copies || 1);
+        for (let c = 0; c < copies; c++) cards.push({ front: frontImg, back: backImg });
+      }
+      if (cards.length === 0) {
+        setToast({ kind: 'error', text: 'No se pudo cargar ninguna carta del PDF.' });
+        return;
+      }
+      const res = layout.applyFrontBackPairs(cards);
+      if (!res) {
+        setToast({ kind: 'error', text: 'No se pudo posar (¿la plantilla es doble faz?).' });
+        return;
+      }
+      setToast({
+        kind: 'success',
+        text: `Posadas ${res.cards} carta${res.cards === 1 ? '' : 's'} (frente + dorso) en ${res.pages} hoja${res.pages === 1 ? '' : 's'}. Ya podés editar y cortar.`,
+      });
+    } catch (err) {
+      console.error(err);
+      setToast({ kind: 'error', text: `Error posando: ${err.message}` });
+    } finally {
+      if (ctx?.tmpDir) { try { await window.printlayout.pdf.cleanupExtracted(ctx.tmpDir); } catch {} }
+    }
+  };
+
   // Convierte HEIC/HEIF a JPEG antes de abrir el modal de pack, asi las vistas
   // previas y el calculo de dimensiones (que usan <img>) funcionan.
   const convertHeicWithToast = async (files) => {
@@ -4611,6 +4703,8 @@ export default function App() {
           onCancel={cancelPdfExtract}
           onSwitchToRasterized={handleSwitchToRasterized}
           onSwitchToRegions={handleSwitchToRegions}
+          poseAvailable={canPoseFrontBack}
+          onPose={submitPdfExtractPose}
         />
 
         <ImagePackModal
