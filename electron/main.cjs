@@ -485,8 +485,17 @@ ipcMain.handle('jobs:save-to-path', async (_evt, { path: filePath, payload }) =>
     // modo de entrega en carpeta del intake).
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     const body = { ...payload, savedAt: new Date().toISOString() };
-    fs.writeFileSync(filePath, JSON.stringify(body), 'utf-8');
-    return { ok: true, path: filePath };
+    const json = JSON.stringify(body);
+    fs.writeFileSync(filePath, json, 'utf-8');
+    // Verificar el DERIVADO: el archivo en disco debe pesar lo mismo que lo que
+    // escribimos. Una escritura truncada (disco lleno) dejaría un .pljob corrupto
+    // que se daría por entregado y las fotos originales se borrarían a los N días.
+    const expected = Buffer.byteLength(json, 'utf-8');
+    const actual = fs.statSync(filePath).size;
+    if (actual !== expected) {
+      return { ok: false, error: `guardado incompleto: ${actual} de ${expected} bytes` };
+    }
+    return { ok: true, path: filePath, bytes: actual };
   } catch (err) {
     return { ok: false, error: err.message };
   }

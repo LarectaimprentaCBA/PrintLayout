@@ -131,34 +131,48 @@ export function packImagesByFixedDimension({
       if (placedInCycle === 0) break;
     }
   } else {
-    // Pasada 1: cada imagen una vez, paginando si hace falta.
-    let currentPageIdx = 0;
+    // Pasada 1: cada imagen una vez (FIRST-FIT). Probamos TODAS las hojas ya
+    // abiertas antes de abrir una nueva: así una imagen chica llena el hueco que
+    // una grande dejó en una hoja anterior, en vez de arrancar hoja nueva y
+    // dejar huecos (bug con proporciones mezcladas). Con tamaños uniformes se
+    // comporta igual que antes (cada hoja se llena antes de abrir la siguiente).
     for (let i = 0; i < images.length; i++) {
       const dims = computeWH(images[i]);
       if (!dims) {
         skipped.push({ index: i, reason: 'sin dimensiones' });
         continue;
       }
-      let attempts = 0;
       let placed = false;
-      while (attempts < 2 && !placed) {
-        const r = tryPlaceOnPage(pageStates[currentPageIdx], dims.w, dims.h);
+      let lastReason = 'sin espacio en la hoja';
+      for (let p = 0; p < pageStates.length; p++) {
+        const r = tryPlaceOnPage(pageStates[p], dims.w, dims.h);
         if (r.cell) {
-          cells.push({ ...r.cell, imageIndex: i, page: currentPageIdx });
+          cells.push({ ...r.cell, imageIndex: i, page: p });
           placed = true;
           break;
         }
-        if (r.reason === 'no entra') {
-          skipped.push({ index: i, reason: 'no entra' });
-          break;
-        }
-        if (!multiPage || currentPageIdx + 1 >= maxPages) {
-          skipped.push({ index: i, reason: r.reason });
-          break;
-        }
-        currentPageIdx++;
-        pageStates.push(newPageState());
-        attempts++;
+        // "no entra" (más grande que la hoja) es igual en todas las hojas → no
+        // sigue probando.
+        if (r.reason === 'no entra') { lastReason = 'no entra'; break; }
+        lastReason = r.reason;
+      }
+      if (placed) continue;
+      if (lastReason === 'no entra') {
+        skipped.push({ index: i, reason: 'no entra' });
+        continue;
+      }
+      // No entró en ninguna hoja abierta: abrir una nueva (si se permite).
+      if (!multiPage || pageStates.length >= maxPages) {
+        skipped.push({ index: i, reason: lastReason });
+        continue;
+      }
+      const newState = newPageState();
+      const r2 = tryPlaceOnPage(newState, dims.w, dims.h);
+      if (r2.cell) {
+        pageStates.push(newState);
+        cells.push({ ...r2.cell, imageIndex: i, page: pageStates.length - 1 });
+      } else {
+        skipped.push({ index: i, reason: r2.reason || 'sin espacio en la hoja' });
       }
     }
 

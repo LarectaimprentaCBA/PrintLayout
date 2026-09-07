@@ -194,7 +194,7 @@ export async function buildRotulosSheet(spec) {
 
 // PDF IMPRESO con el motor probado. `qr` es opcional: si no se pasa, lo arma con
 // la config del server QR + el qrId de la plancha.
-export async function buildRotulosPdfBytes(spec, { qr } = {}) {
+export async function buildRotulosPdfBytes(spec, { qr, drawMarks = true } = {}) {
   const inputs = await loadRotulosInputs(spec);
   const sizes = {};
   for (const size of inputs.usedSizes) {
@@ -203,7 +203,9 @@ export async function buildRotulosPdfBytes(spec, { qr } = {}) {
     sizes[size] = { dataUrl: si.arteDataUrl, wPx: si.wPx, hPx: si.hPx, textBox: si.textBox, cutMm: si.cutMm };
   }
 
-  let qrPayload = qr;
+  // Sin marcas de corte no tiene sentido el QR (no hay corte que pedir) → se
+  // anula también el QR, igual que en las grillas normales.
+  let qrPayload = drawMarks ? qr : null;
   if (qrPayload === undefined) {
     const plancha = planchaCeldas(spec.planchaId);
     let cfg = null;
@@ -218,6 +220,6 @@ export async function buildRotulosPdfBytes(spec, { qr } = {}) {
     family: inputs.family,
     color: spec.color, boxColor: spec.boxColor, noBox: spec.noBox, boxPadMm: spec.boxPadMm,
     text: spec.text, lineModes: spec.lineModes, outline: spec.outline, textScales: spec.textScales,
-    planchaId: spec.planchaId, markMarginMm: MARK_MARGIN_MM, qr: qrPayload,
+    planchaId: spec.planchaId, markMarginMm: MARK_MARGIN_MM, drawMarks, qr: qrPayload,
   });
 }

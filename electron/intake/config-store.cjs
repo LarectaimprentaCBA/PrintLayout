@@ -91,12 +91,13 @@ function sanitize(cfg) {
       : {},
     dobbleBackMirror: c.dobbleBackMirror === 'y' ? 'y' : 'x',
     dobbleBackRotate180: !!c.dobbleBackRotate180,
-    // Retención en días (entero ≥ 0). 0 = borrar en el próximo barrido (sin
-    // ventana de gracia). Tope defensivo de 90 días.
+    // Retención en días (entero). Mínimo 1: nunca 0, porque 0 borraría los
+    // originales en el mismo barrido en que se procesa el pedido (sin ventana de
+    // gracia), que es justo la red de seguridad que pide ORDEN 2. Tope 90.
     retentionDays: (() => {
       let d = Number(c.retentionDays);
       if (!Number.isFinite(d)) d = DEFAULTS.retentionDays;
-      return Math.min(90, Math.max(0, Math.floor(d)));
+      return Math.min(90, Math.max(1, Math.floor(d)));
     })(),
     rotulosActive: !!c.rotulosActive,
     rotulosOutputDir: typeof c.rotulosOutputDir === 'string' ? c.rotulosOutputDir : '',

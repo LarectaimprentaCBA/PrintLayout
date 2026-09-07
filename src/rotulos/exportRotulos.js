@@ -62,6 +62,7 @@ export async function buildRotulosPlanchaPdf({
   maxPt = 120,
   dpi = 600,
   markMarginMm = MARK_MARGIN_MM,
+  drawMarks = true, // false = plancha SIN marcas L (producto final sin cortar)
   qr = null, // { text, sizeMm, bottomMm, centered } — QR fijo de la hoja
 }) {
   const { pageWidthMm, pageHeightMm, celdas } = planchaCeldas(planchaId);
@@ -135,9 +136,13 @@ export async function buildRotulosPlanchaPdf({
 
   // Marcas L de registro (mismo markMarginMm que el .plt) + QR fijo de la hoja.
   // El QR/borde inferior es la referencia de orientación al cargar en el plotter.
-  drawCornerMarks(page, {
-    offsetXpt: 0, offsetYpt: 0, templateWpt: pageWpt, templateHpt: pageHpt, markMarginMm,
-  });
+  // Si drawMarks=false (destildaron "marcas de corte"), no se dibujan ni las
+  // marcas ni el QR: el rótulo queda como producto final sin cortar.
+  if (drawMarks) {
+    drawCornerMarks(page, {
+      offsetXpt: 0, offsetYpt: 0, templateWpt: pageWpt, templateHpt: pageHpt, markMarginMm,
+    });
+  }
   if (qr && qr.text) {
     drawQr(page, {
       text: qr.text, pageWmm: pageWidthMm, sizeMm: qr.sizeMm, bottomMm: qr.bottomMm, centered: qr.centered,

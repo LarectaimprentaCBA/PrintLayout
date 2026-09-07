@@ -63,14 +63,27 @@ async function listPendingOrders(cfg, { limit } = {}) {
   return Array.isArray(data) ? data : [];
 }
 
+// Verifica que una descarga llegó completa comparando el Content-Length con los
+// bytes recibidos. Una descarga truncada (200 con cuerpo cortado) escribiría un
+// archivo corrupto a temp y lo alimentaría al pipeline; mejor fallar (el pedido
+// se reintenta y las fotos siguen en el bucket). Si el server no manda
+// Content-Length (chunked), no podemos comparar → no bloqueamos.
+function assertComplete(res, buf, objectPath) {
+  const cl = Number(res.headers.get('content-length'));
+  if (Number.isFinite(cl) && cl > 0 && buf.length !== cl) {
+    throw new Error(`Descarga incompleta de ${objectPath}: ${buf.length} de ${cl} bytes.`);
+  }
+}
+
 // Baja un objeto del bucket privado `fotos`. Devuelve un Buffer.
 async function downloadObject(cfg, objectPath) {
   assertCfg(cfg);
   const url = `${cfg.supabaseUrl}/storage/v1/object/fotos/${encodeObjectPath(objectPath)}`;
   const res = await net.fetch(url, { method: 'GET', headers: authHeaders(cfg) });
   if (!res.ok) throw await readErr(res, `Storage GET (${objectPath})`);
-  const ab = await res.arrayBuffer();
-  return Buffer.from(ab);
+  const buf = Buffer.from(await res.arrayBuffer());
+  assertComplete(res, buf, objectPath);
+  return buf;
 }
 
 // Marca el pedido como procesado. Idempotente (volver a marcarlo no falla).
@@ -137,8 +150,9 @@ async function downloadDobbleObject(cfg, objectPath) {
   const url = `${cfg.supabaseUrl}/storage/v1/object/dobble/${encodeObjectPath(objectPath)}`;
   const res = await net.fetch(url, { method: 'GET', headers: authHeaders(cfg) });
   if (!res.ok) throw await readErr(res, `Storage GET dobble (${objectPath})`);
-  const ab = await res.arrayBuffer();
-  return Buffer.from(ab);
+  const buf = Buffer.from(await res.arrayBuffer());
+  assertComplete(res, buf, objectPath);
+  return buf;
 }
 
 // Marca el pedido Dobble como procesado. Idempotente.

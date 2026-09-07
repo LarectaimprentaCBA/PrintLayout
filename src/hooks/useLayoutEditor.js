@@ -743,6 +743,10 @@ export function useLayoutEditor(template, face = 'front') {
         back[i] = cards[i]?.back?.id ?? null;
       }
       // Set directo de los 3 estados (React los batchea => un solo snapshot).
+      // Sincronizamos los refs ANTES del setState para que un append/removeImage
+      // en el mismo tick vea este resultado (no el estado un render atrás).
+      assignmentsFrontRef.current = front;
+      assignmentsBackRef.current = back;
       setImages(newImages);
       setAssignmentsFront(front);
       setAssignmentsBack(back);
@@ -799,27 +803,33 @@ export function useLayoutEditor(template, face = 'front') {
   const removeImage = useCallback(
     (imageId) => {
       setImages((prev) => prev.filter((i) => i.id !== imageId));
-      // Limpiar la imagen en AMBAS caras y compactar (solo legacy).
-      setAssignmentsFront((prevF) => {
-        let nf = prevF.map((id) => (id === imageId ? null : id));
-        let nb = assignmentsBack.map((id) => (id === imageId ? null : id));
-        [nf, nb] = matchLength(nf, nb, nf.length);
-        if (!isMultiPage && cellsPerPage > 0) {
-          const floor = Math.max(cellsPerPage, minCellsFloor);
-          while (
-            nf.length > floor &&
-            nf.slice(-cellsPerPage).every((id) => id === null) &&
-            nb.slice(-cellsPerPage).every((id) => id === null)
-          ) {
-            nf = nf.slice(0, nf.length - cellsPerPage);
-            nb = nb.slice(0, nb.length - cellsPerPage);
-          }
+      // Limpiar la imagen en AMBAS caras y compactar (solo legacy). MISMO patrón
+      // que applyMutation (evita el bug del "dorso perdido"): leemos de los refs
+      // (estado en vivo) y seteamos frente Y dorso DIRECTO —no el dorso dentro del
+      // updater del frente, que difería la escritura y podía pisar un loadFromJob
+      // del mismo tick— sincronizando además los refs para encadenar mutaciones.
+      const prevF = assignmentsFrontRef.current;
+      const prevB = assignmentsBackRef.current;
+      let nf = prevF.map((id) => (id === imageId ? null : id));
+      let nb = prevB.map((id) => (id === imageId ? null : id));
+      [nf, nb] = matchLength(nf, nb, nf.length);
+      if (!isMultiPage && cellsPerPage > 0) {
+        const floor = Math.max(cellsPerPage, minCellsFloor);
+        while (
+          nf.length > floor &&
+          nf.slice(-cellsPerPage).every((id) => id === null) &&
+          nb.slice(-cellsPerPage).every((id) => id === null)
+        ) {
+          nf = nf.slice(0, nf.length - cellsPerPage);
+          nb = nb.slice(0, nb.length - cellsPerPage);
         }
-        setAssignmentsBack(nb);
-        return nf;
-      });
+      }
+      assignmentsFrontRef.current = nf;
+      assignmentsBackRef.current = nb;
+      setAssignmentsFront(nf);
+      setAssignmentsBack(nb);
     },
-    [assignmentsBack, matchLength, cellsPerPage, isMultiPage, minCellsFloor],
+    [matchLength, cellsPerPage, isMultiPage, minCellsFloor],
   );
 
   const updateImage = useCallback((imageId, updates) => {

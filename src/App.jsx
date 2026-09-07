@@ -1974,17 +1974,20 @@ export default function App() {
       const pdfGroup = `pdf:${(ctx.fileName || 'pdf')}:${Date.now()}`;
       // Cargar cada pieza única (frentes + dorsos) UNA vez → objeto imagen.
       const imgByXref = new Map();
-      const ensureLoaded = async (piece, label) => {
+      // role ('front'|'back'): "aplicar a todas las de este PDF" solo toca las del
+      // MISMO rol → editar un frente no pisa el dorso (que suele ser único y
+      // compartido por muchas cartas). El primer uso de una pieza fija su rol.
+      const ensureLoaded = async (piece, label, role) => {
         if (!piece) return null;
         if (imgByXref.has(piece.xref)) return imgByXref.get(piece.xref);
         const img = await pieceToImage(piece, label);
-        if (img) { img.pdfGroup = pdfGroup; imgByXref.set(piece.xref, img); }
+        if (img) { img.pdfGroup = pdfGroup; img.pdfRole = role; imgByXref.set(piece.xref, img); }
         return img;
       };
       let counter = 1;
       for (const pair of pairs) {
-        await ensureLoaded(pair.front, `${baseName} - ${counter++}`);
-        await ensureLoaded(pair.back, `${baseName} - dorso`);
+        await ensureLoaded(pair.front, `${baseName} - ${counter++}`, 'front');
+        await ensureLoaded(pair.back, `${baseName} - dorso`, 'back');
       }
       // Armar las tarjetas: cada frente (expandido por copias) con su dorso.
       const cards = [];
@@ -2779,11 +2782,14 @@ export default function App() {
       }
 
       // Solo damos el pedido por ENTREGADO si se escribieron TODAS las hojas
-      // que se pudieron armar y ninguna colisionó. Si falta alguna (error al
-      // guardar) o hubo nombre repetido, NO se marca ok: se reintenta y avisamos
-      // qué faltó. Nunca un pedido incompleto en silencio.
+      // que se pudieron armar, ninguna colisionó Y no se salteó ningún tamaño/
+      // foto. Si falta alguna (error al guardar), hubo nombre repetido, o se
+      // salteó un tamaño (p.ej. falta la plantilla) o una foto (no se pudo leer),
+      // NO se marca ok: el pedido queda pendiente/en error, se reintenta y las
+      // fotos NO se borran del bucket. Así jamás se pierde el original de una foto
+      // que nunca se llegó a armar (era el caso PR-1256). Nunca incompleto en silencio.
       const built = specs.length;
-      const ok = built > 0 && delivered === built && collisions === 0;
+      const ok = built > 0 && delivered === built && collisions === 0 && skipped.length === 0;
 
       const problems = [];
       if (built > 0 && delivered < built) {
@@ -2817,10 +2823,12 @@ export default function App() {
           text: `${label}: ${delivered} hoja(s) ${enCarpeta ? 'guardada(s) en la carpeta (\\Pedidos)' : 'abiertas para revisar'}${skipped.length ? ` · ${skipped.length} tamaño(s) saltado(s)` : ''}.`,
         });
       } else if (delivered > 0 || problems.length) {
-        // Se entregó algo pero NO todo (o hubo colisión): no marcamos ok.
+        // Se entregó algo pero NO todo (colisión, error al guardar, o un tamaño/
+        // foto salteado): no marcamos ok. Las fotos siguen en el bucket (no se
+        // borran) hasta poder completar el pedido.
         setToast({
           kind: 'error',
-          text: `${label}: pedido INCOMPLETO — ${[...problems, skippedMsg].filter(Boolean).join('; ') || 'faltan hojas'}. Revisá antes de entregar (se reintenta solo).`,
+          text: `${label}: pedido INCOMPLETO — ${[...problems, skippedMsg].filter(Boolean).join('; ') || 'faltan hojas'}. Las fotos NO se borran hasta completarlo.`,
         });
       } else {
         setToast({
@@ -3673,7 +3681,7 @@ export default function App() {
       // Rótulos: el PDF lo genera el MOTOR PROBADO (marcas L + QR + corte fijo),
       // no el render normal. Mismo camino de guardado que el resto.
       if (selected.rotulos) {
-        const bytes = await buildRotulosPdfBytes(selected.rotulos, { qr: selected.conQr === false ? null : undefined });
+        const bytes = await buildRotulosPdfBytes(selected.rotulos, { qr: selected.conQr === false ? null : undefined, drawMarks });
         const safe = `${(selected.name || 'Rotulos').replace(/[\\/:*?"<>|]+/g, '_')}.pdf`;
         const r = await window.printlayout.pdf.save(safe, bytes);
         if (r?.canceled) setToast(null);
@@ -3949,8 +3957,9 @@ export default function App() {
       let result;
       if (selected.rotulos) {
         // Rótulos: el PDF lo genera el MOTOR PROBADO; lo rasterizamos y lo
-        // mandamos por el MISMO camino de impresión silent que el resto.
-        const bytes = await buildRotulosPdfBytes(selected.rotulos, { qr: selected.conQr === false ? null : undefined });
+        // mandamos por el MISMO camino de impresión silent que el resto. Si
+        // destildaron "marcas de corte", el motor no dibuja marcas ni QR.
+        const bytes = await buildRotulosPdfBytes(selected.rotulos, { qr: selected.conQr === false ? null : undefined, drawMarks: cutMarks !== false });
         const allImages = await renderPdfBytesToImages(bytes, 240);
         let images = allImages;
         if (Array.isArray(pages) && pages.length > 0) images = pages.map((i) => allImages[i]).filter(Boolean);
@@ -4008,7 +4017,7 @@ export default function App() {
         // guardado siempre corresponde al QR impreso. Best-effort: si falla, avisa
         // pero NO tumba el "Enviado a la impresora". El botón manual sigue igual.
         let cutNote = '';
-        if (!isBack && (selected.conQr ?? true) && hasCuts(selected) && selected.cutId && qrConfig) {
+        if (!isBack && cutMarks !== false && (selected.conQr ?? true) && hasCuts(selected) && selected.cutId && qrConfig) {
           const cut = await saveCutToQrFolder();
           cutNote = cut.ok
             ? (cut.saved > 1
@@ -4970,7 +4979,7 @@ export default function App() {
               image={croppingImage}
               sheetImages={layout.images}
               samePdfImages={croppingImage.pdfGroup
-                ? layout.images.filter((i) => i.pdfGroup === croppingImage.pdfGroup)
+                ? layout.images.filter((i) => i.pdfGroup === croppingImage.pdfGroup && i.pdfRole === croppingImage.pdfRole)
                 : []}
               onApply={(updates) => layout.updateImage(croppingImageId, updates)}
               onApplyAll={(entries) => {
@@ -4997,7 +5006,7 @@ export default function App() {
               template={selected}
               sheetImages={layout.images}
               samePdfImages={editingImage.pdfGroup
-                ? layout.images.filter((i) => i.pdfGroup === editingImage.pdfGroup)
+                ? layout.images.filter((i) => i.pdfGroup === editingImage.pdfGroup && i.pdfRole === editingImage.pdfRole)
                 : []}
               onSave={(updates) => layout.updateImage(editingImageId, updates)}
               onApplyAll={(entries) => {

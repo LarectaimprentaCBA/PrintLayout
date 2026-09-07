@@ -10,8 +10,20 @@ const path = require('node:path');
 // carpeta destino si no existe. Devuelve el path escrito. Lanza si falta el path.
 function writePdfSilent(filePath, bytes) {
   if (!filePath || typeof filePath !== 'string') throw new Error('path vacío');
+  const buf = Buffer.from(bytes);
+  // El derivado tiene que ser un PDF de verdad: si los bytes no arrancan con
+  // %PDF- algo salió mal al generarlo → no lo guardamos como entregado.
+  if (buf.length < 5 || buf.slice(0, 5).toString('latin1') !== '%PDF-') {
+    throw new Error('los bytes a guardar no son un PDF válido (falta %PDF-)');
+  }
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, Buffer.from(bytes));
+  fs.writeFileSync(filePath, buf);
+  // Verificar que quedó COMPLETO en disco: una escritura truncada (disco lleno)
+  // dejaría un PDF corrupto que se daría por entregado y borraría el original.
+  const st = fs.statSync(filePath);
+  if (st.size !== buf.length) {
+    throw new Error(`PDF guardado incompleto: ${st.size} de ${buf.length} bytes`);
+  }
   return filePath;
 }
 

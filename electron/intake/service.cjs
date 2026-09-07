@@ -419,23 +419,32 @@ async function retentionSweep(cfgArg) {
   const canBucket = !!(c.supabaseUrl && c.serviceKey);
   const ledger = retention.load();
   if (ledger.length) {
-    const keep = [];
+    const deleted = new Set(); // `${kind}:${id}` de los que se borraron OK
     let borrados = 0;
     for (const e of ledger) {
-      if ((Number(e.processedAt) || 0) > cutoff) { keep.push(e); continue; }
-      if (!canBucket) { keep.push(e); continue; }
+      if ((Number(e.processedAt) || 0) > cutoff) continue; // todavía en la ventana de gracia
+      if (!canBucket) continue;
       try {
         if (e.paths && e.paths.length) {
           if (e.kind === 'dobble') await supabase.removeDobbleObjects(c, e.paths);
           else await supabase.removeObjects(c, e.paths);
         }
+        deleted.add(`${e.kind}:${e.id}`);
         borrados += 1;
       } catch (err) {
         log(`Retención: no se pudo borrar del bucket el pedido ${e.numero || e.id}: ${err.message}. Se reintenta.`, 'warn');
-        keep.push(e); // reintentar en el próximo barrido
+        // No se borró → no lo marcamos borrado → queda en el ledger para reintentar.
       }
     }
-    if (keep.length !== ledger.length) retention.save(keep);
+    if (deleted.size) {
+      // Re-leer el ledger: durante los `await` de arriba un orderBuilt pudo
+      // ENCOLAR un pedido nuevo (load+push+save). Si guardáramos la lista vieja
+      // filtrada, pisaríamos esa entrada nueva y ese pedido nunca se limpiaría.
+      // Releemos y sacamos SOLO las entradas que efectivamente borramos.
+      const fresh = retention.load();
+      const next = fresh.filter((e) => !deleted.has(`${e.kind}:${e.id}`));
+      retention.save(next);
+    }
     if (borrados > 0) {
       log(`Retención: ${borrados} pedido(s) borrado(s) del bucket (procesados hace > ${days} día/s).`);
     }

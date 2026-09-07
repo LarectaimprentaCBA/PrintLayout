@@ -74,6 +74,11 @@ export async function buildOrderJobs(order, { templates, readFileBytes }) {
   const items = Array.isArray(order?.items) ? order.items : [];
   const specs = [];
   const skipped = [];
+  // Nombres ya usados EN ESTE pedido: garantizan que dos grupos distintos con la
+  // misma etiqueta (o ambos sin etiqueta → 'tamaño') no generen el mismo nombre
+  // de archivo (el segundo pisaría al primero → fotos perdidas). Sufijamos (2),
+  // (3)… al repetido. La red de seguridad de App.jsx queda como último recurso.
+  const usedNames = new Set();
 
   // Agrupar ítems por plantilla IDÉNTICA. Dos líneas del carrito del mismo
   // preset (o del mismo custom wmm×hmm) se resuelven como UN solo spec con
@@ -245,7 +250,13 @@ export async function buildOrderJobs(order, { templates, readFileBytes }) {
     while (assignmentsFront.length % cpp !== 0) assignmentsFront.push(null);
     const minPages = Math.max(1, Math.ceil(assignmentsFront.length / cpp));
 
-    const name = multi ? `P-${num}-fotos ${sizeLabel}` : `P-${num}-fotos`;
+    let name = multi ? `P-${num}-fotos ${sizeLabel}` : `P-${num}-fotos`;
+    if (usedNames.has(name)) {
+      let n = 2;
+      while (usedNames.has(`${name} (${n})`)) n += 1;
+      name = `${name} (${n})`;
+    }
+    usedNames.add(name);
     specs.push({
       name,
       sizeLabel,
