@@ -41,11 +41,14 @@ function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
 }
 
-export default function ImageCropModal({ open, image, onApply, onApplyAll, sheetImages = [], onClose }) {
+export default function ImageCropModal({ open, image, onApply, onApplyAll, sheetImages = [], samePdfImages = [], onClose }) {
   const W = image?.width ?? 0;
   const H = image?.height ?? 0;
   // Cantidad de imagenes en la hoja (para "aplicar a todas"). Incluye la actual.
   const sheetCount = Array.isArray(sheetImages) ? sheetImages.length : 0;
+  // Imagenes del MISMO PDF que la actual (para "aplicar a este PDF"). Puede
+  // abarcar varias hojas. Incluye la actual.
+  const pdfCount = Array.isArray(samePdfImages) ? samePdfImages.length : 0;
 
   const [mode, setMode] = useState('rect'); // 'rect' | 'circle' | 'poly' | 'contour'
   const [rect, setRect] = useState(null); // {x,y,w,h} en px de la imagen
@@ -539,7 +542,7 @@ export default function ImageCropModal({ open, image, onApply, onApplyAll, sheet
   // expresa en coordenadas normalizadas (fracciones del ancho/alto) para que
   // caiga en la MISMA region relativa en cada imagen — pensado para lotes de
   // imagenes iguales (ej. 20 etiquetas del mismo posado, cambia el sabor).
-  async function handleApplyAll() {
+  async function handleApplyAll(targetsArg) {
     if (!image || busy) return;
     // Receta normalizada del recorte actual.
     let recipe;
@@ -572,7 +575,9 @@ export default function ImageCropModal({ open, image, onApply, onApplyAll, sheet
       recipe = { mode: 'poly', pts: poly.map((p) => ({ nx: p.x / W, ny: p.y / H })) };
     }
 
-    const targets = sheetCount > 0 ? sheetImages : [image];
+    const targets = Array.isArray(targetsArg) && targetsArg.length
+      ? targetsArg
+      : (sheetCount > 0 ? sheetImages : [image]);
     setBusy(true);
     setError(null);
     setBulkProgress({ done: 0, total: targets.length });
@@ -1171,13 +1176,24 @@ export default function ImageCropModal({ open, image, onApply, onApplyAll, sheet
             >
               Cancelar
             </button>
+            {onApplyAll && pdfCount > 1 && pdfCount < sheetCount && (
+              <button
+                type="button"
+                onClick={() => handleApplyAll(samePdfImages)}
+                disabled={busy || (mode === 'poly' && (!polyClosed || poly.length < 3))}
+                className="rounded border border-amber-500 bg-amber-500/15 px-4 py-1.5 font-medium text-amber-200 hover:bg-amber-500/25 disabled:opacity-50"
+                title={`Aplica este mismo recorte SOLO a las ${pdfCount} imágenes de este PDF (aunque estén en varias hojas). Se puede deshacer con Ctrl+Z.`}
+              >
+                {busy ? 'Procesando…' : `Aplicar a este PDF (${pdfCount})`}
+              </button>
+            )}
             {onApplyAll && sheetCount > 1 && (
               <button
                 type="button"
-                onClick={handleApplyAll}
+                onClick={() => handleApplyAll(sheetImages)}
                 disabled={busy || (mode === 'poly' && (!polyClosed || poly.length < 3))}
                 className="rounded border border-accent-500 bg-accent-500/15 px-4 py-1.5 font-medium text-accent-200 hover:bg-accent-500/25 disabled:opacity-50"
-                title={`Aplica este mismo recorte a las ${sheetCount} imágenes de la hoja. Se puede deshacer con Ctrl+Z.`}
+                title={`Aplica este mismo recorte a TODAS las ${sheetCount} imágenes de la hoja/documento. Se puede deshacer con Ctrl+Z.`}
               >
                 {busy ? 'Procesando…' : `Aplicar a todas (${sheetCount})`}
               </button>

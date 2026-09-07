@@ -18,11 +18,14 @@ export default function ImageEditorModal({
   onSave,
   onApplyAll,
   sheetImages = [],
+  samePdfImages = [],
   onClose,
   onTemplateSafetyChange,
 }) {
   // Cantidad de imagenes en la hoja (para "aplicar a todas"). Incluye la actual.
   const sheetCount = Array.isArray(sheetImages) ? sheetImages.length : 0;
+  // Imagenes del MISMO PDF (para "aplicar a este PDF"; puede abarcar varias hojas).
+  const pdfCount = Array.isArray(samePdfImages) ? samePdfImages.length : 0;
   // Tamano declarado y target en mm (strings para inputs).
   const [actualW, setActualW] = useState('');
   const [actualH, setActualH] = useState('');
@@ -287,9 +290,11 @@ export default function ImageEditorModal({
   // Aplica la MISMA edicion (metodo de relleno + tamanos + posicion) a todas
   // las imagenes de la hoja. Pensado para lotes iguales (ej. 20 etiquetas del
   // mismo posado): dialas el sangrado en una y se replica identico en todas.
-  const applyAll = async () => {
+  const applyAll = async (targetsArg) => {
     if (aw <= 0 || ah <= 0 || tw <= 0 || th <= 0) return;
-    const targets = sheetCount > 0 ? sheetImages : [image];
+    const targets = Array.isArray(targetsArg) && targetsArg.length
+      ? targetsArg
+      : (sheetCount > 0 ? sheetImages : [image]);
     setBusy(true);
     setBulkProgress({ done: 0, total: targets.length });
     try {
@@ -1353,12 +1358,22 @@ export default function ImageEditorModal({
             >
               Cancelar
             </button>
+            {onApplyAll && pdfCount > 1 && pdfCount < sheetCount && (
+              <button
+                onClick={() => applyAll(samePdfImages)}
+                disabled={busy}
+                className="rounded border border-amber-500 bg-amber-500/15 px-3 py-1 text-xs font-medium text-amber-200 hover:bg-amber-500/25 disabled:opacity-50"
+                title={`Aplica esta misma edición SOLO a las ${pdfCount} imágenes de este PDF (aunque estén en varias hojas). Se puede deshacer con Ctrl+Z.`}
+              >
+                {busy ? 'Procesando…' : `Aplicar a este PDF (${pdfCount})`}
+              </button>
+            )}
             {onApplyAll && sheetCount > 1 && (
               <button
-                onClick={applyAll}
+                onClick={() => applyAll(sheetImages)}
                 disabled={busy}
                 className="rounded border border-accent-500 bg-accent-500/15 px-3 py-1 text-xs font-medium text-accent-200 hover:bg-accent-500/25 disabled:opacity-50"
-                title={`Aplica esta misma edición a las ${sheetCount} imágenes de la hoja. Se puede deshacer con Ctrl+Z.`}
+                title={`Aplica esta misma edición a TODAS las ${sheetCount} imágenes de la hoja/documento. Se puede deshacer con Ctrl+Z.`}
               >
                 {busy ? 'Procesando…' : `Aplicar a todas (${sheetCount})`}
               </button>

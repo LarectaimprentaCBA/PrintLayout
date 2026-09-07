@@ -1882,12 +1882,15 @@ export default function App() {
         else setCountPackFiles(packFiles);
         return;
       }
+      // Grupo de este PDF: permite "aplicar a todas las de este PDF" al editar.
+      const pdfGroup = `pdf:${(ctx.fileName || 'pdf')}:${Date.now()}`;
       const loaded = [];
       for (const item of filesWithMeta) {
         try {
           const img = await readImageFile(item.file, {
             physicalSizeMmOverride: item.placementMm,
           });
+          img.pdfGroup = pdfGroup;
           loaded.push(img);
         } catch (err) {
           console.warn('No se pudo cargar imagen extraida:', err);
@@ -1960,13 +1963,16 @@ export default function App() {
     setToast({ kind: 'info', text: 'Posando frente y dorso…' });
     try {
       const baseName = (ctx.fileName || 'pdf').replace(/\.pdf$/i, '');
+      // Grupo de este PDF: permite "aplicar a todas las de este PDF" al editar
+      // (aunque el PDF ocupe varias hojas).
+      const pdfGroup = `pdf:${(ctx.fileName || 'pdf')}:${Date.now()}`;
       // Cargar cada pieza única (frentes + dorsos) UNA vez → objeto imagen.
       const imgByXref = new Map();
       const ensureLoaded = async (piece, label) => {
         if (!piece) return null;
         if (imgByXref.has(piece.xref)) return imgByXref.get(piece.xref);
         const img = await pieceToImage(piece, label);
-        if (img) imgByXref.set(piece.xref, img);
+        if (img) { img.pdfGroup = pdfGroup; imgByXref.set(piece.xref, img); }
         return img;
       };
       let counter = 1;
@@ -4939,6 +4945,9 @@ export default function App() {
               open
               image={croppingImage}
               sheetImages={layout.images}
+              samePdfImages={croppingImage.pdfGroup
+                ? layout.images.filter((i) => i.pdfGroup === croppingImage.pdfGroup)
+                : []}
               onApply={(updates) => layout.updateImage(croppingImageId, updates)}
               onApplyAll={(entries) => {
                 layout.updateImages(entries);
@@ -4963,6 +4972,9 @@ export default function App() {
               image={editingImage}
               template={selected}
               sheetImages={layout.images}
+              samePdfImages={editingImage.pdfGroup
+                ? layout.images.filter((i) => i.pdfGroup === editingImage.pdfGroup)
+                : []}
               onSave={(updates) => layout.updateImage(editingImageId, updates)}
               onApplyAll={(entries) => {
                 layout.updateImages(entries);
