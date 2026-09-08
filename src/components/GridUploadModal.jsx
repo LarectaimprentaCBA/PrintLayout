@@ -266,6 +266,10 @@ export default function GridUploadModal({
                     </div>
                   )}
                 </>
+              ) : result?.overflow ? (
+                <span className="text-amber-400">
+                  Tama&ntilde;o demasiado chico (m&aacute;s de 5000 piezas). Aument&aacute; el tama&ntilde;o.
+                </span>
               ) : (
                 <span className="text-red-300">
                   No entra ninguna celda con esos valores.

@@ -34,6 +34,15 @@ export function computeGrid({
   if (cols === 0 || rows === 0) {
     return { cells: [], cols, rows };
   }
+  // Tope de seguridad: mientras se TIPEA el tamaño, un valor chico transitorio
+  // (ej. "1" antes de "15") daría decenas de miles de celdas; armarlas y dibujar
+  // sus cortes (los círculos son 65 puntos c/u) CONGELA la app. Si la cantidad es
+  // absurda, no armamos nada y devolvemos overflow para que la UI avise en vez de
+  // trabarse. 5000 celdas es muchísimo más que cualquier trabajo real.
+  const MAX_CELLS = 5000;
+  if (cols * rows > MAX_CELLS) {
+    return { cells: [], cols, rows, overflow: true };
+  }
   // Centrar la grilla horizontalmente y verticalmente sobre el area util.
   const totalGridW = cols * cellW + (cols - 1) * spacingX;
   const totalGridH = rows * cellH + (rows - 1) * spacingY;
