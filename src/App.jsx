@@ -3870,14 +3870,25 @@ export default function App() {
   // cortes distintos por página (cortesPorPagina), guarda uno por hoja con su
   // nombre (base, base-h2, base-h3…) para que cada QR impreso pida el suyo. Si el
   // corte es único (una hoja o el mismo en todas), guarda un solo <cutId>.plt.
-  // Ajusta el corte al PAPEL REAL cuando hay HOJA distinta (customPaper). La
-  // impresión CENTRA el diseño de la plantilla en el papel real; el corte tiene
-  // que ir con ESE tamaño de papel y con los cortes trasladados por el mismo
-  // centrado. Si no, el plotter usa el tamaño de la plantilla (más grande) y
-  // "espera la hoja grande" / corta corrido. Sin customPaper = sin cambios.
+  // Ajusta el corte al PAPEL REAL cuando hay HOJA distinta (customPaper) — PERO
+  // SOLO si las marcas de registro las DIBUJA LA APP (grilla rápida, sin PDF de
+  // fondo). En ese caso las marcas van al borde del papel real, así que el corte
+  // tiene que ir con ESE tamaño de papel y con los cortes trasladados por el
+  // mismo centrado (si no, el plotter "espera la hoja grande" / corta corrido).
+  //
+  // Cuando el corte y las marcas VIENEN DENTRO DEL PDF (plantillas importadas,
+  // ej. tarjetas doble faz que ya traen su corte): las marcas están pegadas al
+  // diseño y se mueven CON él al centrarlo → el plotter las lee ópticamente y la
+  // relación corte↔marcas NO cambia. Ahí el corte NO se toca (cambiar la Hoja
+  // solo centra el diseño para el registro doble faz). Tocarlo desfasa el corte.
+  // Sin customPaper = sin cambios en ambos casos.
   const cutForSheet = (cortes) => {
     const tW = selected.pageWidthMm;
     const tH = selected.pageHeightMm;
+    // Marcas embebidas en el PDF de fondo → corte intacto (registro óptico).
+    if (selected.pdfBase64) {
+      return { cortes, pageWidthMm: tW, pageHeightMm: tH };
+    }
     const cW = customPaper?.widthMm ?? tW;
     const cH = customPaper?.heightMm ?? tH;
     if (!(cW > 0) || !(cH > 0) || (Math.abs(cW - tW) < 0.001 && Math.abs(cH - tH) < 0.001)) {

@@ -115,6 +115,28 @@ export default function LayoutCanvas({
     return { cells, xLeftMm, yTopMm, sizeMm, moduleMm };
   }, [qr?.text, qr?.sizeMm, qr?.bottomMm, qr?.centered, face, template?.pageWidthMm, template?.pageHeightMm]);
 
+  // Marcas de registro para la vista previa. SOLO cuando las DIBUJA LA APP
+  // (grilla rápida / auto-pack, sin PDF de fondo): en las plantillas importadas
+  // las marcas ya vienen embebidas en el PDF de fondo y se ven solas, así que no
+  // las duplicamos. Mismas posiciones que la impresión (drawRegistrationMarks):
+  // a markMarginMm de cada borde, círculos Ø5mm (o L de 10mm). Solo en el frente.
+  const marksPreview = useMemo(() => {
+    if (!template || face === 'back' || template.pdfBase64) return null;
+    const m = Number(template.markMarginMm);
+    if (!(m > 0)) return null;
+    const cortes = cutsForPage(template, currentPage ?? 0);
+    if (!cortes.length) return null;
+    const W = template.pageWidthMm;
+    const H = template.pageHeightMm;
+    const left = m; const right = W - m; const top = m; const bottom = H - m;
+    if (right <= left || bottom <= top) return null;
+    return {
+      type: template.markType === 'L' ? 'L' : 'circle',
+      corners: [[left, top], [right, top], [left, bottom], [right, bottom]],
+      W, H,
+    };
+  }, [template?.pdfBase64, template?.markMarginMm, template?.markType, template?.pageWidthMm, template?.pageHeightMm, template?.cortes, template?.cortesPorPagina, face, currentPage]);
+
   // Zona segura: cada polígono de corte "achicado" hacia adentro por safetyMm
   // (mismo margen que muestra el editor de imágenes). Usamos el motor Clipper que
   // ya usa la app para contornos, así funciona con cualquier forma (rect, círculo,
@@ -450,6 +472,36 @@ export default function LayoutCanvas({
                     vectorEffect="non-scaling-stroke"
                   />
                 ))}
+              </svg>
+            )}
+            {marksPreview && (
+              <svg
+                viewBox={`0 0 ${marksPreview.W} ${marksPreview.H}`}
+                preserveAspectRatio="none"
+                className="pointer-events-none absolute inset-0 z-20 h-full w-full"
+              >
+                {marksPreview.type === 'circle' ? (
+                  <>
+                    {marksPreview.corners.map(([x, y], i) => (
+                      <circle key={`g${i}`} cx={x} cy={y} r={4.5} fill="#ffffff" />
+                    ))}
+                    {marksPreview.corners.map(([x, y], i) => (
+                      <circle key={`b${i}`} cx={x} cy={y} r={2.5} fill="#000000" />
+                    ))}
+                  </>
+                ) : (
+                  marksPreview.corners.map(([x, y], i) => {
+                    const arm = 10;
+                    const sx = x < marksPreview.W / 2 ? 1 : -1;
+                    const sy = y < marksPreview.H / 2 ? 1 : -1;
+                    return (
+                      <g key={i}>
+                        <line x1={x} y1={y} x2={x + sx * arm} y2={y} stroke="#000000" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+                        <line x1={x} y1={y} x2={x} y2={y + sy * arm} stroke="#000000" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+                      </g>
+                    );
+                  })
+                )}
               </svg>
             )}
             {qrPreview && (
