@@ -15,6 +15,7 @@ export default function ImageEditorModal({
   open,
   image,
   template,
+  cell = null,
   onSave,
   onApplyAll,
   sheetImages = [],
@@ -95,8 +96,10 @@ export default function ImageEditorModal({
     return () => ro.disconnect();
   }, [open]);
 
-  // Datos derivados de la plantilla.
-  const refCell = template?.celdas?.[0] ?? null;
+  // Datos derivados de la plantilla. En medidas múltiples el casillero real donde
+  // cae la imagen (`cell`) tiene tamaño propio → se usa ese; si no viene, cae a la
+  // primera celda (plantillas homogéneas, comportamiento de siempre).
+  const refCell = cell ?? template?.celdas?.[0] ?? null;
   const homogeneous = useMemo(() => cellsHomogeneous(template), [template]);
   const cutRect = refCell ? cutRectForCell(template, refCell) : null;
   const bleedSides = refCell ? bleedMmForCell(template, refCell) : null;

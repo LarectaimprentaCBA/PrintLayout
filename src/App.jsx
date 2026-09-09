@@ -72,6 +72,7 @@ import {
   cellsCountOnPage,
   pageStartOffset,
   findCellPageInfo,
+  cellForFlatIndex,
   backMirrorAxis,
   backRotate180,
   cutsForPage,
@@ -502,6 +503,10 @@ export default function App() {
   const [poseFrontBackOpen, setPoseFrontBackOpen] = useState(false);
   // Imagen abierta en el editor.
   const [editingImageId, setEditingImageId] = useState(null);
+  // Índice de celda (flat) desde donde se abrió el editor, para mostrar el
+  // casillero REAL en medidas múltiples. null = se abrió desde el panel (sin
+  // celda) → se busca la primera celda donde está asignada la imagen.
+  const [editingCellIdx, setEditingCellIdx] = useState(null);
   // Imagen abierta en el modal de recorte manual.
   const [croppingImageId, setCroppingImageId] = useState(null);
   // Extraccion de imagenes desde PDF.
@@ -4412,8 +4417,11 @@ export default function App() {
               layout.setSelectedCell(null);
             }}
             onCellClick={handleCellClick}
-            onCellContextMenu={(_cellIdx, img) => {
-              if (img?.id) setEditingImageId(img.id);
+            onCellContextMenu={(cellIdx, img) => {
+              if (img?.id) {
+                setEditingCellIdx(Number.isInteger(cellIdx) ? cellIdx : null);
+                setEditingImageId(img.id);
+              }
             }}
             onSetFocalPoint={(imageId, fp) => layout.updateImage(imageId, { focalPoint: fp })}
             onUploadPdfClick={() => blankPdfInputRef.current?.click()}
@@ -4490,7 +4498,7 @@ export default function App() {
             }}
             onAutoZoom={handleAutoZoom}
             onRotate={handleRotate}
-            onEditImage={(imageId) => setEditingImageId(imageId)}
+            onEditImage={(imageId) => { setEditingCellIdx(null); setEditingImageId(imageId); }}
             onCropImage={(imageId) => setCroppingImageId(imageId)}
             onDownloadImage={handleDownloadImage}
             onCycleFit={(imageId, value) =>
@@ -5010,11 +5018,32 @@ export default function App() {
             ? layout.imageMap.get(editingImageId)
             : null;
           if (!editingImage) return null;
+          // Casillero REAL donde cae la imagen (clave en medidas múltiples: cada
+          // celda tiene tamaño distinto). Si se abrió desde una celda del canvas,
+          // usamos ese índice (cara visible); si se abrió desde el panel, buscamos
+          // la primera celda donde está asignada (frente y si no, dorso).
+          let editingCell = null;
+          if (selected) {
+            let flatIdx = editingCellIdx;
+            let faceUsed = viewingFace === 'back' ? 'back' : 'front';
+            if (!Number.isInteger(flatIdx)) {
+              const fIdx = (layout.assignmentsFront || []).findIndex((id) => id === editingImageId);
+              if (fIdx >= 0) { flatIdx = fIdx; faceUsed = 'front'; }
+              else {
+                const bIdx = (layout.assignmentsBack || []).findIndex((id) => id === editingImageId);
+                if (bIdx >= 0) { flatIdx = bIdx; faceUsed = 'back'; }
+              }
+            }
+            if (Number.isInteger(flatIdx) && flatIdx >= 0) {
+              editingCell = cellForFlatIndex(selected, flatIdx, faceUsed);
+            }
+          }
           return (
             <ImageEditorModal
               open
               image={editingImage}
               template={selected}
+              cell={editingCell}
               sheetImages={layout.images}
               samePdfImages={editingImage.pdfGroup
                 ? layout.images.filter((i) => i.pdfGroup === editingImage.pdfGroup && i.pdfRole === editingImage.pdfRole)
@@ -5027,7 +5056,7 @@ export default function App() {
                   text: `Edición aplicada a ${entries.length} ${entries.length === 1 ? 'imagen' : 'imágenes'}. (Ctrl+Z para deshacer)`,
                 });
               }}
-              onClose={() => setEditingImageId(null)}
+              onClose={() => { setEditingImageId(null); setEditingCellIdx(null); }}
               onTemplateSafetyChange={async (mm) => {
                 if (!selected || selected.temporal) return;
                 if (Math.abs((selected.safetyMm ?? 3) - mm) < 0.01) return;

@@ -114,6 +114,19 @@ export function findCellPageInfo(template, flatIdx, face = 'front') {
   };
 }
 
+// Dado un indice flat en assignments, devuelve el OBJETO celda (x/y/w/h/shape)
+// donde cae esa imagen. Clave en plantillas de MEDIDAS MULTIPLES: cada celda
+// tiene tamano distinto, asi el editor puede mostrar el casillero REAL y no la
+// primera celda. Devuelve null si el indice no cae en ninguna celda.
+export function cellForFlatIndex(template, flatIdx, face = 'front') {
+  if (!template || !(flatIdx >= 0)) return null;
+  const { page, localIdx } = findCellPageInfo(template, flatIdx, face);
+  const cells = isMultiPage(template)
+    ? cellsForPage(template, page, face)
+    : cellPositions(template, face);
+  return cells[localIdx] ?? null;
+}
+
 export function hasCuts(template) {
   return Array.isArray(template?.cortes) && template.cortes.length > 0;
 }
