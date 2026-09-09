@@ -73,6 +73,7 @@ import {
   pageStartOffset,
   findCellPageInfo,
   cellForFlatIndex,
+  cellsHomogeneous,
   backMirrorAxis,
   backRotate180,
   cutsForPage,
@@ -3503,7 +3504,12 @@ export default function App() {
       return;
     }
     const target = templateOrientation(selected);
-    if (target === 'square' || target === null) {
+    // El auto-rotado alinea la imagen a la orientación de la plantilla, pero eso
+    // SOLO tiene sentido si TODAS las celdas tienen la misma orientación. En
+    // "medidas múltiples" (celdas verticales Y horizontales mezcladas) no hay una
+    // orientación única: rotar hacia una deja la imagen dada vuelta en las celdas
+    // de la otra. Ahí NO rotamos: la imagen entra tal cual y el usuario la ubica.
+    if (target === 'square' || target === null || !cellsHomogeneous(selected)) {
       layout.addImages(loadedImages);
       return;
     }
