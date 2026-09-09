@@ -6,6 +6,8 @@ import {
   fixedPageCount,
   safetyMm,
   cutsForPage,
+  hasMixedOrientations,
+  cellNeedsRotation,
 } from '../lib/templates.js';
 import { offsetPolygons } from '../lib/contour/offset.js';
 import { coverObjectPosition, coverCropRect, focalPoint } from '../lib/faceDetection.js';
@@ -299,6 +301,9 @@ export default function LayoutCanvas({
   const cells = isMultiPage
     ? cellsForPage(template, currentPage ?? 0, face)
     : cellPositions(template, face);
+  // Plantillas de orientaciones mezcladas: la misma imagen se muestra girada 90°
+  // en los casilleros de la orientación opuesta (igual que la impresión).
+  const mixedOrientations = hasMixedOrientations(template);
   const sheetW = template.pageWidthMm * PX_PER_MM_AT_100 * scale;
   const sheetH = template.pageHeightMm * PX_PER_MM_AT_100 * scale;
   const pageOffset = isMultiPage
@@ -396,6 +401,9 @@ export default function LayoutCanvas({
                     cellHmm={cell.h}
                     cutMarginMm={template.cutMarginMm ?? 0}
                     cellNumber={template.doubleSided ? globalIdx + 1 : null}
+                    rotate90={cellNeedsRotation(cell, img, mixedOrientations)}
+                    cellWpx={w}
+                    cellHpx={h}
                   />
                   {showContourPreview && (
                     <ContourTolerancePreview

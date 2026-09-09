@@ -17,6 +17,9 @@ export default function CellSlot({
   whiteBorderPx = 0,
   borderLinePx = 0,
   borderLineColor = '#000000',
+  rotate90 = false,
+  cellWpx = 0,
+  cellHpx = 0,
 }) {
   const draggable = useDraggable({
     id: `cell:${cellIdx}`,
@@ -107,13 +110,31 @@ export default function CellSlot({
       {...draggable.attributes}
     >
       {image ? (
-        <img
-          src={image.dataUrl}
-          alt={image.name}
-          draggable={false}
-          className={imgClass}
-          style={imgStyle}
-        />
+        rotate90 ? (
+          // Casillero de orientación opuesta a la imagen: la mostramos girada 90°
+          // (CW, igual que la impresión). Caja con dimensiones INTERCAMBIADAS para
+          // que, al rotar, el cover llene exactamente el casillero. Centrada.
+          <img
+            src={image.dataUrl}
+            alt={image.name}
+            draggable={false}
+            className="pointer-events-none absolute left-1/2 top-1/2 max-w-none"
+            style={{
+              width: Math.max(0, cellHpx - 2 * whiteBorderPx),
+              height: Math.max(0, cellWpx - 2 * whiteBorderPx),
+              objectFit: isCover ? 'cover' : 'contain',
+              transform: 'translate(-50%, -50%) rotate(90deg)',
+            }}
+          />
+        ) : (
+          <img
+            src={image.dataUrl}
+            alt={image.name}
+            draggable={false}
+            className={imgClass}
+            style={imgStyle}
+          />
+        )
       ) : (
         <span className="pointer-events-none text-2xl font-light">+</span>
       )}

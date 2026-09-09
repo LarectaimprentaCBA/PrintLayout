@@ -372,6 +372,42 @@ export function cellsHomogeneous(template) {
   );
 }
 
+// ¿La plantilla tiene celdas de orientaciones MEZCLADAS (al menos una vertical
+// y una horizontal)? Es el caso "medidas múltiples" donde la MISMA imagen tiene
+// que poder llenar bien tanto un casillero vertical como uno horizontal.
+export function hasMixedOrientations(template) {
+  if (!template) return false;
+  const cells = [];
+  if (isMultiPage(template)) {
+    for (const p of (template.pages || [])) for (const c of (p.celdas || [])) cells.push(c);
+  } else {
+    for (const c of (template.celdas || [])) cells.push(c);
+  }
+  let hasP = false;
+  let hasL = false;
+  for (const c of cells) {
+    if (c.w > c.h + 0.1) hasL = true;
+    else if (c.h > c.w + 0.1) hasP = true;
+    if (hasP && hasL) return true;
+  }
+  return false;
+}
+
+// ¿Se debe rotar 90° la imagen en ESTE casillero? Solo cuando la plantilla tiene
+// orientaciones mezcladas (`mixed`): así la misma imagen entra derecha en el
+// casillero de su orientación y girada 90° en el de la orientación opuesta. El
+// usuario elige la orientación BASE con el botón "girar" de la imagen; la app
+// deriva la rotación de los casilleros opuestos. Ambas orientaciones deben ser
+// no-cuadradas para que la rotación tenga sentido.
+export function cellNeedsRotation(cell, image, mixed) {
+  if (!mixed || !cell || !image) return false;
+  const co = cell.w > cell.h + 0.1 ? 'l' : (cell.h > cell.w + 0.1 ? 'p' : 's');
+  const iw = Number(image.width) || 0;
+  const ih = Number(image.height) || 0;
+  const io = iw > ih ? 'l' : (ih > iw ? 'p' : 's');
+  return co !== 's' && io !== 's' && co !== io;
+}
+
 // Para mostrar en la sidebar, agrupamos celdas en filas para describir la
 // distribución sin pretender que sea una grilla regular.
 export function describeCells(template) {

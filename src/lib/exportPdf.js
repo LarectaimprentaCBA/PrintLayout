@@ -7,9 +7,12 @@ import {
   fixedPageCount,
   backRotate180,
   cutIdForPage,
+  hasMixedOrientations,
+  cellNeedsRotation,
 } from './templates.js';
 import { coverCropRect, coverObjectPosition } from './faceDetection.js';
 import { cropImageDataUrl } from './imageCrop.js';
+import { rotateImageDataUrl90CW } from './imageRotate.js';
 import { renderPdfBytesToImages } from './pdfPreview.js';
 
 const MM_TO_PT = 72 / 25.4;
@@ -246,6 +249,26 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
   const rotate180 = options.rotateContent180 === true;
   const { imageMap, embedCache } = ctx;
 
+  // Plantillas de orientaciones MEZCLADAS: la misma imagen se rota 90° en los
+  // casilleros de la orientación opuesta (ver cellNeedsRotation). Rotamos el
+  // BITMAP una vez por imagen (cacheado) y lo recortamos/dibujamos normal — así
+  // el print sale exacto sin transformaciones de rotación en el PDF.
+  const mixedOrientations = hasMixedOrientations(template);
+  if (!ctx.rotCache) ctx.rotCache = new Map();
+  async function rotatedVariant(image) {
+    if (ctx.rotCache.has(image.id)) return ctx.rotCache.get(image.id);
+    let variant = image;
+    try {
+      const r = await rotateImageDataUrl90CW(image.dataUrl);
+      variant = {
+        ...image, id: `${image.id}:r90`, dataUrl: r.dataUrl,
+        width: r.width, height: r.height, mime: 'image/png', focalPoint: null,
+      };
+    } catch (_) { variant = image; }
+    ctx.rotCache.set(image.id, variant);
+    return variant;
+  }
+
   const templateWpt = template.pageWidthMm * MM_TO_PT;
   const templateHpt = template.pageHeightMm * MM_TO_PT;
   const pageW = paperWmm * MM_TO_PT;
@@ -395,6 +418,11 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
       const baseX = cellXpt + bPt;
       const baseYBottom = cellBottomYpt + bPt;
       const cellFitMode = image.fitOverride ?? layoutFitMode;
+      // Casillero de orientación opuesta a la imagen (medidas mezcladas): usamos
+      // la imagen ya rotada 90° para que llene bien; el recorte/dibujo sigue igual.
+      const drawImageObj = cellNeedsRotation(cell, image, mixedOrientations)
+        ? await rotatedVariant(image)
+        : image;
 
       // Fondo blanco del marco: cubre la celda entera (incluido un eventual
       // fondo de PDF) para que el borde quede blanco de verdad.
@@ -409,7 +437,7 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
       }
 
       if (cellFitMode === 'cover') {
-        const embedded = await embedCoverCrop(image, innerWmm, innerHmm);
+        const embedded = await embedCoverCrop(drawImageObj, innerWmm, innerHmm);
         // Al rotar 180° el ancla (x,y) de pdf-lib queda en la esquina opuesta,
         // por eso desplazamos al vertice superior-derecho del rectangulo.
         page.drawImage(embedded, {
@@ -420,7 +448,7 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
           rotate: rotate180 ? degrees(180) : undefined,
         });
       } else {
-        const embedded = await embedFull(image);
+        const embedded = await embedFull(drawImageObj);
         const { drawW, drawH, dx, dy } = fitContain(
           innerWpt,
           innerHpt,
