@@ -95,6 +95,24 @@ export function packMultiSizePieces({
   }
 
   const pageCount = pages.length;
+
+  // Centrar el bloque de casilleros en el ÁREA ÚTIL de cada hoja. El shelf
+  // packing los deja pegados a la esquina superior-izquierda; acá corremos todo
+  // el conjunto para que quede centrado (horizontal y vertical), respetando
+  // márgenes y las franjas reservadas del QR (yTop/yBottom). Se hace por hoja.
+  for (let p = 0; p < pageCount; p++) {
+    const pc = cells.filter((c) => c.page === p);
+    if (!pc.length) continue;
+    let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
+    for (const c of pc) {
+      minX = Math.min(minX, c.x); minY = Math.min(minY, c.y);
+      maxX = Math.max(maxX, c.x + c.w); maxY = Math.max(maxY, c.y + c.h);
+    }
+    const dx = (marginX + (innerW - (maxX - minX)) / 2) - minX;
+    const dy = (yTop + (innerH - (maxY - minY)) / 2) - minY;
+    for (const c of pc) { c.x += dx; c.y += dy; }
+  }
+
   const skipped = pieces.length - cells.length;
   const pagesCells = [];
   for (let p = 0; p < pageCount; p++) {
