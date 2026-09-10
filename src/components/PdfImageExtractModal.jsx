@@ -320,7 +320,23 @@ export default function PdfImageExtractModal({
                         : 'border-ink-700 bg-ink-800/40 hover:border-ink-600'
                     }`}
                   >
-                    <div className="flex aspect-square items-center justify-center bg-ink-950 p-2">
+                    <div
+                      className="flex items-center justify-center p-2"
+                      style={{
+                        // Proporción REAL de la pieza → la imagen llena el recuadro sin
+                        // aire raro (se ve "centrada" y completa), tanto vertical como
+                        // horizontal. Tope de alto para que una pieza muy alargada no
+                        // domine la grilla. Fondo damero claro para ver bordes blancos
+                        // y transparencia (así se juzga si sale bien).
+                        aspectRatio: img.width && img.height ? `${img.width} / ${img.height}` : '1 / 1',
+                        maxHeight: 340,
+                        backgroundColor: '#e5e7eb',
+                        backgroundImage:
+                          'linear-gradient(45deg,#c3cad4 25%,transparent 25%),linear-gradient(-45deg,#c3cad4 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#c3cad4 75%),linear-gradient(-45deg,transparent 75%,#c3cad4 75%)',
+                        backgroundSize: '16px 16px',
+                        backgroundPosition: '0 0,0 8px,8px -8px,-8px 0',
+                      }}
+                    >
                       {img.thumbBase64 ? (
                         <img
                           src={`data:image/png;base64,${img.thumbBase64}`}
@@ -328,13 +344,15 @@ export default function PdfImageExtractModal({
                           className="max-h-full max-w-full object-contain"
                         />
                       ) : (
-                        <span className="text-xs text-ink-500">sin preview</span>
+                        <span className="text-xs text-ink-700">sin preview</span>
                       )}
                     </div>
                     <div className="border-t border-ink-700 p-2 text-[11px] text-ink-300">
                       <div className="flex items-center justify-between">
                         <span className="font-mono text-ink-400">
-                          {img.width}×{img.height}
+                          {img.placementMm?.w && img.placementMm?.h
+                            ? `${img.placementMm.w}×${img.placementMm.h} mm`
+                            : `${img.width}×${img.height}`}
                         </span>
                         <span className="text-ink-500">
                           {formatBytes(img.sizeBytes)}
