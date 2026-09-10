@@ -1038,6 +1038,7 @@ function ContourControls({ template, onUpdate, onApply, dirty, computing }) {
   const dTurd = template.contourTurdsize ?? 2;
   const dSmooth = normSimplifyMm(template.contourSmoothMm);
   const dOpt = template.contourOpttolerance ?? 0.2;
+  const dOuter = template.contourOuterBorder ?? true;
   const nCutPts = (template.cortes || []).reduce((a, c) => a + (c?.length || 0), 0);
 
   return (
@@ -1058,10 +1059,14 @@ function ContourControls({ template, onUpdate, onApply, dirty, computing }) {
       </CRow>
 
       <div className="pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-500">Toda la hoja</div>
+      <CCheck label="Cortar por el borde externo" checked={dOuter} onChange={(v) => onUpdate({ contourOuterBorder: v })} />
+      <p className="text-[10px] leading-snug text-ink-500">
+        Sigue el borde de afuera del diseño (el óvalo/línea que ya trae la imagen) e ignora el dibujo interno. Sangrado positivo = corta por afuera; negativo = por adentro. Apagalo para stickers con foto sin borde.
+      </p>
       <CRange label="Tolerancia fondo" value={dTol} min={0} max={128} step={1} onChange={(v) => onUpdate({ contourTolerance: v })} />
       <CNum label="Sangrado (vivo)" value={dBleed} step={0.1} min={-10} max={10} onChange={(v) => onUpdate({ contourBleedMm: v })} />
       <CRange label="Suavizado (vivo)" value={dSmooth} min={0} max={0.5} step={0.02} onChange={(v) => onUpdate({ contourSmoothMm: v })} />
-      <CCheck label="Cortar huecos internos" checked={dHoles} onChange={(v) => onUpdate({ contourIncludeHoles: v })} />
+      <CCheck label="Cortar huecos internos" checked={dHoles && !dOuter} disabled={dOuter} onChange={(v) => onUpdate({ contourIncludeHoles: v })} />
       <div className="flex items-center justify-between text-[10px] text-ink-500">
         <span>Puntos de corte</span>
         <span className="tabular-nums text-ink-300">{nCutPts}</span>
@@ -1149,11 +1154,11 @@ function CNum({ label, value, step, min, max, onChange }) {
     </div>
   );
 }
-function CCheck({ label, checked, onChange }) {
+function CCheck({ label, checked, onChange, disabled = false }) {
   return (
-    <label className="flex items-center justify-between gap-2">
+    <label className={`flex items-center justify-between gap-2 ${disabled ? 'opacity-40' : ''}`}>
       <span className="text-ink-400">{label}</span>
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="h-3.5 w-3.5 accent-accent-500" />
+      <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} className="h-3.5 w-3.5 accent-accent-500" />
     </label>
   );
 }

@@ -36,13 +36,18 @@ export async function computeStickerContour(fileOrBlob, {
   turdsize = 2,
   alphamax = 1.0,
   opttolerance = 0.2,
+  detectHoles = true,
 } = {}) {
-  // detectHoles SIEMPRE on: necesitamos la geometría REAL del diseño (el aro como
-  // banda, los contadores de las letras como huecos) para que la sangría pueda
-  // crecer y cerrarlos. `includeHoles` (Keep Holes) ya NO cambia la máscara: solo
-  // decide, al final del mapeo, si esos huecos se cortan o no.
+  // detectHoles on (default): saca también el fondo ENCERRADO por el diseño (el
+  // aro como banda, los contadores de las letras como huecos) para que la sangría
+  // pueda crecer y cerrarlos. `includeHoles` (Keep Holes) ya NO cambia la máscara:
+  // solo decide, al final del mapeo, si esos huecos se cortan o no.
+  //
+  // detectHoles OFF = modo "borde externo": NO se toca el interior. La forma queda
+  // LLENA y sólida, así el trazado sigue el borde de afuera (el óvalo/línea que
+  // dibujó el usuario) sin engancharse del dibujo interno. Clave para líneas finas.
   const maskedBlob = await solidBgRemoval(fileOrBlob, {
-    tolerance, detectHoles: true, defringe: true,
+    tolerance, detectHoles, defringe: true,
   })
   const result = await traceContour(maskedBlob, {
     engine, threshold, turdsize, alphamax, opttolerance,
@@ -179,7 +184,11 @@ export async function contourCutsByAssignments(assignments, cells, imageMap, {
     const alphamax = p.alphamax ?? 1.0
     const opttolerance = p.opttolerance ?? 0.2
     const bleedMm = p.bleedMm ?? 0
-    const includeHoles = p.includeHoles === true
+    // Modo "borde externo": no se detectan huecos internos (la forma queda llena)
+    // y, en consecuencia, tampoco se cortan huecos. Afecta al TRAZADO (la máscara).
+    const outerBorder = p.outerBorder === true
+    const detectHoles = !outerBorder
+    const includeHoles = outerBorder ? false : (p.includeHoles === true)
     // Tolerancia de simplificación (mm). Valores viejos del Chaikin (escala 0–3)
     // quedarían enormes para RDP → facetado; los normalizo al default.
     let smoothMm = p.smoothMm ?? 0.12
@@ -187,8 +196,9 @@ export async function contourCutsByAssignments(assignments, cells, imageMap, {
 
     // Cache por IMAGEN con su "traceKey" = SOLO los params que afectan el TRAZADO.
     // sangría/huecos/suavizado NO entran: son mapeo (re-unen sobre el sc ya
-    // trazado = instantáneo). En cacheOnly NO se traza: si no hay sc, se saltea.
-    const traceKey = `${engine}:${tolerance}:${threshold}:${turdsize}:${alphamax}:${opttolerance}`
+    // trazado = instantáneo). detectHoles SÍ entra: cambia la máscara. En cacheOnly
+    // NO se traza: si no hay sc, se saltea.
+    const traceKey = `${engine}:${tolerance}:${threshold}:${turdsize}:${alphamax}:${opttolerance}:${detectHoles ? 'H' : 'B'}`
     const cached = cache ? cache.get(imgId) : null
     let sc
     if (cached && cached.traceKey === traceKey) {
@@ -199,7 +209,7 @@ export async function contourCutsByAssignments(assignments, cells, imageMap, {
       try {
         const blob = await dataUrlToBlob(image.dataUrl)
         sc = await computeStickerContour(blob, {
-          engine, tolerance, threshold, turdsize, alphamax, opttolerance,
+          engine, tolerance, threshold, turdsize, alphamax, opttolerance, detectHoles,
         })
         if (cache) cache.set(imgId, { sc, traceKey })
       } catch (e) {

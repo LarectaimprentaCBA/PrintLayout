@@ -2551,6 +2551,7 @@ export default function App() {
       tu: selected.contourTurdsize ?? 2,
       a: selected.contourAlphamax ?? 1.0,
       o: selected.contourOpttolerance ?? 0.2,
+      ob: selected.contourOuterBorder ?? true,
       by: pickByImage(selected.contourByImage, TRACE_KEYS),
     })
     : '';
@@ -2590,6 +2591,7 @@ export default function App() {
       opttolerance: selected.contourOpttolerance ?? 0.2,
       bleedMm: selected.contourBleedMm ?? 0,
       includeHoles: selected.contourIncludeHoles === true,
+      outerBorder: selected.contourOuterBorder ?? true,
       smoothMm: selected.contourSmoothMm ?? 0.12,
     };
     if (!cacheOnly) setContourComputing(true);

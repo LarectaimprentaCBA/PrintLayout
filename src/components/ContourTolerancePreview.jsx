@@ -8,7 +8,7 @@ import { applySolidBgRemoval } from '../lib/contour/solidBgRemoval.js';
 // El contorno real (la línea de corte) lo calcula aparte el flujo normal.
 const PREVIEW_DIM = 260;
 
-export default function ContourTolerancePreview({ imageUrl, tolerance, includeHoles, style }) {
+export default function ContourTolerancePreview({ imageUrl, tolerance, includeHoles, detectHoles = true, style }) {
   const srcRef = useRef(null); // { data: ImageData, w, h } imagen base reducida
   const canvasRef = useRef(null);
   const [ready, setReady] = useState(false);
@@ -50,9 +50,10 @@ export default function ContourTolerancePreview({ imageUrl, tolerance, includeHo
       canvas.width = w; canvas.height = h;
       const cx = canvas.getContext('2d');
       const buf = new Uint8ClampedArray(data.data);
-      // detectHoles SIEMPRE on para reflejar la geometría real que se traza
-      // (el aro queda como aro, las letras visibles), igual que computeStickerContour.
-      applySolidBgRemoval(buf, w, h, { tolerance, detectHoles: true, defringe: true });
+      // detectHoles refleja el modo real que se traza: ON = saca el fondo interno
+      // (el aro queda como aro); OFF (borde externo) = interior lleno, sigue el
+      // borde de afuera. Igual que computeStickerContour.
+      applySolidBgRemoval(buf, w, h, { tolerance, detectHoles, defringe: true });
       const out = cx.createImageData(w, h);
       const od = out.data;
       for (let i = 0; i < buf.length; i += 4) {
@@ -66,7 +67,7 @@ export default function ContourTolerancePreview({ imageUrl, tolerance, includeHo
       cx.putImageData(out, 0, 0);
     });
     return () => cancelAnimationFrame(rafRef.current);
-  }, [ready, tolerance, includeHoles]);
+  }, [ready, tolerance, includeHoles, detectHoles]);
 
   // object-contain + el mismo rect interior que la imagen → calza con el diseño.
   return (

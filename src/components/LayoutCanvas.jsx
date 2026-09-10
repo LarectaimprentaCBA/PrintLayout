@@ -375,10 +375,12 @@ export default function LayoutCanvas({
                 && selectedCell === globalIdx;
               let previewTol = 32;
               let previewHoles = true;
+              let previewOuter = true;
               if (showContourPreview) {
                 const ov = template.contourByImage?.[imgId];
                 previewTol = ov?.tolerance ?? template.contourTolerance ?? 32;
                 previewHoles = ov?.includeHoles ?? (template.contourIncludeHoles === true);
+                previewOuter = template.contourOuterBorder ?? true;
               }
               const bPx = bMm * pxPerMm;
 
@@ -410,6 +412,7 @@ export default function LayoutCanvas({
                       imageUrl={img.dataUrl}
                       tolerance={previewTol}
                       includeHoles={previewHoles}
+                      detectHoles={!previewOuter}
                       style={{
                         left: x + bPx,
                         top: y + bPx,
