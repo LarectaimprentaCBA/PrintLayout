@@ -2563,17 +2563,24 @@ export default function App() {
       by: pickByImage(selected.contourByImage, MAP_KEYS),
     })
     : '';
-  const appliedTraceSigRef = useRef('');
   const [contourComputing, setContourComputing] = useState(false);
+  // Id de la plantilla en la última corrida de contorno. Sirve para detectar un
+  // CAMBIO DE PESTAÑA: en un switch NO recalculamos (los cortes ya están en la
+  // plantilla, y recalcular con el layout a medio cargar hacía que el corte "se
+  // moviera" o se escribiera en la pestaña equivocada).
+  const contourTplRef = useRef(null);
+  // Id de pestaña activa SIEMPRE al día, para que un cálculo async que termina
+  // después de cambiar de pestaña no escriba el corte en la pestaña equivocada.
+  const activeTabIdRef = useRef(activeTabId);
+  activeTabIdRef.current = activeTabId;
+  const contourTabSwitched = !!selected && selected.id !== contourTplRef.current;
 
   const computeContourNow = useCallback(async (cacheOnly = false) => {
     if (!selected || selected.cutShape !== 'contour') return;
+    const runTabId = activeTabIdRef.current;
     const cells = selected.celdas ?? [];
     const assignments = layout.assignmentsFront || [];
-    if (!cells.length || !assignments.some(Boolean)) {
-      if (!cacheOnly) appliedTraceSigRef.current = contourTraceSig;
-      return;
-    }
+    if (!cells.length || !assignments.some(Boolean)) return;
     const params = {
       engine: selected.contourEngine ?? 'potrace',
       tolerance: selected.contourTolerance ?? 32,
@@ -2593,35 +2600,58 @@ export default function App() {
         cache: contourCacheRef.current,
         cacheOnly,
       });
-      handlePatchActiveTemplate({ cortes });
-      if (!cacheOnly) appliedTraceSigRef.current = contourTraceSig;
+      // Si cambiaste de pestaña mientras calculaba, NO escribimos (evita que el
+      // corte de esta plantilla caiga en otra).
+      if (activeTabIdRef.current !== runTabId) return;
+      handlePatchActiveTemplate(
+        cacheOnly
+          ? { cortes }
+          : { cortes, contourAppliedTraceSig: contourTraceSig, contourAppliedAssignSig: contourAssignSig },
+      );
     } catch (err) {
       console.error('Calcular contornos falló', err);
     } finally {
       if (!cacheOnly) setContourComputing(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, layout.assignmentsFront, layout.imageMap, contourTraceSig]);
+  }, [selected, layout.assignmentsFront, layout.imageMap, contourTraceSig, contourAssignSig]);
 
   // Auto FULL (traza): al entrar a Contorno o al cambiar las imágenes asignadas.
+  // NO retraza en un cambio de pestaña (contourTabSwitched) ni si el trazado ya
+  // corresponde a las imágenes actuales (contourAppliedAssignSig) — así el corte
+  // guardado no se recalcula ni se mueve al ir y volver entre pestañas.
   useEffect(() => {
     if (!selected || selected.cutShape !== 'contour') return;
-    computeContourNow(false);
+    // Cambio de pestaña: si esta plantilla YA tiene corte guardado, no lo
+    // recalculamos (era lo que lo hacía "moverse"). Si no tiene corte todavía
+    // (pestaña nueva), sí trazamos.
+    if (contourTabSwitched && selected.cortes?.length) return;
+    const needTrace = !(selected.cortes?.length)
+      || (selected.contourAppliedAssignSig ?? null) !== contourAssignSig;
+    if (needTrace) computeContourNow(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected?.id, selected?.cutShape, contourAssignSig]);
+  }, [selected?.id, selected?.cutShape, contourAssignSig, contourTabSwitched]);
 
   // Instantáneo (cacheOnly): sangría/huecos → re-mapea sobre lo ya trazado.
-  // Se salta hasta que haya al menos un trazado hecho (evita el flash inicial).
+  // Solo si ya hay trazado y no es un cambio de pestaña.
   useEffect(() => {
     if (!selected || selected.cutShape !== 'contour') return;
-    if (!appliedTraceSigRef.current) return;
+    if (contourTabSwitched) return;
+    if (!(selected.cortes?.length)) return;
     computeContourNow(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contourMapSig]);
+  }, [contourMapSig, contourTabSwitched]);
+
+  // Recuerda la plantilla de esta corrida DESPUÉS de los efectos de contorno,
+  // así el próximo render sabe si hubo cambio de pestaña.
+  useEffect(() => {
+    contourTplRef.current = selected?.id ?? null;
+  }, [selected?.id]);
 
   // Cambios de TRAZADO sin aplicar → resalta el botón "Aplicar contorno".
   const contourDirty = selected?.cutShape === 'contour'
-    && contourTraceSig !== appliedTraceSigRef.current;
+    && !!selected.contourAppliedTraceSig
+    && contourTraceSig !== selected.contourAppliedTraceSig;
 
   // Cuando la plantilla recien creada por auto-pack queda activa y el layout
   // hook ya tiene las celdas listas, asignamos las imagenes preloaded segun
