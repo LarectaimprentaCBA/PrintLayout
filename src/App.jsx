@@ -374,7 +374,12 @@ export default function App() {
   const [uploading, setUploading] = useState(false);
   const [cutting, setCutting] = useState(false);
   const [toast, setToast] = useState(null);
-  const [layoutFitMode, setLayoutFitMode] = useState('contain');
+  // Fit "de toda la hoja" (Enteras/Rellenar). Vive en la PLANTILLA de la pestaña
+  // (no en un estado global): así se guarda con el trabajo, se restaura al
+  // reiniciar y cada pestaña tiene el suyo (antes era global sin guardar → al
+  // reiniciar volvía a "Enteras" y era compartido entre pestañas). setter más
+  // abajo, tras handlePatchActiveTemplate.
+  const layoutFitMode = selected?.fitMode ?? 'contain';
   const [showCuts, setShowCuts] = useState(true);
   const [showSafety, setShowSafety] = useState(true);
 
@@ -1369,6 +1374,10 @@ export default function App() {
       tab.template ? { template: { ...tab.template, ...updates } } : {},
     );
   };
+
+  // Cambia el fit de toda la hoja guardándolo en la plantilla de la pestaña.
+  const setLayoutFitMode = (v) =>
+    handlePatchActiveTemplate({ fitMode: v === 'cover' ? 'cover' : 'contain' });
 
   // Agregar / quitar doble faz a la plantilla en curso (la de la tab). Al
   // activarlo, el dorso se deriva espejando el frente (backMirror). Deja el
@@ -2605,10 +2614,23 @@ export default function App() {
       // Si cambiaste de pestaña mientras calculaba, NO escribimos (evita que el
       // corte de esta plantilla caiga en otra).
       if (activeTabIdRef.current !== runTabId) return;
+      // Red de seguridad: si hay celdas con imagen pero el resultado quedó VACÍO,
+      // NO pisamos los cortes guardados. Pasa cuando el caché de trazado está frío
+      // (tras cambiar de pestaña o reiniciar la app) y el re-mapeo no encuentra
+      // nada → antes esto BORRABA el corte bueno. Se recalcula con "Aplicar
+      // contorno". (Si el usuario vació las celdas, hasAssigned es false y sí se
+      // limpia el corte, como corresponde.)
+      const hasAssigned = assignments.some(Boolean);
+      if (hasAssigned && (!cortes || cortes.length === 0)) return;
       handlePatchActiveTemplate(
         cacheOnly
-          ? { cortes }
-          : { cortes, contourAppliedTraceSig: contourTraceSig, contourAppliedAssignSig: contourAssignSig },
+          ? { cortes, contourAppliedMapSig: contourMapSig }
+          : {
+            cortes,
+            contourAppliedTraceSig: contourTraceSig,
+            contourAppliedAssignSig: contourAssignSig,
+            contourAppliedMapSig: contourMapSig,
+          },
       );
     } catch (err) {
       console.error('Calcular contornos falló', err);
@@ -2616,7 +2638,7 @@ export default function App() {
       if (!cacheOnly) setContourComputing(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, layout.assignmentsFront, layout.imageMap, contourTraceSig, contourAssignSig]);
+  }, [selected, layout.assignmentsFront, layout.imageMap, contourTraceSig, contourAssignSig, contourMapSig]);
 
   // Auto FULL (traza): al entrar a Contorno o al cambiar las imágenes asignadas.
   // NO retraza en un cambio de pestaña (contourTabSwitched) ni si el trazado ya
@@ -2628,21 +2650,32 @@ export default function App() {
     // recalculamos (era lo que lo hacía "moverse"). Si no tiene corte todavía
     // (pestaña nueva), sí trazamos.
     if (contourTabSwitched && selected.cortes?.length) return;
+    // Traza solo si NO hay corte todavía, o si tenemos una firma de asignación
+    // aplicada que dejó de coincidir (el usuario cambió imágenes ESTA sesión).
+    // Si ya hay corte y no hay firma previa (plantilla vieja recién cargada), NO
+    // re-trazamos: respetamos el corte guardado (evita que "cambie solo" al abrir).
     const needTrace = !(selected.cortes?.length)
-      || (selected.contourAppliedAssignSig ?? null) !== contourAssignSig;
+      || (selected.contourAppliedAssignSig != null
+        && selected.contourAppliedAssignSig !== contourAssignSig);
     if (needTrace) computeContourNow(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected?.id, selected?.cutShape, contourAssignSig, contourTabSwitched]);
 
-  // Instantáneo (cacheOnly): sangría/huecos → re-mapea sobre lo ya trazado.
-  // Solo si ya hay trazado y no es un cambio de pestaña.
+  // Instantáneo (cacheOnly): sangría/huecos/suavizado → re-mapea sobre lo ya
+  // trazado. SOLO cuando esos parámetros cambiaron DE VERDAD (mover un slider),
+  // no al cambiar de pestaña ni al reiniciar. Antes se disparaba en el render
+  // posterior al switch (cuando contourTabSwitched pasaba a false) y re-mapeaba
+  // desde un caché frío → pisaba el corte guardado con vacío. Al comparar contra
+  // el mapSig APLICADO (guardado en la plantilla), en un switch/restore coinciden
+  // → no se toca el corte.
   useEffect(() => {
     if (!selected || selected.cutShape !== 'contour') return;
     if (contourTabSwitched) return;
     if (!(selected.cortes?.length)) return;
+    if (contourMapSig === (selected.contourAppliedMapSig ?? null)) return;
     computeContourNow(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contourMapSig, contourTabSwitched]);
+  }, [contourMapSig, selected?.contourAppliedMapSig, selected?.id, contourTabSwitched]);
 
   // Recuerda la plantilla de esta corrida DESPUÉS de los efectos de contorno,
   // así el próximo render sabe si hubo cambio de pestaña.
