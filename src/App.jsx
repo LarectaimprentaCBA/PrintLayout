@@ -1995,7 +1995,11 @@ export default function App() {
       const ensureLoaded = async (piece, label, role) => {
         if (!piece) return null;
         if (imgByXref.has(piece.xref)) return imgByXref.get(piece.xref);
-        const img = await pieceToImage(piece, label);
+        const loaded = await pieceToImage(piece, label);
+        // Auto-rotar a la orientación de la plantilla, IGUAL que el import normal
+        // (submitPdfExtract → handleAddImages). Sin esto el posado dejaba la
+        // tarjeta "al revés" (apaisada en celda vertical o viceversa).
+        const { img } = loaded ? await autoRotateForTemplate(loaded) : { img: null };
         if (img) { img.pdfGroup = pdfGroup; img.pdfRole = role; imgByXref.set(piece.xref, img); }
         return img;
       };
@@ -3559,6 +3563,42 @@ export default function App() {
 
   const handleDragCancel = () => setActiveDrag(null);
 
+  // Rota UNA imagen 90° CW si la plantilla tiene una orientación clara
+  // (vertical/horizontal) y la imagen viene en la opuesta, para que entre
+  // directo. Devuelve { img, rotated }. Si no corresponde rotar, la deja igual.
+  // En "medidas múltiples" (celdas verticales Y horizontales mezcladas) NO hay
+  // una orientación única → no rota (la imagen entra tal cual). Se usa tanto al
+  // agregar imágenes sueltas como al POSAR frente/dorso desde PDF (antes el
+  // posado NO rotaba → la tarjeta entraba "al revés" respecto al import normal).
+  const autoRotateForTemplate = async (img) => {
+    if (!selected || !img) return { img, rotated: false };
+    const target = templateOrientation(selected);
+    if (target === 'square' || target === null || !cellsHomogeneous(selected)) {
+      return { img, rotated: false };
+    }
+    const imgOr = imageOrientation(img);
+    if (imgOr === 'square' || imgOr === target) return { img, rotated: false };
+    try {
+      const r = await rotateImageDataUrl90CW(img.dataUrl);
+      return {
+        img: {
+          ...img,
+          dataUrl: r.dataUrl,
+          width: r.width,
+          height: r.height,
+          faces: rotateFaces90CW(img.faces, img.width, img.height),
+          physicalSizeMm: img.physicalSizeMm
+            ? { w: img.physicalSizeMm.h, h: img.physicalSizeMm.w }
+            : null,
+        },
+        rotated: true,
+      };
+    } catch (err) {
+      console.warn('Auto-rotate fallo, dejo la imagen como esta:', err);
+      return { img, rotated: false };
+    }
+  };
+
   // Al cargar imagenes, si la plantilla tiene una orientacion clara
   // (vertical/horizontal) y la imagen viene en la opuesta, la rotamos 90 CW
   // para que entre directo. Casos comunes: photos horizontales en plantilla
@@ -3568,41 +3608,12 @@ export default function App() {
       layout.addImages(loadedImages);
       return;
     }
-    const target = templateOrientation(selected);
-    // El auto-rotado alinea la imagen a la orientación de la plantilla, pero eso
-    // SOLO tiene sentido si TODAS las celdas tienen la misma orientación. En
-    // "medidas múltiples" (celdas verticales Y horizontales mezcladas) no hay una
-    // orientación única: rotar hacia una deja la imagen dada vuelta en las celdas
-    // de la otra. Ahí NO rotamos: la imagen entra tal cual y el usuario la ubica.
-    if (target === 'square' || target === null || !cellsHomogeneous(selected)) {
-      layout.addImages(loadedImages);
-      return;
-    }
     const processed = [];
     let rotatedCount = 0;
     for (const img of loadedImages) {
-      const imgOr = imageOrientation(img);
-      if (imgOr !== 'square' && imgOr !== target) {
-        try {
-          const r = await rotateImageDataUrl90CW(img.dataUrl);
-          processed.push({
-            ...img,
-            dataUrl: r.dataUrl,
-            width: r.width,
-            height: r.height,
-            faces: rotateFaces90CW(img.faces, img.width, img.height),
-            physicalSizeMm: img.physicalSizeMm
-              ? { w: img.physicalSizeMm.h, h: img.physicalSizeMm.w }
-              : null,
-          });
-          rotatedCount++;
-        } catch (err) {
-          console.warn('Auto-rotate fallo, dejo la imagen como esta:', err);
-          processed.push(img);
-        }
-      } else {
-        processed.push(img);
-      }
+      const { img: out, rotated } = await autoRotateForTemplate(img);
+      processed.push(out);
+      if (rotated) rotatedCount++;
     }
     layout.addImages(processed);
     if (rotatedCount > 0) {
