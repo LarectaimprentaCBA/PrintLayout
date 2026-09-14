@@ -2584,7 +2584,7 @@ export default function App() {
   };
   // includeHoles y suavizado ya NO afectan la máscara/trazado (detectHoles siempre
   // on; la unión/suavizado se hacen al mapear) → son MAPEO barato e instantáneo.
-  const TRACE_KEYS = ['engine', 'tolerance', 'threshold', 'turdsize', 'alphamax', 'opttolerance'];
+  const TRACE_KEYS = ['engine', 'tolerance', 'threshold', 'turdsize', 'alphamax', 'opttolerance', 'outerBorder'];
   const MAP_KEYS = ['bleedMm', 'includeHoles', 'smoothMm'];
   const contourTraceSig = selected?.cutShape === 'contour'
     ? JSON.stringify({

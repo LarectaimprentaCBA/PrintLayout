@@ -1255,13 +1255,14 @@ function ContourImageOverride({ template, imgId, onUpdate, onApply, dirty, compu
   const dTurd = template.contourTurdsize ?? 2;
   const dSmooth = normSimplifyMm(template.contourSmoothMm);
   const dOpt = template.contourOpttolerance ?? 0.2;
+  const dOuter = template.contourOuterBorder ?? true;
 
   const byImg = template.contourByImage || {};
   const ov = byImg[imgId] || null;
   const hasOv = !!ov;
 
   const setOv = (patch) => onUpdate({ contourByImage: { ...byImg, [imgId]: { ...(ov || {}), ...patch } } });
-  const enableOv = () => onUpdate({ contourByImage: { ...byImg, [imgId]: { tolerance: dTol, bleedMm: dBleed, includeHoles: dHoles, smoothMm: dSmooth } } });
+  const enableOv = () => onUpdate({ contourByImage: { ...byImg, [imgId]: { tolerance: dTol, bleedMm: dBleed, includeHoles: dHoles, smoothMm: dSmooth, outerBorder: dOuter } } });
   const disableOv = () => {
     const n = { ...byImg };
     delete n[imgId];
@@ -1277,6 +1278,7 @@ function ContourImageOverride({ template, imgId, onUpdate, onApply, dirty, compu
   const turd = hasOv && ov.turdsize !== undefined ? ov.turdsize : dTurd;
   const smooth = hasOv && ov.smoothMm !== undefined ? normSimplifyMm(ov.smoothMm) : dSmooth;
   const opt = hasOv && ov.opttolerance !== undefined ? ov.opttolerance : dOpt;
+  const outer = hasOv && ov.outerBorder !== undefined ? ov.outerBorder : dOuter;
 
   return (
     <div className="mt-2 space-y-2 rounded border border-accent-500/30 bg-accent-500/5 p-2">
@@ -1305,10 +1307,11 @@ function ContourImageOverride({ template, imgId, onUpdate, onApply, dirty, compu
               ))}
             </div>
           </CRow>
+          <CCheck label="Cortar por el borde externo" checked={outer} onChange={(v) => setOv({ outerBorder: v })} />
           <CRange label="Tolerancia" value={tol} min={0} max={128} step={1} onChange={(v) => setOv({ tolerance: v })} />
           <CNum label="Sangrado (vivo)" value={bleed} step={0.1} min={-10} max={10} onChange={(v) => setOv({ bleedMm: v })} />
           <CRange label="Suavizado (vivo)" value={smooth} min={0} max={0.5} step={0.02} onChange={(v) => setOv({ smoothMm: v })} />
-          <CCheck label="Cortar huecos internos" checked={holes} onChange={(v) => setOv({ includeHoles: v })} />
+          <CCheck label="Cortar huecos internos" checked={holes && !outer} disabled={outer} onChange={(v) => setOv({ includeHoles: v })} />
 
           <button
             type="button"

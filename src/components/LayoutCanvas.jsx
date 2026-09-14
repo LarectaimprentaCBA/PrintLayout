@@ -380,7 +380,7 @@ export default function LayoutCanvas({
                 const ov = template.contourByImage?.[imgId];
                 previewTol = ov?.tolerance ?? template.contourTolerance ?? 32;
                 previewHoles = ov?.includeHoles ?? (template.contourIncludeHoles === true);
-                previewOuter = template.contourOuterBorder ?? true;
+                previewOuter = ov?.outerBorder ?? template.contourOuterBorder ?? true;
               }
               const bPx = bMm * pxPerMm;
 

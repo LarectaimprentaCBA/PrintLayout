@@ -18,7 +18,12 @@ async function tracePotraceViaIPC(blob, opts) {
   return window.printlayout.contour.tracePotrace(ab, opts)
 }
 
-const MAX_TRACE_DIM = 700
+// Resolución máxima de trabajo del trazado. Subida de 700 → 1400: con líneas de
+// corte FINAS (ej. un aro violeta de sticker) a 700px la línea se adelgazaba a
+// ~1px, se cortaba al binarizar y el trazado se "colaba" hacia el dibujo interno.
+// A 1400 la línea fina sobrevive y el borde se detecta bien. Cuesta un poco más
+// (se cachea por imagen), pero el corte sale donde corresponde.
+const MAX_TRACE_DIM = 1400
 
 async function buildAlphaMaskCanvas(blob, threshold = 128) {
   const bitmap = await createImageBitmap(blob)
