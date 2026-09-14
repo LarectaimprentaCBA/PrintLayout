@@ -3806,6 +3806,18 @@ export default function App() {
         else if (r?.path) setToast({ kind: 'success', text: 'PDF guardado', path: r.path });
         return;
       }
+      // QR en la EXPORTACIÓN: MISMA condición que al imprimir (drawMarks + conQr +
+      // cortes + nombre de corte + config cargada). Antes NO se pasaba `qr` al
+      // exportar → el archivo salía SIN QR (por eso "en Corel no aparece el QR":
+      // directamente no estaba en el PDF exportado, solo salía al imprimir). El
+      // QR va SOLO en el frente; drawQr ignora el dorso internamente.
+      const exportQr = (drawMarks && (selected.conQr ?? true) && hasCuts(selected) && selected.cutId && qrConfig) ? {
+        text: selected.cutId,
+        sizeMm: qrConfig.qrSizeMm,
+        bottomMm: qrConfig.qrBottomMm,
+        centered: qrConfig.qrCentered,
+        showText: true,
+      } : undefined;
       // Doble faz: un solo PDF con pag 1 = frente (con marcas) y pag 2 = dorso
       // (sin marcas). Lo viewing no influye, siempre mandamos las dos caras.
       // 1-pagina: no se embebe nada del PDF original (las cajas son guias).
@@ -3820,6 +3832,7 @@ export default function App() {
               paperWidthMm: customPaper?.widthMm,
               paperHeightMm: customPaper?.heightMm,
               drawMarks,
+              qr: exportQr,
             },
           )
         : await exportLayoutToPdf(
@@ -3832,6 +3845,7 @@ export default function App() {
               paperWidthMm: customPaper?.widthMm,
               paperHeightMm: customPaper?.heightMm,
               drawMarks,
+              qr: exportQr,
             },
           );
       if (result?.canceled) {
@@ -4081,7 +4095,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected?.cutId, selected?.cortes, selected?.conQr, selected?.cutShape, qrConfig]);
 
-  const runPrint = async ({ deviceName, copies, pages, cutMarks }) => {
+  const runPrint = async ({ deviceName, copies, pages, cutMarks, registrationCross }) => {
     const prompt = printPrompt;
     setPrintPrompt(null);
     if (!prompt || !selected) return;
@@ -4158,6 +4172,9 @@ export default function App() {
           docName,
           drawMarks: cutMarks !== false,
           printScale,
+          // Cruz de registro en AMBAS caras (misma posición física) para medir el
+          // desfase del volteo y calibrar el "Ajuste de dorso". Solo doble faz.
+          registrationCross: !!registrationCross,
           // Ajuste de dorso: corre el dorso para compensar el volteo manual.
           backOffsetXmm: isBack ? backOffsetXmm : 0,
           backOffsetYmm: isBack ? backOffsetYmm : 0,
@@ -4988,6 +5005,7 @@ export default function App() {
           totalPages={layout.pageCount}
           currentPage={currentPage}
           showCutMarksOption={selectedHasGeneratedMarks}
+          showRegistrationCross={!!selected?.doubleSided}
           showBackOffset={!!printPrompt && printPrompt.face === 'back' && !!selected?.doubleSided}
           backOffsetXmm={backOffsetXmm}
           backOffsetYmm={backOffsetYmm}

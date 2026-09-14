@@ -155,6 +155,33 @@ export function drawCornerMarks(page, {
   line(right, bottom, right, bottom + arm);
 }
 
+// Cruz de registro para DOBLE FAZ: dibuja cruces (+) en coordenadas ABSOLUTAS
+// de la hoja física (pageWpt/pageHpt), SIN el ajuste de dorso (offsetXpt/Ypt).
+// Se dibuja IGUAL en frente y dorso → al imprimir ambas caras y mirarlas a
+// contraluz, el desplazamiento entre las cruces del frente y las del dorso ES el
+// desfase del volteo manual. Con eso Mariano sabe cuánto poner en "Ajuste de
+// dorso (mm)". La cruz del CENTRO es el punto invariante del volteo (medir
+// corrimiento); las 4 de las esquinas ayudan a ver si además hay giro/rotación.
+export function drawRegistrationCross(page, {
+  pageWpt, pageHpt, marginMm = 7,
+}) {
+  const thickness = 0.25 * MM_TO_PT;
+  const black = cmyk(0, 0, 0, 1); // K puro = registro limpio
+  const cross = (cx, cy, armMm) => {
+    const a = armMm * MM_TO_PT;
+    page.drawLine({ start: { x: cx - a, y: cy }, end: { x: cx + a, y: cy }, thickness, color: black });
+    page.drawLine({ start: { x: cx, y: cy - a }, end: { x: cx, y: cy + a }, thickness, color: black });
+  };
+  const m = marginMm * MM_TO_PT;
+  // Centro (brazo más largo: es la referencia principal para el corrimiento).
+  cross(pageWpt / 2, pageHpt / 2, 6);
+  // Esquinas (brazo corto).
+  cross(m, m, 3);
+  cross(pageWpt - m, m, 3);
+  cross(m, pageHpt - m, 3);
+  cross(pageWpt - m, pageHpt - m, 3);
+}
+
 // Posición del QR en la HOJA física, en mm. ÚNICA fuente de la fórmula: la usan
 // tanto el PDF (drawQr) como la vista previa del canvas, así coinciden.
 // Devuelve el borde IZQUIERDO (xLeftMm) y el borde INFERIOR del QR medido desde
@@ -529,6 +556,14 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
         markType: template.markType === 'L' ? 'L' : 'circle',
       });
     }
+
+    // Cruz de registro (doble faz): va en AMBAS caras, en la misma posición
+    // física, para medir el desfase del volteo manual. NO usa la exclusión del
+    // dorso (a diferencia de shouldDrawMarks): justamente tiene que salir en las
+    // dos caras.
+    if (options.registrationCross) {
+      drawRegistrationCross(page, { pageWpt: pageW, pageHpt: pageH });
+    }
   }
 }
 
@@ -569,6 +604,7 @@ export async function buildPdf(template, assignments, imageMap, options = {}) {
     paperHmm,
     drawMarks: options.drawMarks,
     qr: options.qr,
+    registrationCross: options.registrationCross,
     // Ajuste de dorso (mm) para compensar el desfase del volteo manual (doble faz).
     backOffsetXmm: options.backOffsetXmm,
     backOffsetYmm: options.backOffsetYmm,
@@ -608,6 +644,7 @@ export async function buildDoubleSidedPdf(
     paperHmm,
     drawMarks: options.drawMarks,
     qr: options.qr, // el QR va SOLO en el frente
+    registrationCross: options.registrationCross,
   });
   await appendFaceToDoc(doc, ctx, template, assignmentsBack, {
     layoutFitMode,
@@ -615,6 +652,7 @@ export async function buildDoubleSidedPdf(
     face: 'back',
     paperWmm,
     paperHmm,
+    registrationCross: options.registrationCross,
     // Rotacion del dorso: independiente del espejo de posicion (flag
     // backRotate180, toggle "Rotar dorso" en la UI).
     rotateContent180: backRotate180(template),

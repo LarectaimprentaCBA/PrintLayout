@@ -46,6 +46,7 @@ export default function PrintModal({
   totalPages = 1,
   currentPage = 0,
   showCutMarksOption = false,
+  showRegistrationCross = false,
   showBackOffset = false,
   backOffsetXmm = 0,
   backOffsetYmm = 0,
@@ -65,6 +66,9 @@ export default function PrintModal({
   // Marcas de corte: por default se imprimen (comportamiento histórico). El
   // checkbox solo se muestra cuando la plantilla tiene marcas generadas.
   const [cutMarks, setCutMarks] = useState(true);
+  // Cruz de registro (doble faz): OFF por default. Se usa una sola vez para
+  // calibrar el "Ajuste de dorso" midiendo el desfase del volteo a contraluz.
+  const [registrationCross, setRegistrationCross] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -72,6 +76,7 @@ export default function PrintModal({
     setLoading(true);
     setError(null);
     setCutMarks(true);
+    setRegistrationCross(false);
     (async () => {
       try {
         const r = await window.printlayout.pdf.listPrinters();
@@ -168,6 +173,7 @@ export default function PrintModal({
       pages: pagesToPrint,
       // Si la plantilla no ofrece la opción, mandamos true (no cambia nada).
       cutMarks: showCutMarksOption ? cutMarks : true,
+      registrationCross: showRegistrationCross ? registrationCross : false,
     });
   };
 
@@ -360,6 +366,26 @@ export default function PrintModal({
                 <span className="block text-[10px] leading-snug text-ink-500">
                   Las marcas en L de las esquinas que usa el plotter para
                   alinear. Destildá si solo vas a posar las fotos sin cortar.
+                </span>
+              </span>
+            </label>
+          )}
+
+          {showRegistrationCross && (
+            <label className="flex cursor-pointer items-start gap-2 rounded border border-ink-700 bg-ink-950/40 px-2 py-1.5">
+              <input
+                type="checkbox"
+                checked={registrationCross}
+                onChange={(e) => setRegistrationCross(e.target.checked)}
+                className="mt-0.5 accent-accent-600"
+              />
+              <span>
+                <span className="block text-ink-200">Imprimir cruz de registro (calibrar dorso)</span>
+                <span className="block text-[10px] leading-snug text-ink-500">
+                  Dibuja cruces + en las dos caras, en el mismo lugar. Imprimí
+                  frente y dorso, mirá a contraluz y medí cuánto se corrió el
+                  dorso: ese valor es el que va en "Ajuste de dorso". Después
+                  destildá para producir normal.
                 </span>
               </span>
             </label>
