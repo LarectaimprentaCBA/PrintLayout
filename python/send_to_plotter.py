@@ -102,15 +102,52 @@ def main():
         print(json.dumps({"ok": False, "error": "Polilineas vacias."}))
         sys.exit(1)
 
-    # Reordenar por (X_min, Y_min) en el sistema del plotter para que
-    # complete cada "columna" cercana a la entrada antes de avanzar.
-    # Round a 1mm para que jitter de Bezier no altere el orden.
-    def _orden_key(poly):
+    # Reordenar para eficiencia de recorrido (completar cada "columna" cercana a
+    # la entrada antes de avanzar), PERO respetando que un corte INTERNO
+    # (contenido dentro de otro) se haga ANTES que el que lo contiene. Ej: el
+    # troquel/agujero de una etiqueta va antes que su contorno externo; si se
+    # cortara primero el externo, la pieza se suelta de la hoja y el agujero sale
+    # mal o no sale. Agrupamos cada corte con su pieza EXTERNA (para no zigzaguear)
+    # y dentro de cada grupo van primero los más internos.
+    # Round a 1mm para que el jitter de Bezier no altere el orden.
+    def _bbox(poly):
         xs = [p[0] for p in poly]
         ys = [p[1] for p in poly]
-        return (round(min(xs)), round(min(ys)))
+        return (min(xs), min(ys), max(xs), max(ys))
 
-    polilineas_plotter.sort(key=_orden_key)
+    def _area(b):
+        return max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+
+    _boxes = [_bbox(p) for p in polilineas_plotter]
+    _n = len(polilineas_plotter)
+    _T = 0.5  # tolerancia mm para "contenido dentro de"
+    _depth = [0] * _n      # cuántas polilíneas lo contienen (más = más interno)
+    _root = list(range(_n))  # índice de la pieza EXTERNA que lo contiene (mayor área)
+    for i in range(_n):
+        bi = _boxes[i]
+        ai = _area(bi)
+        best_root = i
+        best_area = ai
+        for j in range(_n):
+            if i == j:
+                continue
+            bj = _boxes[j]
+            if (bj[0] <= bi[0] + _T and bj[1] <= bi[1] + _T
+                    and bj[2] >= bi[2] - _T and bj[3] >= bi[3] - _T
+                    and _area(bj) > ai + 1e-6):
+                _depth[i] += 1
+                if _area(bj) > best_area:
+                    best_area = _area(bj)
+                    best_root = j
+        _root[i] = best_root
+
+    def _orden_key(i):
+        rb = _boxes[_root[i]]                       # posición de la pieza externa
+        bi = _boxes[i]
+        return (round(rb[0]), round(rb[1]), -_depth[i], round(bi[0]), round(bi[1]))
+
+    _order = sorted(range(_n), key=_orden_key)
+    polilineas_plotter = [polilineas_plotter[i] for i in _order]
 
     try:
         payload = generador.generar_payload_con_marcas(
