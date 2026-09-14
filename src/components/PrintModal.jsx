@@ -46,6 +46,10 @@ export default function PrintModal({
   totalPages = 1,
   currentPage = 0,
   showCutMarksOption = false,
+  showBackOffset = false,
+  backOffsetXmm = 0,
+  backOffsetYmm = 0,
+  onBackOffsetChange,
   onConfirm,
   onCancel,
 }) {
@@ -359,6 +363,43 @@ export default function PrintModal({
                 </span>
               </span>
             </label>
+          )}
+
+          {showBackOffset && (
+            <div className="rounded border border-ink-700 bg-ink-950/40 px-2 py-2">
+              <span className="block text-ink-200">Ajuste de dorso (mm)</span>
+              <span className="mb-2 block text-[10px] leading-snug text-ink-500">
+                Corre el dorso para compensar el corrimiento que hace la impresora
+                al dar vuelta la hoja. + X = derecha, + Y = abajo. Es de esta
+                PC/impresora y queda guardado. 0 = sin ajuste.
+              </span>
+              <div className="flex items-center gap-3">
+                <label className="flex items-center gap-1">
+                  <span className="text-ink-400">X</span>
+                  <input
+                    type="number" step="0.1"
+                    value={backOffsetXmm}
+                    onChange={(e) => {
+                      const v = parseFloat(String(e.target.value).replace(',', '.'));
+                      onBackOffsetChange?.('x', Number.isFinite(v) ? v : 0);
+                    }}
+                    className="w-20 rounded border border-ink-700 bg-ink-950 px-2 py-1 text-right text-ink-100"
+                  />
+                </label>
+                <label className="flex items-center gap-1">
+                  <span className="text-ink-400">Y</span>
+                  <input
+                    type="number" step="0.1"
+                    value={backOffsetYmm}
+                    onChange={(e) => {
+                      const v = parseFloat(String(e.target.value).replace(',', '.'));
+                      onBackOffsetChange?.('y', Number.isFinite(v) ? v : 0);
+                    }}
+                    className="w-20 rounded border border-ink-700 bg-ink-950 px-2 py-1 text-right text-ink-100"
+                  />
+                </label>
+              </div>
+            </div>
           )}
         </div>
 

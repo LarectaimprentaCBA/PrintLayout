@@ -273,8 +273,19 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
   const templateHpt = template.pageHeightMm * MM_TO_PT;
   const pageW = paperWmm * MM_TO_PT;
   const pageH = paperHmm * MM_TO_PT;
-  const offsetXpt = (pageW - templateWpt) / 2;
-  const offsetYpt = (pageH - templateHpt) / 2;
+  let offsetXpt = (pageW - templateWpt) / 2;
+  let offsetYpt = (pageH - templateHpt) / 2;
+  // Ajuste de dorso (mm): corrimiento fino aplicado SOLO a la cara DORSO, para
+  // compensar el desfase que mete la impresora al dar vuelta la hoja a mano en
+  // doble faz. Mueve TODO el contenido del dorso junto (fondo + celdas + marcas),
+  // así el corte (óptico por marcas) sigue calzando con el diseño del dorso y
+  // frente/dorso quedan alineados. En pantalla: +X = derecha, +Y = abajo.
+  if (face === 'back') {
+    const bx = Number(options.backOffsetXmm) || 0;
+    const by = Number(options.backOffsetYmm) || 0;
+    offsetXpt += bx * MM_TO_PT;
+    offsetYpt -= by * MM_TO_PT; // en PDF el eje Y crece hacia arriba
+  }
 
   // Fondo POR HOJA: cada hoja embebe el fondo de SU plantilla. En multi-page,
   // `template.pages[p].pdfBase64` puede traer un fondo propio (ej. combo Dobble:
@@ -558,6 +569,9 @@ export async function buildPdf(template, assignments, imageMap, options = {}) {
     paperHmm,
     drawMarks: options.drawMarks,
     qr: options.qr,
+    // Ajuste de dorso (mm) para compensar el desfase del volteo manual (doble faz).
+    backOffsetXmm: options.backOffsetXmm,
+    backOffsetYmm: options.backOffsetYmm,
     // Rotacion del dorso: independiente del espejo de posicion. La controla el
     // flag backRotate180 de la plantilla (toggle "Rotar dorso" en la UI).
     rotateContent180: face === 'back' && template.doubleSided && backRotate180(template),

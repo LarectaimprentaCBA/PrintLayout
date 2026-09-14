@@ -479,6 +479,25 @@ export default function App() {
     localStorage.setItem('printlayout.bladeOffsetMm', String(bladeOffsetMm));
   }, [bladeOffsetMm]);
 
+  // Ajuste de dorso (mm): corrimiento fino del DORSO para compensar el desfase
+  // que mete la impresora al dar vuelta la hoja a mano en doble faz. Es de ESTA
+  // PC/impresora (por eso va en localStorage, como el blade offset). +X=derecha,
+  // +Y=abajo. Se aplica solo al imprimir el dorso.
+  const [backOffsetXmm, setBackOffsetXmm] = useState(() => {
+    const s = parseFloat(localStorage.getItem('printlayout.backOffsetXmm'));
+    return Number.isFinite(s) ? s : 0;
+  });
+  const [backOffsetYmm, setBackOffsetYmm] = useState(() => {
+    const s = parseFloat(localStorage.getItem('printlayout.backOffsetYmm'));
+    return Number.isFinite(s) ? s : 0;
+  });
+  useEffect(() => {
+    localStorage.setItem('printlayout.backOffsetXmm', String(backOffsetXmm));
+  }, [backOffsetXmm]);
+  useEffect(() => {
+    localStorage.setItem('printlayout.backOffsetYmm', String(backOffsetYmm));
+  }, [backOffsetYmm]);
+
   // Modal de margen (solo para editar margen de plantilla existente).
   const [marginPrompt, setMarginPrompt] = useState(null);
   // { templateId, defaultValue } al marcar una plancha como oficial: pide el id
@@ -4139,6 +4158,9 @@ export default function App() {
           docName,
           drawMarks: cutMarks !== false,
           printScale,
+          // Ajuste de dorso: corre el dorso para compensar el volteo manual.
+          backOffsetXmm: isBack ? backOffsetXmm : 0,
+          backOffsetYmm: isBack ? backOffsetYmm : 0,
           showDialog: false,
         });
       }
@@ -4966,6 +4988,10 @@ export default function App() {
           totalPages={layout.pageCount}
           currentPage={currentPage}
           showCutMarksOption={selectedHasGeneratedMarks}
+          showBackOffset={!!printPrompt && printPrompt.face === 'back' && !!selected?.doubleSided}
+          backOffsetXmm={backOffsetXmm}
+          backOffsetYmm={backOffsetYmm}
+          onBackOffsetChange={(axis, v) => (axis === 'x' ? setBackOffsetXmm(v) : setBackOffsetYmm(v))}
           onConfirm={runPrint}
           onCancel={() => setPrintPrompt(null)}
         />
