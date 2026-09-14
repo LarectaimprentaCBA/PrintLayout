@@ -267,6 +267,55 @@ export function generateCutsPerCell(cells, { cutMarginMm = 0 } = {}) {
   return polylines;
 }
 
+// Troquel interno (agujero) de UNA celda: un círculo chico dentro de la pieza,
+// para colgar (ojal de etiqueta). Posición del centro:
+//   - horizontal: centro de la celda + dxMm (dxMm>0 = hacia la derecha)
+//   - vertical:   fromTopMm medido desde el BORDE SUPERIOR de la celda hacia abajo
+// Devuelve la polilínea (círculo) o null si el diámetro es <= 0 o no entra.
+export function troquelCutForCell(cell, { diameterMm = 0, fromTopMm = 0, dxMm = 0, segments = 48 } = {}) {
+  const d = Math.max(0, Number(diameterMm) || 0);
+  if (d <= 0) return null;
+  const r = d / 2;
+  const cx = cell.x + cell.w / 2 + (Number(dxMm) || 0);
+  const cy = cell.y + (Number(fromTopMm) || 0);
+  const poly = [];
+  for (let i = 0; i <= segments; i++) {
+    const a = (i / segments) * Math.PI * 2;
+    poly.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+  }
+  return poly;
+}
+
+// Cortes con TROQUEL INTERNO: por cada celda emite PRIMERO el círculo interno y
+// DESPUÉS el corte externo, en ese orden, antes de pasar a la siguiente celda.
+// Así el plotter corta el ojal (que necesita que la pieza siga sujeta a la hoja)
+// y recién después el contorno externo que la libera. El troquel se aplica igual
+// a todas las celdas. `perCellShapes` true = la forma externa la da cell.shape
+// (medidas múltiples); false = la da cutShape (grilla homogénea).
+export function generateCutsWithTroquel(cells, {
+  cutShape = 'rect', cutMarginMm = 0, cornerRadiusMm = 0,
+  troquel = null, perCellShapes = false,
+} = {}) {
+  const out = [];
+  for (const c of cells) {
+    if (troquel && troquel.enabled) {
+      const hole = troquelCutForCell(c, {
+        diameterMm: troquel.diameterMm,
+        fromTopMm: troquel.fromTopMm,
+        dxMm: troquel.dxMm,
+      });
+      if (hole) out.push(hole);
+    }
+    const shape = perCellShapes ? (c.shape === 'circle' ? 'circle' : 'rect') : cutShape;
+    let outer;
+    if (shape === 'circle') outer = cellsToCircleCuts([c], { cutMarginMm })[0];
+    else if (shape === 'rounded') outer = cellsToRoundedRectCuts([c], { cutMarginMm, cornerRadiusMm })[0];
+    else outer = cellsToCuts([c], { cutMarginMm })[0];
+    if (outer) out.push(outer);
+  }
+  return out;
+}
+
 // Centra un conjunto de celdas dentro del area util de la hoja. Pensado para los
 // "acomodar": cuando la ultima fila/columna queda incompleta, los disenos no
 // quedan pegados arriba-izquierda sino centrados.

@@ -80,7 +80,7 @@ import {
   cutIdForPage,
   cutPageCount,
 } from './lib/templates.js';
-import { generateCuts, generateCutsPerCell } from './lib/grid.js';
+import { generateCuts, generateCutsPerCell, generateCutsWithTroquel } from './lib/grid.js';
 import { buildOrderJobs } from './intake/buildOrderJob.js';
 import { contourCutsByAssignments } from './lib/stickerContour.js';
 import {
@@ -1304,11 +1304,22 @@ export default function App() {
       // Si las celdas tienen forma propia (medidas múltiples: rect + círculo
       // mezclados), el corte se regenera POR CELDA respetando cada forma.
       const perCellShapes = celdas.some((c) => c.shape);
-      next.cortes = markM > 0
-        ? (perCellShapes
-            ? generateCutsPerCell(celdas, { cutMarginMm: cutM })
-            : generateCuts(celdas, { cutShape: shape, cutMarginMm: cutM, cornerRadiusMm: cornerR }))
-        : [];
+      const troquelOn = next.troquel && next.troquel.enabled && (Number(next.troquel.diameterMm) > 0);
+      if (markM <= 0) {
+        next.cortes = [];
+      } else if (troquelOn) {
+        // Troquel interno activo: por cada celda, primero el agujero y después el
+        // corte externo (orden que necesita el plotter: cortar el ojal con la
+        // pieza aún sujeta, y recién después liberarla con el contorno).
+        next.cortes = generateCutsWithTroquel(celdas, {
+          cutShape: shape, cutMarginMm: cutM, cornerRadiusMm: cornerR,
+          troquel: next.troquel, perCellShapes,
+        });
+      } else {
+        next.cortes = perCellShapes
+          ? generateCutsPerCell(celdas, { cutMarginMm: cutM })
+          : generateCuts(celdas, { cutShape: shape, cutMarginMm: cutM, cornerRadiusMm: cornerR });
+      }
       return { template: next };
     });
   };

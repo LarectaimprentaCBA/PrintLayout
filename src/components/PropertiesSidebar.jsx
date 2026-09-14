@@ -910,6 +910,9 @@ export default function PropertiesSidebar({
                     </dd>
                   </div>
                 )}
+                {template.cutShape !== 'contour' && (
+                  <TroquelControls template={template} onUpdate={onUpdateTemporal} />
+                )}
                 {template.cutShape === 'contour' && (
                   <ContourControls
                     template={template}
@@ -1022,6 +1025,81 @@ export default function PropertiesSidebar({
         )}
       </div>
     </aside>
+  );
+}
+
+// Input numérico (mm) para el troquel: acepta decimales y negativos (el
+// corrimiento horizontal puede ser a la izquierda), sin el clamp 0–50 de
+// NumberMmInput. `min` opcional para los que no pueden ser negativos.
+function TroquelNumber({ value, onChange, min = null }) {
+  const [text, setText] = useState(String(value ?? 0));
+  useEffect(() => { setText(String(value ?? 0)); }, [value]);
+  const commit = () => {
+    let n = parseFloat(String(text).replace(',', '.'));
+    if (!Number.isFinite(n)) { setText(String(value ?? 0)); return; }
+    if (min != null && n < min) n = min;
+    n = Math.max(-200, Math.min(200, n));
+    if (Math.abs(n - (value ?? 0)) > 1e-6) onChange?.(n);
+    else setText(String(value ?? 0));
+  };
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
+      className="w-16 rounded border border-ink-700 bg-ink-900 px-1.5 py-0.5 text-right text-[11px] text-ink-100 outline-none focus:border-accent-500"
+    />
+  );
+}
+
+// Troquel interno (agujero para colgar): un círculo chico dentro de cada pieza,
+// con tamaño y posición configurables. Al activarlo/cambiarlo, onUpdate regenera
+// los cortes con el agujero PRIMERO y el contorno externo después (por pieza).
+function TroquelControls({ template, onUpdate }) {
+  const t = template.troquel || {};
+  const enabled = t.enabled === true;
+  const diameterMm = Number.isFinite(t.diameterMm) ? t.diameterMm : 4;
+  const fromTopMm = Number.isFinite(t.fromTopMm) ? t.fromTopMm : 5;
+  const dxMm = Number.isFinite(t.dxMm) ? t.dxMm : 0;
+
+  const patch = (extra) => onUpdate({
+    troquel: { enabled, diameterMm, fromTopMm, dxMm, ...extra },
+  });
+
+  return (
+    <div className="space-y-2 rounded border border-ink-700 bg-ink-800/40 p-2">
+      <label className="flex items-center justify-between gap-2">
+        <span className="text-ink-300">Troquel interno (agujero)</span>
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => patch({ enabled: e.target.checked })}
+          className="h-3.5 w-3.5 accent-accent-500"
+        />
+      </label>
+      {enabled && (
+        <>
+          <div className="flex items-center justify-between">
+            <span className="text-ink-400">Diámetro (mm)</span>
+            <TroquelNumber value={diameterMm} min={0} onChange={(v) => patch({ diameterMm: Math.max(0, v) })} />
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-ink-400" title="Distancia desde el borde de arriba de la pieza hasta el centro del agujero">Desde arriba (mm)</span>
+            <TroquelNumber value={fromTopMm} min={0} onChange={(v) => patch({ fromTopMm: Math.max(0, v) })} />
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-ink-400" title="Corrimiento horizontal desde el centro. 0 = centrado; + hacia la derecha, − hacia la izquierda">Horizontal (mm)</span>
+            <TroquelNumber value={dxMm} onChange={(v) => patch({ dxMm: v })} />
+          </div>
+          <p className="text-[10px] leading-snug text-ink-500">
+            El plotter corta primero el agujero y después el contorno de cada pieza. Se ve en rojo en la vista previa.
+          </p>
+        </>
+      )}
+    </div>
   );
 }
 
