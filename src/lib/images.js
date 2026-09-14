@@ -5,8 +5,9 @@ import { reportImportSkips } from './importReport.js';
 import { rasterizePdfPagesAt } from './pdfPreview.js';
 
 // Re-codifica la imagen pasandola por canvas. Esto:
-// 1) Descarta cualquier perfil ICC embebido (canvas siempre trabaja en sRGB),
-//    asi los JPG con Adobe RGB de Corel dejan de salir shifteados en el PDF.
+// 1) Deja la imagen en sRGB: el perfil ICC embebido ya se aplicó al decodificar
+//    (createImageBitmap 'default'), asi los JPG con Adobe RGB/P3 de Corel se ven
+//    IGUAL que en Corel (antes salian mas saturados/verdosos por ignorar el perfil).
 // 2) PRESERVA la transparencia (PNG circulares/recortados se editan como tales).
 //    Antes aplanabamos contra blanco aca, pero eso rompia los PNG con alpha. El
 //    blanco para impresion ya lo pone el rasterizador (pdfPreview.js rellena la
@@ -46,13 +47,14 @@ function normalizeImageToSrgb(img) {
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-  // Snap conservador: solo pixeles donde min(R,G,B) >= 253 y la dispersion
-  // entre canales es <= 2. Asi atrapamos (255,255,254) y artefactos JPEG
-  // alrededor del blanco, sin tocar contenido legitimo casi-blanco.
+  // Snap conservador: solo pixeles donde min(R,G,B) >= 251 y la dispersion
+  // entre canales es <= 3. Asi atrapamos (255,255,254), el (252,254,255) que deja
+  // la conversion de perfil a sRGB, y artefactos JPEG alrededor del blanco, sin
+  // tocar contenido legitimo casi-blanco.
   const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const px = data.data;
-  const SNAP_MIN = 253;
-  const SNAP_DEV = 2;
+  const SNAP_MIN = 251;
+  const SNAP_DEV = 3;
   for (let i = 0; i < px.length; i += 4) {
     const r = px[i];
     const g = px[i + 1];
@@ -76,9 +78,13 @@ function normalizeImageToSrgb(img) {
 
 export async function readImageFile(file, opts = {}) {
   const { physicalSizeMmOverride } = opts;
-  // createImageBitmap con colorSpaceConversion:'none' impide que Chromium
-  // aplique la conversion ICC (Adobe RGB -> sRGB) que correria los blancos
-  // (255,255,254) a (252,254,255). Asi los bytes del JPG entran intactos.
+  // colorSpaceConversion:'default' hace que Chromium APLIQUE el perfil ICC
+  // embebido del JPG y lo convierta a sRGB (el espacio del canvas). Clave para que
+  // los JPG con perfil ancho (Adobe RGB / Display P3, típicos de Corel/Canva) se
+  // vean IGUAL que en Corel y no salgan más saturados/verdosos. (Antes estaba en
+  // 'none' = ignorar el perfil → los colores entraban crudos y se veían corridos.)
+  // El corrimiento del blanco que introduce la conversión (255→~252) lo re-arregla
+  // el "snap a blanco puro" de normalizeImageToSrgb (umbral ampliado para tomarlo).
   // imageOrientation:'from-image' aplica el tag EXIF Orientation (0x0112): sin
   // esto Chromium entrega los pixeles CRUDOS del sensor y las fotos verticales
   // de celular entran acostadas/al reves (el resto del pipeline lee
@@ -87,7 +93,7 @@ export async function readImageFile(file, opts = {}) {
   let bitmap;
   try {
     bitmap = await createImageBitmap(file, {
-      colorSpaceConversion: 'none',
+      colorSpaceConversion: 'default',
       imageOrientation: 'from-image',
     });
   } catch (err) {
