@@ -150,7 +150,14 @@ const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => showMainWindow());
+  // Segunda instancia (doble clic en un .pljob mientras la app ya corre): Windows
+  // arranca una copia nueva con el archivo en argv; esa copia no obtiene el lock y
+  // avisa a la primera. Enfocamos la ventana y, si venía un .pljob, lo abrimos.
+  app.on('second-instance', (_evt, argv) => {
+    showMainWindow();
+    const p = pljobPathFromArgv(argv);
+    if (p) openJobFileInRenderer(p);
+  });
 }
 
 // Muestra/enfoca la ventana principal (desde el tray, el segundo-instance, etc.).
@@ -159,6 +166,31 @@ function showMainWindow() {
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
+}
+
+// Busca en los argumentos de línea de comando una ruta a un archivo .pljob que
+// exista. Windows pasa el archivo así cuando el usuario hace doble clic en un
+// .pljob asociado a la app (o "Abrir con → PrintLayout").
+function pljobPathFromArgv(argv) {
+  try {
+    for (const a of argv || []) {
+      if (typeof a === 'string' && /\.pljob$/i.test(a) && fs.existsSync(a)) return a;
+    }
+  } catch (_) { /* argv raro: ignoramos */ }
+  return null;
+}
+
+// Le pide al renderer que abra un .pljob desde su ruta (doble clic en el archivo).
+// Muestra la ventana (el usuario quiere VER el trabajo, no que quede en bandeja) y
+// espera a que el renderer termine de cargar si todavía está arrancando.
+function openJobFileInRenderer(filePath) {
+  if (!filePath) return;
+  const win = mainWindow;
+  if (!win || win.isDestroyed()) return;
+  showMainWindow();
+  const send = () => { try { win.webContents.send('open-pljob-file', filePath); } catch (_) {} };
+  if (win.webContents.isLoading()) win.webContents.once('did-finish-load', send);
+  else send();
 }
 
 // Cierre REAL (menú "Salir"). Avisa si hay cambios sin guardar (que igual se
@@ -2176,6 +2208,10 @@ app.whenReady().then(() => {
   if (!gotSingleInstanceLock) return;
   createWindow();   // arranca OCULTA (show:false)
   createTray();     // ícono en la bandeja
+  // Arranque por doble clic en un .pljob: abrimos ese trabajo apenas cargue el
+  // renderer (openJobFileInRenderer también muestra la ventana).
+  const initialJob = pljobPathFromArgv(process.argv);
+  if (initialJob) openJobFileInRenderer(initialJob);
   setupAutoUpdate(mainWindow);
   intakeService.start(mainWindow);
   qrCutServer.start(mainWindow);

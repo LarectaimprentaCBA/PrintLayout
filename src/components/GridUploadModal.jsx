@@ -58,6 +58,10 @@ export default function GridUploadModal({
   // "Con QR": al crear, reserva la franja del QR abajo Y marca template.conQr.
   // Default ON (tanto al crear como al re-editar una plantilla que ya lo tenía).
   const [conQr, setConQr] = useState(ini.conQr !== false);
+  // Corte lineal (guillotina): líneas completas de lado a lado en vez de 4 cortes
+  // por celda. Fuerza piezas PEGADAS (separación 0). Solo tiene sentido con corte
+  // rectangular (no círculo). Default OFF.
+  const [linearCut, setLinearCut] = useState(!!ini.linearCut);
   const [cutShape, setCutShape] = useState(ini.cutShape || defaultCutShape || 'rect'); // 'rect' | 'circle'
   const [diameter, setDiameter] = useState(s(ini.diameter, '60'));
   const [rotateMode, setRotateMode] = useState(ini.rotateMode || 'auto'); // 'auto' | 'direct' | 'rotated'
@@ -146,12 +150,14 @@ export default function GridUploadModal({
       cellH: isCircle ? d : parseNum(cellH),
       marginX: parseNum(margin) || 0,
       marginY: parseNum(margin) || 0,
-      spacingX: parseNum(spacingX) || 0,
-      spacingY: parseNum(spacingY) || 0,
+      // Corte lineal: piezas PEGADAS (separación 0) para que una sola línea corte
+      // el borde compartido de dos piezas vecinas.
+      spacingX: linearCut ? 0 : (parseNum(spacingX) || 0),
+      spacingY: linearCut ? 0 : (parseNum(spacingY) || 0),
       bottomReserveMm,
       topReserveMm,
     };
-  }, [paperW, paperH, cellW, cellH, diameter, cutShape, margin, spacingX, spacingY, bottomReserveMm, topReserveMm]);
+  }, [paperW, paperH, cellW, cellH, diameter, cutShape, margin, spacingX, spacingY, linearCut, bottomReserveMm, topReserveMm]);
 
   const valid = (
     params.paperW > 0 && params.paperH > 0
@@ -197,6 +203,8 @@ export default function GridUploadModal({
       markMarginMm,
       cutShape,
       doubleSided,
+      // Corte lineal (guillotina): líneas completas + piezas pegadas.
+      linearCut,
       // ¿Se dibuja el QR de corte en la hoja? Al crear "Con QR" además reservó
       // la franja inferior (bottomReserveMm) para que no pise la última fila.
       conQr,
@@ -213,6 +221,7 @@ export default function GridUploadModal({
         cutMargin: cutMarginMm,
         markMargin: markMarginMm,
         cutShape,
+        linearCut,
         diameter: parseNum(diameter) || 0,
         rotateMode,
       },
@@ -449,20 +458,24 @@ export default function GridUploadModal({
                 className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
               />
             </label>
-            <label>
+            <label className={linearCut ? 'opacity-40' : ''}>
               <span className="block mb-1">Sep. horiz. (mm)</span>
               <input
-                value={spacingX}
+                value={linearCut ? '0' : spacingX}
+                disabled={linearCut}
                 onChange={(e) => setSpacingX(e.target.value)}
-                className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
+                title={linearCut ? 'Corte lineal: las piezas van pegadas (separación 0).' : undefined}
+                className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500 disabled:cursor-not-allowed"
               />
             </label>
-            <label>
+            <label className={linearCut ? 'opacity-40' : ''}>
               <span className="block mb-1">Sep. vert. (mm)</span>
               <input
-                value={spacingY}
+                value={linearCut ? '0' : spacingY}
+                disabled={linearCut}
                 onChange={(e) => setSpacingY(e.target.value)}
-                className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
+                title={linearCut ? 'Corte lineal: las piezas van pegadas (separación 0).' : undefined}
+                className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500 disabled:cursor-not-allowed"
               />
             </label>
           </div>
@@ -489,6 +502,27 @@ export default function GridUploadModal({
                 />
               </label>
             </div>
+
+            {cutShape === 'rect' && (
+              <label className="mt-2 flex cursor-pointer items-start gap-2">
+                <input
+                  type="checkbox"
+                  checked={linearCut}
+                  onChange={(e) => setLinearCut(e.target.checked)}
+                  className="mt-0.5 accent-accent-600"
+                />
+                <span className="text-xs">
+                  <span className="block text-ink-200">Corte lineal (l&iacute;neas completas)</span>
+                  <span className="block text-[10px] leading-snug text-ink-500">
+                    Corta con l&iacute;neas rectas de lado a lado (tipo guillotina) en vez
+                    de 4 cortes por pieza: mucho m&aacute;s r&aacute;pido y prolijo. Las piezas
+                    quedan PEGADAS y el borde de afuera se corre 2&nbsp;mm para asegurar
+                    el corte. Solo para dise&ntilde;os de <b>fondo liso compartido</b> (un
+                    peque&ntilde;o desfase entre filas no se nota).
+                  </span>
+                </span>
+              </label>
+            )}
           </div>
 
           {showQrReserve && (

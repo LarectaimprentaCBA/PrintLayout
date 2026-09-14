@@ -168,6 +168,66 @@ export function cellsToCuts(cells, { cutMarginMm = 0 } = {}) {
   return polylines;
 }
 
+// CORTE LINEAL (tipo guillotina): en una grilla REGULAR de piezas rectangulares
+// PEGADAS, en vez de cortar 4 lados por celda (ej. 100 cortes cortos en 5x5),
+// corta con LÍNEAS COMPLETAS de lado a lado: cols+1 verticales + rows+1
+// horizontales (ej. 12 cortes largos). Muchísimo más rápido y más prolijo (los
+// bordes quedan perfectos porque son una sola recta). Solo sirve con piezas que
+// comparten fondo liso (un mínimo desfase entre filas/columnas no se nota).
+//
+// Reglas (pedido de Mariano):
+//  - Líneas INTERIORES: van justo en el borde compartido (X/Y exacto) → las dos
+//    piezas vecinas quedan del tamaño exacto.
+//  - PERÍMETRO externo: se corre `overcutMm` (default 2mm) HACIA AFUERA, así que
+//    aunque la impresión tenga un pequeño desfase, la fila/columna del borde
+//    SIEMPRE se corta completa (ese sobrante cae en el fondo liso, no se nota).
+//  - Todas las líneas hacen overrun `overcutMm` más allá del bloque en las puntas
+//    para que se crucen bien en las esquinas y cada pieza se separe entera.
+//
+// Deriva las X e Y únicas de los bordes de las celdas (con piezas pegadas quedan
+// cols+1 y rows+1). Formato idéntico al resto: polilínea = array de [x,y] en mm
+// top-left. Cada línea es una polilínea de 2 puntos.
+export function cellsToLinearCuts(cells, { overcutMm = 2 } = {}) {
+  if (!Array.isArray(cells) || cells.length === 0) return [];
+  const EPS = 0.05; // tolerancia mm para deduplicar bordes coincidentes
+  const uniqSorted = (vals) => {
+    const sorted = [...vals].sort((a, b) => a - b);
+    const out = [];
+    for (const v of sorted) {
+      if (out.length === 0 || Math.abs(v - out[out.length - 1]) > EPS) out.push(v);
+    }
+    return out;
+  };
+  const xs = uniqSorted(cells.flatMap((c) => [c.x, c.x + c.w]));
+  const ys = uniqSorted(cells.flatMap((c) => [c.y, c.y + c.h]));
+  const minX = xs[0];
+  const maxX = xs[xs.length - 1];
+  const minY = ys[0];
+  const maxY = ys[ys.length - 1];
+  const oc = Math.max(0, Number(overcutMm) || 0);
+  // Rango de barrido de cada línea (con overrun para cruzar en las esquinas).
+  const yTop = minY - oc;
+  const yBot = maxY + oc;
+  const xLeft = minX - oc;
+  const xRight = maxX + oc;
+  const cuts = [];
+  // Verticales: interior en su X exacto; perímetro corrido hacia afuera.
+  for (const x of xs) {
+    let px = x;
+    if (Math.abs(x - minX) <= EPS) px = minX - oc;
+    else if (Math.abs(x - maxX) <= EPS) px = maxX + oc;
+    cuts.push([[px, yTop], [px, yBot]]);
+  }
+  // Horizontales: interior en su Y exacto; perímetro corrido hacia afuera.
+  for (const y of ys) {
+    let py = y;
+    if (Math.abs(y - minY) <= EPS) py = minY - oc;
+    else if (Math.abs(y - maxY) <= EPS) py = maxY + oc;
+    cuts.push([[xLeft, py], [xRight, py]]);
+  }
+  return cuts;
+}
+
 // Como cellsToCuts pero genera circunferencias (sampleadas como polilineas).
 // El circulo va inscripto en la celda y centrado; radio = min(w,h)/2 - margen.
 // 64 segmentos = paso angular de 5.6 grados, suficiente para que el plotter

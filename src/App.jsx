@@ -80,7 +80,7 @@ import {
   cutIdForPage,
   cutPageCount,
 } from './lib/templates.js';
-import { generateCuts, generateCutsPerCell, generateCutsWithTroquel } from './lib/grid.js';
+import { generateCuts, generateCutsPerCell, generateCutsWithTroquel, cellsToLinearCuts } from './lib/grid.js';
 import { buildOrderJobs } from './intake/buildOrderJob.js';
 import { contourCutsByAssignments } from './lib/stickerContour.js';
 import {
@@ -1239,6 +1239,40 @@ export default function App() {
     if (newTabId) updateTab(newTabId, { jobPath: r.path, isDirty: false });
   };
 
+  // Abre un .pljob desde una RUTA ya conocida (doble clic en el archivo, que el
+  // main reenvía). Mismo armado que handleOpenJobFromFile pero sin file picker.
+  const openJobFromPath = async (filePath) => {
+    if (!filePath) return;
+    const r = await window.printlayout.jobs.loadFromPath(filePath);
+    if (!r?.ok || !r.job?.template) {
+      setToast({ kind: 'error', text: `No se pudo abrir: ${r?.error ?? 'archivo inválido'}` });
+      return;
+    }
+    const job = r.job;
+    const baseName = filePath.replace(/^.*[\\/]/, '').replace(/\.(pljob|json)$/i, '');
+    const newTabId = openInTab(job.template, {
+      name: job.name || baseName,
+      forceNew: true,
+      initialLayout: {
+        images: job.images || [],
+        assignmentsFront: job.assignmentsFront || [],
+        assignmentsBack: job.assignmentsBack || [],
+        minPages: job.minPages ?? 1,
+      },
+    });
+    if (newTabId) updateTab(newTabId, { jobPath: filePath, isDirty: false });
+  };
+  // Ref para que el listener (suscrito una sola vez) use siempre la última versión
+  // de openJobFromPath sin re-suscribir en cada render.
+  const openJobFromPathRef = useRef(null);
+  openJobFromPathRef.current = openJobFromPath;
+  useEffect(() => {
+    const off = window.printlayout?.jobs?.onOpenJobFile?.((filePath) => {
+      openJobFromPathRef.current?.(filePath);
+    });
+    return off;
+  }, []);
+
   const handleDeleteJob = async (jobId) => {
     const r = await removeJobFromDisk(jobId);
     if (r?.ok) {
@@ -1324,8 +1358,14 @@ export default function App() {
       // mezclados), el corte se regenera POR CELDA respetando cada forma.
       const perCellShapes = celdas.some((c) => c.shape);
       const troquelOn = next.troquel && next.troquel.enabled && (Number(next.troquel.diameterMm) > 0);
+      const linearOn = next.linearCut === true;
       if (markM <= 0) {
         next.cortes = [];
+      } else if (linearOn) {
+        // Corte lineal (guillotina): líneas completas de lado a lado, piezas
+        // pegadas, perímetro corrido hacia afuera. Solo para grillas regulares
+        // de fondo liso. Ignora troquel/forma (es otro modo de corte).
+        next.cortes = cellsToLinearCuts(celdas, { overcutMm: next.linearOvercutMm ?? 2 });
       } else if (troquelOn) {
         // Troquel interno activo: por cada celda, primero el agujero y después el
         // corte externo (orden que necesita el plotter: cortar el ojal con la
@@ -1566,12 +1606,16 @@ export default function App() {
     cutShape = 'rect',
     doubleSided = false,
     conQr = true,
+    linearCut = false,
     gridParams,
   }) => {
     // Solo generamos cortes si va a poder usarlos (necesita marcas L para
     // que el plotter alinee). Con markMarginMm=0 la grilla es sin corte.
+    // Corte lineal (guillotina): líneas completas de lado a lado en vez de 4
+    // cortes por celda. Piezas pegadas (el modal fuerza separación 0) + perímetro
+    // 2mm hacia afuera. Solo para grillas regulares de fondo liso.
     const cortes = markMarginMm > 0
-      ? generateCuts(cells, { cutShape, cutMarginMm })
+      ? (linearCut ? cellsToLinearCuts(cells, { overcutMm: 2 }) : generateCuts(cells, { cutShape, cutMarginMm }))
       : [];
     // Doble faz: NO horneamos las celdas del dorso. Se derivan al vuelo desde
     // `celdas` espejando segun backMirror (cellPositions/mirrorCellsForBack).
@@ -1592,6 +1636,9 @@ export default function App() {
       markMarginMm,
       cutShape,
       doubleSided,
+      // Corte lineal (guillotina). Se persiste para que al re-editar propiedades
+      // (handleUpdateTemporalTemplate) siga generando líneas completas.
+      linearCut,
       // ¿Se dibuja el QR de corte en la hoja? Al crear "Con QR" ya reservó la
       // franja inferior (las celdas vienen subidas en `cells`).
       conQr,
@@ -3480,13 +3527,13 @@ export default function App() {
   const submitEditGeometry = async ({
     paperWidthMm, paperHeightMm, cells,
     cutMarginMm = 0, markMarginMm = 0, cutShape = 'rect', doubleSided = false,
-    conQr = true, gridParams,
+    conQr = true, linearCut = false, gridParams,
   }) => {
     const base = editGeometryTemplate;
     setEditGeometryTemplate(null);
     if (!base) return;
     const cortes = markMarginMm > 0
-      ? generateCuts(cells, { cutShape, cutMarginMm })
+      ? (linearCut ? cellsToLinearCuts(cells, { overcutMm: 2 }) : generateCuts(cells, { cutShape, cutMarginMm }))
       : [];
     try {
       await update({
@@ -3502,6 +3549,7 @@ export default function App() {
         cutShape,
         doubleSided,
         conQr,
+        linearCut,
         backMirror: doubleSided ? (base.backMirror || 'x') : undefined,
         backRotate180: doubleSided ? !!base.backRotate180 : undefined,
         backFlip: undefined,
@@ -4780,6 +4828,7 @@ export default function App() {
               ...gridParamsForEdit(editGeometryTemplate),
               doubleSided: !!editGeometryTemplate.doubleSided,
               conQr: editGeometryTemplate.conQr !== false,
+              linearCut: !!editGeometryTemplate.linearCut,
             }}
             title={`Editar medidas — ${editGeometryTemplate.name}`}
             description="Cambiá medidas, márgenes, separación y cortes. Se guarda sobre la misma plantilla."

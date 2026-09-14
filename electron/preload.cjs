@@ -53,6 +53,13 @@ contextBridge.exposeInMainWorld('printlayout', {
     openFromFile: () => ipcRenderer.invoke('jobs:open-from-file'),
     loadFromPath: (filePath) =>
       ipcRenderer.invoke('jobs:load-from-path', { path: filePath }),
+    // Doble clic en un .pljob asociado a la app: el main manda la ruta por este
+    // canal. Devuelve una función para desuscribir. cb recibe la ruta del archivo.
+    onOpenJobFile: (cb) => {
+      const listener = (_e, filePath) => cb(filePath);
+      ipcRenderer.on('open-pljob-file', listener);
+      return () => ipcRenderer.removeListener('open-pljob-file', listener);
+    },
   },
   openTabs: {
     load: () => ipcRenderer.invoke('open-tabs:load'),
