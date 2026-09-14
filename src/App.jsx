@@ -4034,6 +4034,34 @@ export default function App() {
     }
   };
 
+  // Mantener el <cutId>.plt de la carpeta QR SINCRONIZADO con el corte en
+  // pantalla. Sin esto, cambiar el corte (ej. agregar un troquel interno) NO
+  // reescribía el .plt, y al re-cortar por QR el plotter usaba el archivo VIEJO
+  // (cortaba sin el agujero). Ahora, cuando el corte cambia por una acción del
+  // usuario, se reescribe solo (debounce). Se saltea el PRIMER valor por cutId
+  // (carga/restauración) para no escribir al abrir. Contorno queda fuera (su
+  // corte se recalcula seguido y se guarda explícito con "Guardar corte QR").
+  const cutSyncSeenRef = useRef({});
+  const cutSyncTimerRef = useRef(null);
+  useEffect(() => {
+    if (!selected || selected.cutShape === 'contour') return;
+    const id = selected.cutId;
+    const conQr = selected.conQr ?? true;
+    if (!id || !conQr || !qrConfig || !hasCuts(selected)) return;
+    const sig = JSON.stringify(selected.cortes || []);
+    const seen = cutSyncSeenRef.current;
+    if (seen[id] === undefined) { seen[id] = sig; return; } // primer valor: no reescribir
+    if (seen[id] === sig) return;                            // sin cambios reales
+    seen[id] = sig;
+    if (cutSyncTimerRef.current) clearTimeout(cutSyncTimerRef.current);
+    cutSyncTimerRef.current = setTimeout(() => {
+      saveCutToQrFolder()
+        .then((r) => { if (r?.ok) dbg(`[cutsync] .plt actualizado (${id})`); })
+        .catch(() => {});
+    }, 1000);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.cutId, selected?.cortes, selected?.conQr, selected?.cutShape, qrConfig]);
+
   const runPrint = async ({ deviceName, copies, pages, cutMarks }) => {
     const prompt = printPrompt;
     setPrintPrompt(null);
