@@ -2915,6 +2915,11 @@ export default function App() {
                 // face buildPdf lo inferiría como 'back'.
                 face: 'front',
                 embedBackground: !spec.template.singlePage,
+                // "Tamaño de hoja" fijado en la plantilla (customPaper): si el
+                // proveedor cambió el papel y Mariano lo fijó, el PDF del pedido
+                // sale en ese papel (centrado), igual que al imprimir a mano.
+                paperWidthMm: spec.template.customPaper?.widthMm,
+                paperHeightMm: spec.template.customPaper?.heightMm,
                 qr: {
                   text: spec.planchaId,
                   sizeMm: qrcutCfg.qrSizeMm,
