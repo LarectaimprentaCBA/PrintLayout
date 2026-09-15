@@ -212,4 +212,20 @@ contextBridge.exposeInMainWorld('printlayout', {
       return () => ipcRenderer.removeListener('qrcut:log', handler);
     },
   },
+  // Calibración de color por impresora.
+  color: {
+    listPrinters: () => ipcRenderer.invoke('color:list-printers'),
+    list: () => ipcRenderer.invoke('color:list'),
+    save: (cal) => ipcRenderer.invoke('color:save', cal),
+    delete: (id) => ipcRenderer.invoke('color:delete', id),
+    setActive: (id, active) => ipcRenderer.invoke('color:set-active', { id, active }),
+    getManualIp: () => ipcRenderer.invoke('color:get-manual-ip'),
+    setManualIp: (queue, ip) => ipcRenderer.invoke('color:set-manual-ip', { queue, ip }),
+    resolveActive: (deviceName) => ipcRenderer.invoke('color:resolve-active', { deviceName }),
+    canShare: () => ipcRenderer.invoke('color:can-share'),
+    share: (id) => ipcRenderer.invoke('color:share', id),
+    deleteShared: (id) => ipcRenderer.invoke('color:delete-shared', id),
+    syncPull: () => ipcRenderer.invoke('color:sync-pull'),
+    configurePaper: (deviceName, baseDevmodeB64) => ipcRenderer.invoke('color:configure-paper', { deviceName, baseDevmodeB64 }),
+  },
 });

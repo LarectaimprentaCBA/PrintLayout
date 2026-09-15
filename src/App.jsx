@@ -29,6 +29,7 @@ import ImageSizeGroupsModal from './components/ImageSizeGroupsModal.jsx';
 import ImageFrontBackPoseModal from './components/ImageFrontBackPoseModal.jsx';
 import IntakePanelModal from './components/IntakePanelModal.jsx';
 import QrCutPanelModal from './components/QrCutPanelModal.jsx';
+import ColorCalModal from './components/ColorCalModal.jsx';
 import ImageEditorModal from './components/ImageEditorModal.jsx';
 import ImageCropModal from './components/ImageCropModal.jsx';
 import SaveTemplateModal from './components/SaveTemplateModal.jsx';
@@ -220,6 +221,7 @@ export default function App() {
   const [intakePanelOpen, setIntakePanelOpen] = useState(false);
   const [mazosPublicadosOpen, setMazosPublicadosOpen] = useState(false);
   const [qrCutPanelOpen, setQrCutPanelOpen] = useState(false);
+  const [colorCalOpen, setColorCalOpen] = useState(false);
   // Config del server QR (posición del QR + prefijo del nombre). Se usa para
   // dibujar el QR en la vista previa y en la impresión directa. Se refresca al
   // abrir la app y al cerrar el panel "Corte QR".
@@ -412,6 +414,8 @@ export default function App() {
     runSyncWithToast({ silent: true });
     // Tambien pulleamos presets de hoja en silencio. No avisa nada si falla.
     syncPullPaperPresets().catch(() => {});
+    // Y las calibraciones de color compartidas (otras PC las bajan al abrir).
+    window.printlayout?.color?.syncPull?.().catch(() => {});
   }, [templatesLoading, syncPull, syncPullPaperPresets]);
 
   const handleShare = async (template) => {
@@ -4572,6 +4576,7 @@ export default function App() {
           onOpenIntake={isLaRecta ? () => setIntakePanelOpen(true) : undefined}
           onOpenMazosPublicados={isLaRecta ? () => setMazosPublicadosOpen(true) : undefined}
           onOpenQrCut={() => setQrCutPanelOpen(true)}
+          onOpenColorCal={() => setColorCalOpen(true)}
         />
         <TabsBar
           tabs={tabs}
@@ -4940,6 +4945,8 @@ export default function App() {
             window.printlayout?.qrcut?.getConfig?.().then((c) => setQrConfig(c || null)).catch(() => {});
           }}
         />
+
+        <ColorCalModal open={colorCalOpen} onClose={() => setColorCalOpen(false)} />
 
         <ConfirmModal
           open={!!pendingRestore}

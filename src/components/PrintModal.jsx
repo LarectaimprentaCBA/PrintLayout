@@ -69,6 +69,17 @@ export default function PrintModal({
   // Cruz de registro (doble faz): OFF por default. Se usa una sola vez para
   // calibrar el "Ajuste de dorso" midiendo el desfase del volteo a contraluz.
   const [registrationCross, setRegistrationCross] = useState(false);
+  const [colorActive, setColorActive] = useState(null); // {referenceIp, paperName, updatedAt} | null
+
+  // Cartel "Corrección de color activa" según la impresora elegida (por IP).
+  useEffect(() => {
+    if (!open || !deviceName) { setColorActive(null); return undefined; }
+    let cancelled = false;
+    window.printlayout?.color?.resolveActive?.(deviceName)
+      .then((r) => { if (!cancelled) setColorActive(r?.ok ? r.active : null); })
+      .catch(() => { if (!cancelled) setColorActive(null); });
+    return () => { cancelled = true; };
+  }, [open, deviceName]);
 
   useEffect(() => {
     if (!open) return;
@@ -275,6 +286,12 @@ export default function PrintModal({
                 >
                   Resetear
                 </button>
+              </div>
+            )}
+            {colorActive && (
+              <div className="mt-1.5 rounded border border-green-700/40 bg-green-950/30 px-2 py-1 text-[11px] text-green-300">
+                🎨 Corrección de color activa{colorActive.updatedAt ? ' — calibrada el ' + new Date(colorActive.updatedAt).toLocaleDateString() : ''}
+                {colorActive.paperName ? ' (' + colorActive.paperName + ')' : ''}.
               </div>
             )}
           </label>

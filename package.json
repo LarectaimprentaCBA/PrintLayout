@@ -1,6 +1,6 @@
 {
   "name": "printlayout",
-  "version": "0.1.169",
+  "version": "0.1.170",
   "description": "PrintLayout — herramienta de imposición de fotos, tarjetas y stickers para impresión y corte. Desarrollada por La Recta Imprenta (Córdoba, AR) para uso interno.",
   "type": "module",
   "main": "electron/main.cjs",
@@ -22,6 +22,8 @@
     "installer": "npm run build && electron-builder --win nsis",
     "release": "npm run build && electron-builder --win nsis --publish always",
     "test:bleed": "node src/lib/__tests__/imageBleed.test.mjs",
+    "test:color-parity": "electron src/lib/colorCalibration/__tests__/parity.cjs",
+    "test:color-code": "node src/lib/colorCalibration/__tests__/code.test.mjs",
     "test:dobble": "node src/dobble/__tests__/buildDobbleJob.smoke.mjs",
     "test:dobble-intake": "node electron/intake/__tests__/dobble-intake.test.cjs",
     "evidence:dobble": "electron src/dobble/__tests__/gen-evidence.cjs",
@@ -99,6 +101,10 @@
       }
     ],
     "asar": true,
+    "asarUnpack": [
+      "electron/color/lutWorker.cjs",
+      "electron/color/lut.cjs"
+    ],
     "fileAssociations": [
       {
         "ext": "pljob",

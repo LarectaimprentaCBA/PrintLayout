@@ -329,6 +329,7 @@ export default function TopBar({
   onOpenIntake,
   onOpenMazosPublicados,
   onOpenQrCut,
+  onOpenColorCal,
   // Utilidades globales
   onOpenTemplates,
   onOpenRotulos,
@@ -513,6 +514,16 @@ export default function TopBar({
                 className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:bg-ink-700"
               >
                 Corte QR
+              </button>
+            )}
+            {onOpenColorCal && (
+              <button
+                type="button"
+                onClick={onOpenColorCal}
+                title="Calibración de color: hacer que una impresora imprima con los mismos colores que otra de referencia"
+                className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:bg-ink-700"
+              >
+                Color
               </button>
             )}
             {onCheckUpdates && (

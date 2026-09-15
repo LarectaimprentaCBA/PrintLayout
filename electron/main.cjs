@@ -22,6 +22,10 @@ const supabase = require('./intake/supabase.cjs');
 const qrCutServer = require('./qrcut/server.cjs');
 const qrCutRelay = require('./qrcut/relay.cjs');
 const { writePdfSilent, dobblePdfFileName, rotuloPdfFileName } = require('./intake/save-pdf.cjs');
+const colorStore = require('./color/store.cjs');
+const colorPrinters = require('./color/printers.cjs');
+const colorSync = require('./color/sync.cjs');
+const { ColorApplier } = require('./color/apply.cjs');
 
 autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
@@ -1859,6 +1863,8 @@ ipcMain.handle('print:pdf', async (_evt, payload) => {
     copies,
     showDialog,
     docName,
+    devmodeB64,          // DEVMODE de sesión (calibración): usar sin pisar el guardado
+    noColorCorrection,   // true al imprimir la carta de calibración (medir crudo)
   } = payload ?? {};
   if (!Array.isArray(images) || images.length === 0) {
     return { ok: false, error: 'No hay paginas para imprimir.' };
@@ -1877,16 +1883,48 @@ ipcMain.handle('print:pdf', async (_evt, payload) => {
   // protocolo y limitaria por buffer pipe de Windows.
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'printlayout-print-'));
   const pagePaths = [];
+
+  // Corrección de color: si esta impresora (por su IP) tiene una calibración ACTIVA en
+  // esta PC, y no es una impresión con diálogo ni la carta de calibración, aplicar la LUT
+  // a cada hoja. La identidad es la IP (el nombre de cola cambia entre PC). Best-effort:
+  // si algo falla, se imprime sin corregir. El bucle de píxeles corre en un worker.
+  let applier = null;
+  try {
+    if (showDialog === false && !noColorCorrection && deviceName) {
+      const manual = colorStore.getManualIp();
+      const ip = await colorPrinters.resolveIp(deviceName, manual);
+      const cal = ip ? colorStore.getActiveForIp(ip) : null;
+      const S = cal ? (cal.lutSize || 17) : 0;
+      const expected = S * S * S * 3;
+      if (cal && Array.isArray(cal.lut) && cal.lut.length === expected) {
+        applier = new ColorApplier({ V: cal.lut, S });
+        console.log(`[color] corrigiendo impresión a ${deviceName} (IP ${ip}, calibración ${cal.id})`);
+      } else if (cal) {
+        console.warn(`[color] calibración ${cal.id} con LUT inválida (${cal.lut && cal.lut.length} ≠ ${expected}); se imprime sin corregir.`);
+      }
+    }
+  } catch (err) {
+    console.warn('[color] no se pudo resolver la calibración:', err.message);
+  }
+
   try {
     for (let i = 0; i < images.length; i++) {
       const p = path.join(tmpDir, `page-${String(i).padStart(3, '0')}.png`);
-      fs.writeFileSync(p, dataUrlToBuffer(images[i]));
+      let buf = dataUrlToBuffer(images[i]);
+      if (applier) {
+        const t0 = Date.now();
+        buf = await applier.applyPng(buf);
+        console.log(`[color] hoja ${i + 1}/${images.length} corregida en ${Date.now() - t0} ms`);
+      }
+      fs.writeFileSync(p, buf);
       pagePaths.push(p);
     }
   } catch (err) {
+    if (applier) applier.dispose();
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
     return { ok: false, error: `No se pudieron preparar las hojas: ${err.message}` };
   }
+  if (applier) applier.dispose();
 
   // Construir input del helper. Ver protocolo en helper/PrintHelper.cs.
   const lines = ['MODE=print'];
@@ -1904,9 +1942,17 @@ ipcMain.handle('print:pdf', async (_evt, payload) => {
   if (typeof docName === 'string' && docName.trim()) {
     lines.push(`DOC_NAME=${docName.replace(/[\r\n]+/g, ' ').trim().slice(0, 120)}`);
   }
-  // Si existe un DEVMODE guardado por PrintLayout para esta impresora, lo
-  // pasamos para que el job use esas preferencias (papel/calidad/color/duplex).
-  if (deviceName) {
+  // DEVMODE de sesión de calibración (papel elegido en el asistente) tiene prioridad y NO
+  // pisa la config guardada de la impresora. Si no, se usa el DEVMODE guardado por PrintLayout.
+  if (typeof devmodeB64 === 'string' && devmodeB64) {
+    try {
+      const dmSession = path.join(tmpDir, 'devmode-sesion.bin');
+      fs.writeFileSync(dmSession, Buffer.from(devmodeB64, 'base64'));
+      lines.push(`DEVMODE_FILE=${dmSession}`);
+    } catch (err) {
+      console.warn('[color] no se pudo escribir DEVMODE de sesión:', err.message);
+    }
+  } else if (deviceName) {
     const dmFile = devmodeFilePath(deviceName);
     if (fs.existsSync(dmFile)) lines.push(`DEVMODE_FILE=${dmFile}`);
   }
@@ -1961,6 +2007,172 @@ ipcMain.handle('print:pdf', async (_evt, payload) => {
     } catch (err) {
       settle({ ok: false, error: `No se pudo enviar input al helper: ${err.message}` });
     }
+  });
+});
+
+// ── Calibración de color ─────────────────────────────────────────────────────
+ipcMain.handle('color:list-printers', async () => {
+  try { return await colorPrinters.list(true); }
+  catch (err) { return { ok: false, printers: [], error: err.message }; }
+});
+
+ipcMain.handle('color:list', async () => {
+  try { return { ok: true, calibrations: colorStore.list(), manualIp: colorStore.getManualIp() }; }
+  catch (err) { return { ok: false, error: err.message, calibrations: [] }; }
+});
+
+ipcMain.handle('color:save', async (_evt, cal) => {
+  try { return { ok: true, calibration: colorStore.save(cal) }; }
+  catch (err) { return { ok: false, error: err.message }; }
+});
+
+ipcMain.handle('color:delete', async (_evt, id) => {
+  try { return colorStore.remove(id); }
+  catch (err) { return { ok: false, error: err.message }; }
+});
+
+ipcMain.handle('color:set-active', async (_evt, payload) => {
+  const { id, active } = payload || {};
+  try {
+    const r = colorStore.setActive(id, active);
+    // Si la calibración está compartida y hay token, propagar el estado activo/inactivo.
+    const cal = colorStore.get(id);
+    if (r.ok && cal && cal.sharedAt && colorSync.hasToken()) {
+      colorSync.push(cal).then((pr) => {
+        if (pr.ok) colorStore.markShared(id, pr.updatedAt, pr.hash);
+      }).catch(() => {});
+    }
+    return r;
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+
+ipcMain.handle('color:get-manual-ip', async () => {
+  try { return { ok: true, manualIp: colorStore.getManualIp() }; }
+  catch (err) { return { ok: false, error: err.message, manualIp: {} }; }
+});
+
+ipcMain.handle('color:set-manual-ip', async (_evt, payload) => {
+  const { queue, ip } = payload || {};
+  try { return colorStore.setManualIp(queue, ip); }
+  catch (err) { return { ok: false, error: err.message }; }
+});
+
+// Resuelve la calibración activa para una cola (para el cartel "Corrección activa").
+ipcMain.handle('color:resolve-active', async (_evt, payload) => {
+  const { deviceName } = payload || {};
+  try {
+    const ip = await colorPrinters.resolveIp(deviceName, colorStore.getManualIp());
+    const cal = ip ? colorStore.getActiveForIp(ip) : null;
+    return {
+      ok: true, ip,
+      active: cal ? { id: cal.id, referenceIp: cal.referencePrinter && cal.referencePrinter.ip, paperName: cal.paperName, createdAt: cal.createdAt, updatedAt: cal.updatedAt } : null,
+    };
+  } catch (err) { return { ok: false, error: err.message, ip: null, active: null }; }
+});
+
+ipcMain.handle('color:can-share', async () => {
+  try { return { ok: true, canShare: colorSync.hasToken() }; }
+  catch (err) { return { ok: false, canShare: false }; }
+});
+
+ipcMain.handle('color:share', async (_evt, id) => {
+  try {
+    const cal = colorStore.get(id);
+    if (!cal) return { ok: false, error: 'No existe la calibración.' };
+    if (!colorSync.hasToken()) return { ok: false, error: 'Sin permiso para compartir (falta token).' };
+    const r = await colorSync.push(cal);
+    if (r.ok) colorStore.markShared(id, r.updatedAt, r.hash);
+    return r;
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+
+ipcMain.handle('color:delete-shared', async (_evt, id) => {
+  try {
+    if (!colorSync.hasToken()) return { ok: false, error: 'Sin permiso para borrar compartidas (falta token).' };
+    const r = await colorSync.remove(id);
+    colorStore.remove(id);
+    return r;
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+
+// Baja las calibraciones compartidas. Gana la más nueva (updatedAt) por impresora; la
+// anterior local se guarda como backup. Propaga borrados (si el manifest tiene ≥1 entrada).
+ipcMain.handle('color:sync-pull', async () => {
+  try {
+    const remote = await colorSync.listRemote();
+    const local = colorStore.list();
+    const localById = new Map(local.map((c) => [c.id, c]));
+    let added = 0, updated = 0, removed = 0;
+    for (const entry of remote) {
+      const loc = localById.get(entry.id);
+      if (loc && loc.sharedHash === entry.hash) continue; // sin cambios
+      if (loc && loc.updatedAt && entry.updatedAt && new Date(loc.updatedAt) > new Date(entry.updatedAt)) continue; // local más nuevo gana
+      const full = await colorSync.pull(entry.id);
+      if (!full) continue;
+      if (loc) colorStore.addBackup(loc);
+      colorStore.save({
+        id: full.id,
+        engineVersion: full.engineVersion || 1,
+        correctPrinter: { ip: full.correctIp || '' },
+        referencePrinter: { ip: full.referenceIp || '' },
+        paperName: full.paperName || '',
+        lutSize: full.lutSize || 17,
+        lut: full.lut || [],
+        results: full.results || null,
+        active: !!full.active,
+        createdAt: full.createdAt,
+        updatedAt: full.updatedAt || entry.updatedAt,
+        sharedAt: entry.updatedAt,
+        sharedHash: entry.hash,
+      });
+      if (loc) updated++; else added++;
+    }
+    // Propagar borrados: local compartida cuyo id ya no está en el manifest.
+    if (remote.length > 0) {
+      const remoteIds = new Set(remote.map((e) => e.id));
+      for (const c of colorStore.list()) {
+        if (c.sharedAt && !remoteIds.has(c.id)) { colorStore.addBackup(c); colorStore.remove(c.id); removed++; }
+      }
+    }
+    return { ok: true, added, updated, removed };
+  } catch (err) { return { ok: false, error: err.message, added: 0, updated: 0, removed: 0 }; }
+});
+
+// Abre Preferencias de la impresora y DEVUELVE el DEVMODE elegido (base64) SIN guardarlo
+// en la config de la impresora (queda dentro de la sesión de calibración).
+ipcMain.handle('color:configure-paper', async (_evt, payload) => {
+  const { deviceName, baseDevmodeB64 } = payload || {};
+  if (!deviceName) return { ok: false, error: 'Falta el nombre de la impresora.' };
+  const helperExe = resolvePrintHelper();
+  if (!helperExe) return { ok: false, error: 'No se encontro PrintHelper.exe.' };
+  return await new Promise((resolve) => {
+    let stdout = '', stderr = '', settled = false;
+    const settle = (r) => { if (settled) return; settled = true; resolve(r); };
+    let proc;
+    try { proc = spawn(helperExe, [], { windowsHide: false }); }
+    catch (err) { settle({ ok: false, error: `No se pudo iniciar PrintHelper: ${err.message}` }); return; }
+    proc.stdout.on('data', (d) => { stdout += d.toString('utf-8'); });
+    proc.stderr.on('data', (d) => { stderr += d.toString('utf-8'); });
+    proc.on('error', (err) => settle({ ok: false, error: `PrintHelper fallo: ${err.message}` }));
+    proc.on('close', (code) => {
+      const result = {};
+      for (const ln of stdout.split(/\r?\n/)) { const eq = ln.indexOf('='); if (eq <= 0) continue; result[ln.slice(0, eq)] = ln.slice(eq + 1); }
+      if (result.OK === '1' && result.DEVMODE_OUT) settle({ ok: true, devmodeB64: result.DEVMODE_OUT });
+      else if (result.CANCELED === '1' || code === 2) settle({ ok: true, canceled: true });
+      else settle({ ok: false, error: result.ERROR || stderr.trim() || `PrintHelper exit ${code}` });
+    });
+    const lines = ['MODE=configure', `DEVICE=${deviceName}`];
+    let tmpBase = null;
+    if (typeof baseDevmodeB64 === 'string' && baseDevmodeB64) {
+      try {
+        tmpBase = path.join(os.tmpdir(), `pl-devmode-${Date.now()}.bin`);
+        fs.writeFileSync(tmpBase, Buffer.from(baseDevmodeB64, 'base64'));
+        lines.push(`DEVMODE_FILE=${tmpBase}`);
+      } catch { /* sin base */ }
+    }
+    lines.push('END=1');
+    try { proc.stdin.write(lines.join('\n') + '\n', 'utf-8'); proc.stdin.end(); }
+    catch (err) { settle({ ok: false, error: `No se pudo enviar input al helper: ${err.message}` }); }
   });
 });
 
