@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { newSessionId } from '../lib/colorCalibration/code.js';
 import { renderCalibrationCharts } from '../lib/colorCalibration/chart.js';
-import { analyzePair } from '../lib/colorCalibration/analyze.js';
+import { analyzePair, parseCube, parseInformePrevisto, parseInformeReal } from '../lib/colorCalibration/analyze.js';
 
 // Asistente de calibración de color por impresora. Corrige una impresora "pálida" para
 // que imprima como una de referencia. La identidad de la impresora es su IP (el nombre de
@@ -33,6 +33,11 @@ export default function ColorCalModal({ open, onClose }) {
   const [scanB, setScanB] = useState(null);
   const [analysis, setAnalysis] = useState(null); // {lut, informe, stats, ...}
   const fileRef = useRef(null);
+  // Importar .cube
+  const [cubeText, setCubeText] = useState(null);
+  const [cubeInfo, setCubeInfo] = useState(null); // {name, date}
+  const [informeText, setInformeText] = useState(null);
+  const [informeCorrText, setInformeCorrText] = useState(null);
 
   const reload = async () => {
     const a = api();
@@ -119,6 +124,61 @@ export default function ColorCalModal({ open, onClose }) {
     setRefDevmode(null); setCorrectDevmode(null); setSessionId(newSessionId());
     setPrintedCharts(false); setScanA(null); setScanB(null); setAnalysis(null);
     setFeedback(null); setView('wizard');
+  };
+
+  const startImport = () => {
+    setCorrectDev(''); setRefDev(''); setPaperName('');
+    setCubeText(null); setCubeInfo(null); setInformeText(null); setInformeCorrText(null);
+    setFeedback(null); setView('import');
+  };
+
+  const onCubeFile = async (file) => {
+    if (!file) return;
+    const text = await file.text();
+    try {
+      parseCube(text); // valida acá para avisar temprano
+      setCubeText(text);
+      setCubeInfo({ name: file.name, date: new Date(file.lastModified).toISOString() });
+      notify('ok', 'Archivo .cube válido.');
+    } catch (e) {
+      setCubeText(null); setCubeInfo(null);
+      notify('error', e.message);
+    }
+  };
+
+  const runImport = async () => {
+    if (!cubeText) { notify('error', 'Elegí el archivo .cube.'); return; }
+    if (!correctDev || !refDev || correctDev === refDev) { notify('error', 'Elegí dos impresoras distintas.'); return; }
+    const correctIp = ipOf(correctDev);
+    if (!correctIp) { notify('error', 'La impresora a corregir no tiene IP. Asignásela a mano en la lista y volvé a intentar.'); return; }
+    setBusy('import');
+    try {
+      const lut = parseCube(cubeText);
+      let results = null;
+      if (informeText) results = { ...parseInformePrevisto(informeText) };
+      if (informeCorrText) results = { ...(results || {}), ...parseInformeReal(informeCorrText) };
+      const cal = {
+        id: 'cal-imp-' + Date.now().toString(36),
+        engineVersion: 1,
+        correctPrinter: { ip: correctIp, queue: correctDev },
+        referencePrinter: { ip: ipOf(refDev) || '', queue: refDev },
+        paperName: paperName || '',
+        lutSize: lut.S,
+        lut: Array.from(lut.V),
+        results,
+        active: false,
+        origen: 'importada',
+        archivoOrigen: cubeInfo,
+      };
+      const sr = await api().save(cal);
+      if (!sr.ok) throw new Error(sr.error || 'no se pudo guardar');
+      await reload();
+      setView('list');
+      notify('ok', 'Calibración importada (queda desactivada). Activala con el botón Activar.');
+    } catch (e) {
+      notify('error', e.message);
+    }
+    setBusy('');
   };
 
   const configurePaper = async (which) => {
@@ -236,8 +296,18 @@ export default function ColorCalModal({ open, onClose }) {
             <ListView
               cals={cals} printers={printers} manualIp={manualIp} canShare={canShare} busy={busy}
               nameForIp={nameForIp} printersWithoutIp={printersWithoutIp}
-              onCalibrate={startWizard} onToggle={toggleActive} onDelete={del} onShare={share}
+              onCalibrate={startWizard} onImport={startImport} onToggle={toggleActive} onDelete={del} onShare={share}
               onDeleteShared={deleteShared} onPull={pull} onSetManual={setManual} fmtDate={fmtDate}
+            />
+          ) : view === 'import' ? (
+            <ImportView
+              printers={printers} busy={busy} ipOf={ipOf}
+              correctDev={correctDev} setCorrectDev={setCorrectDev} refDev={refDev} setRefDev={setRefDev}
+              paperName={paperName} setPaperName={setPaperName}
+              cubeInfo={cubeInfo} onCubeFile={onCubeFile}
+              informeText={informeText} setInformeText={setInformeText}
+              informeCorrText={informeCorrText} setInformeCorrText={setInformeCorrText}
+              runImport={runImport} onCancel={() => setView('list')}
             />
           ) : (
             <WizardView
@@ -257,11 +327,12 @@ export default function ColorCalModal({ open, onClose }) {
   );
 }
 
-function ListView({ cals, printers, canShare, busy, nameForIp, printersWithoutIp, onCalibrate, onToggle, onDelete, onShare, onDeleteShared, onPull, onSetManual, fmtDate }) {
+function ListView({ cals, printers, canShare, busy, nameForIp, printersWithoutIp, onCalibrate, onImport, onToggle, onDelete, onShare, onDeleteShared, onPull, onSetManual, fmtDate }) {
   return (
     <>
-      <div className="mb-3 flex items-center gap-2">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         <button onClick={onCalibrate} className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500">Calibrar una impresora</button>
+        <button onClick={onImport} className="rounded border border-ink-600 px-3 py-1.5 text-sm text-ink-100 hover:bg-ink-800">Importar calibración (.cube)</button>
         <button onClick={onPull} disabled={busy === 'pull'} className="rounded border border-ink-700 px-3 py-1.5 text-sm text-ink-200 hover:bg-ink-800 disabled:opacity-50">{busy === 'pull' ? 'Actualizando…' : 'Actualizar (bajar de otras PC)'}</button>
       </div>
 
@@ -278,12 +349,14 @@ function ListView({ cals, printers, canShare, busy, nameForIp, printersWithoutIp
                 {c.sharedAt && <span className="ml-1 rounded bg-ink-800 px-1.5 py-0.5 text-[10px] text-ink-300">compartida</span>}
                 <span className="ml-auto text-[11px] text-ink-400">{fmtDate(c.createdAt)}{c.paperName ? ' · ' + c.paperName : ''}</span>
               </div>
-              {c.results && (
+              {c.results && (c.results.antesProm != null || c.results.realProm != null) && (
                 <div className="mt-1 text-[11px] text-ink-400">
-                  Diferencia de color: <b className="text-ink-200">{fmt1(c.results.antesProm)}</b> → <b className="text-green-300">{fmt1(c.results.previstoProm)}</b>
-                  {typeof c.results.fuera5 === 'number' && <span> · quedan {c.results.fuera5} colores con diferencia ≥5</span>}
+                  Diferencia de color: <b className="text-ink-200">{fmt1(c.results.antesProm)}</b> → previsto <b className="text-green-300">{fmt1(c.results.previstoProm)}</b>
+                  {c.results.realProm != null && <span> · real <b className="text-green-200">{fmt1(c.results.realProm)}</b></span>}
+                  {typeof c.results.fuera5 === 'number' && c.results.realProm == null && <span> · quedan {c.results.fuera5} con dif ≥5</span>}
                 </div>
               )}
+              {c.origen === 'importada' && <div className="text-[10px] text-ink-500">importada{c.archivoOrigen?.name ? ' de ' + c.archivoOrigen.name : ''}</div>}
               <div className="mt-2 flex flex-wrap gap-2">
                 <button onClick={() => onToggle(c)} disabled={busy === 'active'} className={'rounded px-2 py-1 text-xs ' + (c.active ? 'border border-amber-700 text-amber-300 hover:bg-amber-950/40' : 'bg-green-700 text-white hover:bg-green-600')}>
                   {c.active ? 'Desactivar' : 'Activar'}
@@ -431,6 +504,59 @@ function WizardView(props) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function ImportView({ printers, busy, ipOf, correctDev, setCorrectDev, refDev, setRefDev, paperName, setPaperName, cubeInfo, onCubeFile, informeText, setInformeText, informeCorrText, setInformeCorrText, runImport, onCancel }) {
+  const realPrinters = printers.filter((p) => !/XPS|PDF|OneNote|Fax/i.test(p.name));
+  const readTxt = async (file, setter) => { if (file) setter(await file.text()); };
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-ink-400">¿Ya tenés una calibración hecha (un archivo .cube)? Cargala acá sin repetir todo el proceso.</p>
+
+      <label className="block text-xs text-ink-300">Archivo .cube (la tabla de corrección)
+        <input type="file" accept=".cube" onChange={(e) => onCubeFile(e.target.files?.[0])}
+          className="mt-1 block w-full text-xs text-ink-300 file:mr-2 file:rounded file:border-0 file:bg-ink-700 file:px-3 file:py-1.5 file:text-ink-100" />
+      </label>
+      {cubeInfo && <p className="text-[11px] text-green-300">✓ {cubeInfo.name}</p>}
+
+      <label className="block text-xs text-ink-300">Impresora a corregir
+        <select value={correctDev} onChange={(e) => setCorrectDev(e.target.value)} className="mt-1 w-full rounded border border-ink-700 bg-ink-900 px-2 py-1.5 text-sm text-ink-100">
+          <option value="">— elegir —</option>
+          {realPrinters.map((p) => <option key={p.name} value={p.name}>{p.name}{p.ip ? ' (' + p.ip + ')' : ' (sin IP)'}</option>)}
+        </select>
+      </label>
+      <label className="block text-xs text-ink-300">Impresora de referencia
+        <select value={refDev} onChange={(e) => setRefDev(e.target.value)} className="mt-1 w-full rounded border border-ink-700 bg-ink-900 px-2 py-1.5 text-sm text-ink-100">
+          <option value="">— elegir —</option>
+          {realPrinters.map((p) => <option key={p.name} value={p.name}>{p.name}{p.ip ? ' (' + p.ip + ')' : ' (sin IP)'}</option>)}
+        </select>
+      </label>
+      {correctDev && !ipOf(correctDev) && <p className="text-[11px] text-amber-300">La impresora a corregir no muestra IP. Asignásela a mano en la lista antes de importar.</p>}
+
+      <label className="block text-xs text-ink-300">Nombre del papel (opcional)
+        <input value={paperName} onChange={(e) => setPaperName(e.target.value)} placeholder='ej. Ilustración 150' className="mt-1 w-full rounded border border-ink-700 bg-ink-900 px-2 py-1.5 text-sm text-ink-100" />
+      </label>
+
+      <div className="rounded border border-ink-800 bg-ink-950/40 p-2">
+        <p className="mb-1 text-[11px] text-ink-400">Opcional: cargá los informes para ver los números (antes → previsto → real). Si no, se importa igual.</p>
+        <label className="block text-[11px] text-ink-400">informe.txt (previsto)
+          <input type="file" accept=".txt" onChange={(e) => readTxt(e.target.files?.[0], setInformeText)} className="mt-0.5 block w-full text-[11px] text-ink-400 file:mr-2 file:rounded file:border-0 file:bg-ink-800 file:px-2 file:py-1 file:text-ink-200" />
+        </label>
+        {informeText && <span className="text-[10px] text-green-300">✓ previsto cargado</span>}
+        <label className="mt-1 block text-[11px] text-ink-400">informe-corregida.txt (real)
+          <input type="file" accept=".txt" onChange={(e) => readTxt(e.target.files?.[0], setInformeCorrText)} className="mt-0.5 block w-full text-[11px] text-ink-400 file:mr-2 file:rounded file:border-0 file:bg-ink-800 file:px-2 file:py-1 file:text-ink-200" />
+        </label>
+        {informeCorrText && <span className="text-[10px] text-green-300">✓ real cargado</span>}
+      </div>
+
+      <div className="flex justify-between">
+        <button onClick={onCancel} className="rounded border border-ink-700 px-3 py-1.5 text-sm text-ink-300 hover:bg-ink-800">Cancelar</button>
+        <button onClick={runImport} disabled={busy === 'import'} className="rounded bg-green-700 px-3 py-1.5 text-sm text-white hover:bg-green-600 disabled:opacity-50">
+          {busy === 'import' ? 'Importando…' : 'Importar (queda desactivada)'}
+        </button>
+      </div>
     </div>
   );
 }

@@ -2120,6 +2120,8 @@ ipcMain.handle('color:sync-pull', async () => {
         lut: full.lut || [],
         results: full.results || null,
         active: !!full.active,
+        origen: full.origen || null,
+        archivoOrigen: full.archivoOrigen || null,
         createdAt: full.createdAt,
         updatedAt: full.updatedAt || entry.updatedAt,
         sharedAt: entry.updatedAt,

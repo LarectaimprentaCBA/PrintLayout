@@ -104,6 +104,26 @@ async function run() {
     check('aplicar LUT: dif por píxel <= 1 (zona parches)', maxPix <= 1, 'max=' + maxPix);
   } catch (e) { check('aplicar LUT', false, 'ERROR ' + e.message); }
 
+  // ── Importar .cube: round-trip + parseo de informes + rechazo de inválidos ──
+  const A = await import(pathToFileURL(path.resolve(__dirname, '..', 'analyze.js')).href);
+  const cubeText = fs.readFileSync(path.join(KIT, 'resultado', 'correccion-198.cube'), 'utf8');
+  const lut2 = A.parseCube(cubeText);
+  let maxRt = 0;
+  for (let i = 0; i < lut2.V.length; i++) maxRt = Math.max(maxRt, Math.abs(lut2.V[i] / 255 - refCube.V[i] / 255));
+  check('import .cube round-trip <= 1e-6', maxRt <= 1e-6, 'max=' + maxRt.toExponential(2));
+
+  const prev = A.parseInformePrevisto(fs.readFileSync(path.join(KIT, 'resultado', 'informe.txt'), 'utf8'));
+  check('import informe antes=9.5', prev.antesProm === 9.5, 'v=' + prev.antesProm);
+  check('import informe previsto=2.6', prev.previstoProm === 2.6, 'v=' + prev.previstoProm);
+  check('import informe fuera5=31', prev.fuera5 === 31, 'v=' + prev.fuera5);
+  const real = A.parseInformeReal(fs.readFileSync(path.join(KIT, 'resultado', 'informe-corregida.txt'), 'utf8'));
+  check('import informe real=3.9', real.realProm === 3.9, 'v=' + real.realProm);
+
+  let rejTxt = false; try { A.parseCube(fs.readFileSync(path.join(KIT, 'resultado', 'informe.txt'), 'utf8')); } catch { rejTxt = true; }
+  check('import rechaza .txt renombrado', rejTxt);
+  let rejCut = false; try { A.parseCube(cubeText.split('\n').slice(0, 100).join('\n')); } catch { rejCut = true; }
+  check('import rechaza .cube cortado', rejCut);
+
   console.log('=== PARIDAD ===');
   for (const [pass, name, detail] of results) console.log((pass ? 'OK  ' : 'FAIL') + '  ' + name + '   [' + detail + ']');
   console.log(ok ? '*** PARIDAD OK ***' : '*** PARIDAD FALLÓ ***');

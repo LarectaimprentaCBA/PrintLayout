@@ -81,6 +81,8 @@ function toShared(cal) {
     lut: cal.lut || [],
     results: cal.results || null,
     active: !!cal.active,
+    origen: cal.origen || null,
+    archivoOrigen: cal.archivoOrigen || null,
     createdAt: cal.createdAt || new Date().toISOString(),
     updatedAt: cal.updatedAt || new Date().toISOString(),
   };
