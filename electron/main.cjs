@@ -5,7 +5,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const crypto = require('node:crypto');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const { autoUpdater } = require('electron-updater');
 const potrace = require('potrace');
 const templatesStore = require('./templates-store.cjs');
@@ -26,6 +26,9 @@ const colorStore = require('./color/store.cjs');
 const colorPrinters = require('./color/printers.cjs');
 const colorSync = require('./color/sync.cjs');
 const { ColorApplier } = require('./color/apply.cjs');
+const printCore = require('./print-core.cjs');
+const qrcutConfig = require('./qrcut/config-store.cjs');
+const quickPrint = require('./quickprint/service.cjs');
 
 autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
@@ -158,6 +161,10 @@ if (!gotSingleInstanceLock) {
   // arranca una copia nueva con el archivo en argv; esa copia no obtiene el lock y
   // avisa a la primera. Enfocamos la ventana y, si venía un .pljob, lo abrimos.
   app.on('second-instance', (_evt, argv) => {
+    // "Imprimir con PrintLayout": NO tocamos la ventana principal (ni sus
+    // pestañas) — solo abrimos/actualizamos la ventana de impresión aparte.
+    const toPrint = quickPrint.filesFromArgv(argv);
+    if (toPrint.length) { quickPrint.enqueue(toPrint); return; }
     showMainWindow();
     const p = pljobPathFromArgv(argv);
     if (p) openJobFileInRenderer(p);
@@ -1870,176 +1877,15 @@ ipcMain.handle('print:pdf', async (_evt, payload) => {
   if (!Array.isArray(images) || images.length === 0) {
     return { ok: false, error: 'No hay paginas para imprimir.' };
   }
-  if (!pageWidthMm || !pageHeightMm) {
-    return { ok: false, error: 'Tamano de hoja no definido.' };
-  }
-
-  const helperExe = resolvePrintHelper();
-  if (!helperExe) {
-    return { ok: false, error: 'No se encontro PrintHelper.exe.' };
-  }
-
-  // Volcar cada hoja (dataURL PNG) a un archivo temporal. El helper carga
-  // los PNG de disco — pasarlos por stdin junto al control complicaria el
-  // protocolo y limitaria por buffer pipe de Windows.
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'printlayout-print-'));
-  const pagePaths = [];
-
-  // Corrección de color: si esta impresora (por su IP) tiene una calibración ACTIVA en
-  // esta PC, aplicar la LUT a cada hoja. La identidad es la IP (el nombre de cola cambia
-  // entre PC). Best-effort: si algo falla, se imprime SIN corregir y se avisa (colorStatus).
-  // Rendimiento: si NO hay ninguna calibración activa, no se resuelve nada (0 ms). Si hay,
-  // se usa el mapa cola→IP ya cacheado (~0 ms); solo si esta cola no está en el mapa se
-  // resuelve ESA sola cola con límite de tiempo.
-  let applier = null;
-  let colorCal = null, colorIp = null;
-  // colorStatus.state: 'no-active' | 'no-corresponde' | 'aplicada' | 'fallo'
-  let colorStatus = { state: 'no-active' };
-  const tColor0 = Date.now();
-  try {
-    if (showDialog === false && !noColorCorrection && deviceName && colorStore.hasAnyActive()) {
-      const manual = colorStore.getManualIp();
-      let ip = colorPrinters.resolveFromCache(deviceName, manual); // ~0 ms (caché)
-      let timedOut = false;
-      if (!ip) {
-        ip = await colorPrinters.resolveOneQueue(deviceName, manual, 900); // una sola cola, acotado
-        if (!ip) timedOut = true;
-      }
-      colorIp = ip;
-      const cal = ip ? colorStore.getActiveForIp(ip) : null;
-      if (cal) {
-        const S = cal.lutSize || 17;
-        const expected = S * S * S * 3;
-        if (Array.isArray(cal.lut) && cal.lut.length === expected) {
-          applier = new ColorApplier({ V: cal.lut, S });
-          colorCal = cal;
-        } else {
-          colorStatus = { state: 'fallo', reason: 'la tabla de la calibración es inválida' };
-        }
-      } else if (timedOut) {
-        // Hay calibraciones activas pero no pudimos identificar esta impresora por IP.
-        colorStatus = { state: 'fallo', reason: 'no se pudo identificar la impresora (IP) a tiempo' };
-      } else {
-        colorStatus = { state: 'no-corresponde' };
-      }
-    } else if (showDialog !== false || noColorCorrection) {
-      colorStatus = { state: 'no-corresponde' };
-    }
-  } catch (err) {
-    colorStatus = { state: 'fallo', reason: err.message || 'error al resolver la calibración' };
-  }
-  const colorResolveMs = Date.now() - tColor0;
-
-  const msPerPage = [];
-  try {
-    for (let i = 0; i < images.length; i++) {
-      const p = path.join(tmpDir, `page-${String(i).padStart(3, '0')}.png`);
-      let buf = dataUrlToBuffer(images[i]);
-      if (applier) {
-        const r = await applier.applyPng(buf);
-        buf = r.buffer;
-        msPerPage.push(r.ms);
-        if (!r.ok && colorStatus.state !== 'fallo') colorStatus = { state: 'fallo', reason: r.reason, page: i + 1 };
-      }
-      fs.writeFileSync(p, buf);
-      pagePaths.push(p);
-    }
-  } catch (err) {
-    if (applier) applier.dispose();
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-    return { ok: false, error: `No se pudieron preparar las hojas: ${err.message}` };
-  }
-  if (applier) applier.dispose();
-  if (applier && colorStatus.state !== 'fallo') colorStatus = { state: 'aplicada' };
-
-  // Log de la corrección (impresora, IP, calibración, hojas, ms/hoja) o de la falla.
-  if (colorStatus.state === 'aplicada') {
-    appendDebugLog(`[color] OK impresora="${deviceName}" ip=${colorIp} cal=${colorCal && colorCal.id} hojas=${images.length} resolveMs=${colorResolveMs} msPorHoja=[${msPerPage.join(',')}]`);
-  } else if (colorStatus.state === 'fallo') {
-    appendDebugLog(`[color] FALLO impresora="${deviceName}" ip=${colorIp} cal=${colorCal && colorCal.id} motivo="${colorStatus.reason}"${colorStatus.page ? ' hoja=' + colorStatus.page : ''}`);
-  }
-
-  // Construir input del helper. Ver protocolo en helper/PrintHelper.cs.
-  const lines = ['MODE=print'];
-  if (deviceName) lines.push(`DEVICE=${deviceName}`);
-  if (typeof copies === 'number' && copies > 0) {
-    lines.push(`COPIES=${Math.floor(copies)}`);
-  }
-  // Default: mostrar dialog (UX Adobe Reader). Caller puede pasar
-  // showDialog:false para impresion silent.
-  lines.push(`SHOW_DIALOG=${showDialog === false ? '0' : '1'}`);
-  lines.push(`WIDTH_MM=${pageWidthMm}`);
-  lines.push(`HEIGHT_MM=${pageHeightMm}`);
-  // Nombre del trabajo en la cola de la impresora (ej. "PC 1 - Grilla rápida").
-  // Saneado de saltos de línea (romperían el protocolo key=value del helper).
-  if (typeof docName === 'string' && docName.trim()) {
-    lines.push(`DOC_NAME=${docName.replace(/[\r\n]+/g, ' ').trim().slice(0, 120)}`);
-  }
-  // DEVMODE de sesión de calibración (papel elegido en el asistente) tiene prioridad y NO
-  // pisa la config guardada de la impresora. Si no, se usa el DEVMODE guardado por PrintLayout.
-  if (typeof devmodeB64 === 'string' && devmodeB64) {
-    try {
-      const dmSession = path.join(tmpDir, 'devmode-sesion.bin');
-      fs.writeFileSync(dmSession, Buffer.from(devmodeB64, 'base64'));
-      lines.push(`DEVMODE_FILE=${dmSession}`);
-    } catch (err) {
-      console.warn('[color] no se pudo escribir DEVMODE de sesión:', err.message);
-    }
-  } else if (deviceName) {
-    const dmFile = devmodeFilePath(deviceName);
-    if (fs.existsSync(dmFile)) lines.push(`DEVMODE_FILE=${dmFile}`);
-  }
-  for (const p of pagePaths) lines.push(`PAGE=${p}`);
-  lines.push('END=1');
-
-  return await new Promise((resolve) => {
-    let stdout = '';
-    let stderr = '';
-    let settled = false;
-    const settle = (result) => {
-      if (settled) return;
-      settled = true;
-      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-      resolve(result);
-    };
-
-    let proc;
-    try {
-      proc = spawn(helperExe, [], { windowsHide: false });
-    } catch (err) {
-      settle({ ok: false, error: `No se pudo iniciar PrintHelper: ${err.message}` });
-      return;
-    }
-
-    proc.stdout.on('data', (d) => { stdout += d.toString('utf-8'); });
-    proc.stderr.on('data', (d) => { stderr += d.toString('utf-8'); });
-    proc.on('error', (err) => {
-      settle({ ok: false, error: `PrintHelper fallo: ${err.message}` });
-    });
-    proc.on('close', (code) => {
-      // Parsear key=value del stdout.
-      const result = {};
-      for (const ln of stdout.split(/\r?\n/)) {
-        const eq = ln.indexOf('=');
-        if (eq <= 0) continue;
-        result[ln.slice(0, eq)] = ln.slice(eq + 1);
-      }
-      if (result.OK === '1') {
-        settle({ ok: true, color: colorStatus });
-      } else if (result.CANCELED === '1' || code === 2) {
-        settle({ ok: false, canceled: true });
-      } else {
-        const errMsg = result.ERROR || stderr.trim() || `PrintHelper exit ${code}`;
-        settle({ ok: false, error: errMsg });
-      }
-    });
-
-    try {
-      proc.stdin.write(lines.join('\n') + '\n', 'utf-8');
-      proc.stdin.end();
-    } catch (err) {
-      settle({ ok: false, error: `No se pudo enviar input al helper: ${err.message}` });
-    }
+  // El núcleo vive en print-core.cjs (lo comparte la ventana "Imprimir con
+  // PrintLayout"). Aplica corrección de color por IP + manda al PrintHelper.
+  return printCore.runPrintJob({
+    pages: images.map((dataUrl) => ({ dataUrl })),
+    pageWidthMm, pageHeightMm, deviceName, copies, showDialog, docName,
+    devmodeB64, noColorCorrection,
+    helperExe: resolvePrintHelper(),
+    savedDevmodePath: deviceName ? devmodeFilePath(deviceName) : null,
+    appendDebugLog,
   });
 });
 
@@ -2453,16 +2299,75 @@ ipcMain.handle('qrcut:allow-firewall', () => {
   }
 });
 
+// ── "Imprimir con PrintLayout": verbo del clic derecho (menú clásico) ─────────
+// El instalador (build/installer.nsh) lo registra; esto lo REPARA al arrancar si
+// falta o apunta a otro exe (p. ej. lo borraron a mano, o se movió la instalación).
+// Va en HKCU (no requiere admin). En dev el exe es electron.exe → no registramos.
+const CONTEXT_MENU_EXTS = ['.jpg', '.jpeg', '.png', '.heic', '.heif', '.pdf'];
+
+function regEscape(s) {
+  return String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+function contextMenuRegText(exe) {
+  const iconVal = `"${regEscape(exe)},0"`;
+  const cmdVal = `"\\"${regEscape(exe)}\\" --imprimir \\"%1\\""`;
+  let out = 'Windows Registry Editor Version 5.00\r\n\r\n';
+  for (const ext of CONTEXT_MENU_EXTS) {
+    const base = `[HKEY_CURRENT_USER\\Software\\Classes\\SystemFileAssociations\\${ext}\\shell\\PrintLayout.Print]`;
+    out += base + '\r\n';
+    out += '@="Imprimir con PrintLayout"\r\n';
+    out += `"Icon"=${iconVal}\r\n`;
+    out += '"MultiSelectModel"="Player"\r\n\r\n';
+    out += base.slice(0, -1) + '\\command]\r\n';
+    out += `@=${cmdVal}\r\n\r\n`;
+  }
+  return out;
+}
+
+function repairContextMenuVerb() {
+  // Solo en la app INSTALADA (no en dev ni al correr scripts): el exe tiene que
+  // ser PrintLayout.exe, no electron.exe.
+  if (!app.isPackaged || process.platform !== 'win32') return;
+  try {
+    const exe = process.execPath;
+    const cmdKey = 'HKCU\\Software\\Classes\\SystemFileAssociations\\.pdf\\shell\\PrintLayout.Print\\command';
+    const q = spawnSync('reg', ['query', cmdKey, '/ve'], { windowsHide: true, encoding: 'utf-8' });
+    if (q.status === 0 && q.stdout && q.stdout.includes(exe)) return; // ya está y apunta al exe correcto
+    const regFile = path.join(app.getPath('userData'), 'quickprint-verb.reg');
+    fs.writeFileSync(regFile, contextMenuRegText(exe), 'utf-8');
+    spawnSync('reg', ['import', regFile], { windowsHide: true });
+    appendDebugLog('[quickprint] verbo del clic derecho (re)registrado -> ' + exe);
+  } catch (err) {
+    appendDebugLog('[quickprint] no se pudo reparar el verbo: ' + (err && err.message));
+  }
+}
+
 app.whenReady().then(() => {
   // Si no obtuvimos el lock de instancia única, esta copia ya llamó app.quit():
   // no armamos nada (la primera instancia es la que corre).
   if (!gotSingleInstanceLock) return;
   createWindow();   // arranca OCULTA (show:false)
   createTray();     // ícono en la bandeja
+
+  // "Imprimir con PrintLayout" (clic derecho de Windows). Registramos el
+  // servicio con las funciones de impresión que viven en este archivo.
+  quickPrint.init({
+    resolvePrintHelper, devmodeFilePath, ghostscriptBin,
+    GHOSTSCRIPT_DIR, appendDebugLog, appIconImage, isDev,
+  });
+  // Reparar el verbo del clic derecho si falta (p. ej. lo borraron a mano).
+  repairContextMenuVerb();
+
   // Arranque por doble clic en un .pljob: abrimos ese trabajo apenas cargue el
   // renderer (openJobFileInRenderer también muestra la ventana).
   const initialJob = pljobPathFromArgv(process.argv);
   if (initialJob) openJobFileInRenderer(initialJob);
+  // Arranque por "Imprimir con PrintLayout": abrimos la ventana de impresión
+  // aparte (la app queda en la bandeja; NO mostramos la ventana principal).
+  const initialPrint = quickPrint.filesFromArgv(process.argv);
+  if (initialPrint.length) quickPrint.enqueue(initialPrint);
+
   setupAutoUpdate(mainWindow);
   intakeService.start(mainWindow);
   qrCutServer.start(mainWindow);

@@ -20,5 +20,12 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        // Ventana principal + ventana chica "Imprimir con PrintLayout".
+        main: 'index.html',
+        quickprint: 'quickprint.html',
+      },
+    },
   },
 });

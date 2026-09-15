@@ -15,18 +15,25 @@
 //                         del DEVMODE del driver, devuelve el DEVMODE
 //                         resultante en stdout (DEVMODE_OUT=<base64>).
 //                         NO escribe nada al DEVMODE del sistema.
+//   pageinfo           — devuelve tamano fisico de hoja + area imprimible +
+//                         margenes + orientacion + duplex (en mm), del
+//                         DEVMODE_FILE o del default del driver. No imprime.
 //
 // Protocolo: lee key=value de stdin (1 por linea), termina con END=1.
-//   MODE=<print|configure>  default print
-//   DEVICE=<name>           obligatorio en configure; opcional en print
+//   MODE=<print|configure|pageinfo>  default print
+//   DEVICE=<name>           obligatorio en configure/pageinfo; opcional en print
 //   COPIES=<n>              opcional (print)
 //   SHOW_DIALOG=<0|1>       default 1 (print) — si 0, silent
-//   WIDTH_MM=<float>        ancho hoja en mm (print)
-//   HEIGHT_MM=<float>       alto hoja en mm (print)
+//   WIDTH_MM=<float>        ancho hoja en mm (print) — default de PAGE_MM
+//   HEIGHT_MM=<float>       alto hoja en mm (print) — default de PAGE_MM
+//   PAGE_MM=<w>,<h>         opcional — tamano de dibujo de la SIGUIENTE hoja en
+//                           mm (PDF de tamanos mixtos). Va antes de su PAGE=.
+//   PAGE_ROT=<0|90|180|270> opcional — rota la SIGUIENTE hoja (orientacion auto).
 //   PAGE=<path>             una linea por hoja PNG (print)
 //   DEVMODE_FILE=<path>     opcional — bin con DEVMODE guardado.
 //                           En print: se aplica al PrinterSettings.
 //                           En configure: precarga al abrir DocumentProperties.
+//                           En pageinfo: se lee para orientacion/duplex + CreateDC.
 //   END=1                   fin de input
 //
 // Output a stdout, una key=value por linea:
@@ -34,6 +41,11 @@
 //   OK=0 + CANCELED=1             usuario cancelo
 //   OK=0 + ERROR=<msg>            error
 //   DEVMODE_OUT=<base64>          (configure ok) bytes del DEVMODE resultante
+//   PAPER_W_MM / PAPER_H_MM       (pageinfo) tamano fisico de la hoja
+//   PRINT_W_MM / PRINT_H_MM       (pageinfo) area imprimible
+//   MARGIN_L_MM / MARGIN_T_MM     (pageinfo) margen no imprimible sup-izq
+//   ORIENTATION=<portrait|landscape>  (pageinfo)
+//   DUPLEX=<0|1>                  (pageinfo) doble faz si/no
 //
 // Exit codes: 0 ok, 1 error, 2 canceled.
 using System;
@@ -51,6 +63,13 @@ using System.Windows.Forms;
 namespace PrintLayoutHelper {
     static class Program {
         static readonly List<string> PagePaths = new List<string>();
+        // Tamano (mm) y rotacion (grados) por hoja. Paralelos a PagePaths.
+        // Se pueblan con las lineas PAGE_MM=<w>,<h> y PAGE_ROT=<0|90|180|270>
+        // que preceden a cada PAGE=. 0 en PageW/PageH => usar _widthMm/_heightMm.
+        // Sirve para PDF de paginas de tamanos MIXTOS y orientacion automatica.
+        static readonly List<float> PageW = new List<float>();
+        static readonly List<float> PageH = new List<float>();
+        static readonly List<int> PageRot = new List<int>();
         static int _pageIdx = 0;
         static float _widthMm = 0;
         static float _heightMm = 0;
@@ -84,6 +103,10 @@ namespace PrintLayoutHelper {
                 string devmodeFile = null;
                 string docName = "PrintLayout";
 
+                // Tamano/rotacion pendientes para la PROXIMA linea PAGE=.
+                float pendW = 0, pendH = 0;
+                int pendRot = 0;
+
                 string line;
                 while ((line = Console.In.ReadLine()) != null) {
                     int eq = line.IndexOf('=');
@@ -99,12 +122,29 @@ namespace PrintLayoutHelper {
                     else if (k == "HEIGHT_MM") float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out _heightMm);
                     else if (k == "DEVMODE_FILE") devmodeFile = v;
                     else if (k == "DOC_NAME") { if (!string.IsNullOrEmpty(v)) docName = v; }
-                    else if (k == "PAGE") PagePaths.Add(v);
+                    else if (k == "PAGE_MM") {
+                        // "w,h" en mm — tamano de dibujo de la SIGUIENTE hoja.
+                        pendW = 0; pendH = 0;
+                        int comma = v.IndexOf(',');
+                        if (comma > 0) {
+                            float.TryParse(v.Substring(0, comma), NumberStyles.Float, CultureInfo.InvariantCulture, out pendW);
+                            float.TryParse(v.Substring(comma + 1), NumberStyles.Float, CultureInfo.InvariantCulture, out pendH);
+                        }
+                    }
+                    else if (k == "PAGE_ROT") { int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out pendRot); }
+                    else if (k == "PAGE") {
+                        PagePaths.Add(v);
+                        PageW.Add(pendW); PageH.Add(pendH); PageRot.Add(pendRot);
+                        pendW = 0; pendH = 0; pendRot = 0;
+                    }
                 }
                 Log("read input: mode=" + mode + " pages=" + PagePaths.Count + " device=" + device + " copies=" + copies + " showDialog=" + showDialog + " devmodeFile=" + devmodeFile);
 
                 if (mode == "configure") {
                     return RunConfigure(device, devmodeFile);
+                }
+                if (mode == "pageinfo") {
+                    return RunPageInfo(device, devmodeFile);
                 }
 
                 if (PagePaths.Count == 0) {
@@ -365,16 +405,20 @@ namespace PrintLayoutHelper {
                         int dpiY = GetDeviceCaps(hDC, LOGPIXELSY);
                         if (dpiX <= 0) dpiX = 300;
                         if (dpiY <= 0) dpiY = 300;
-                        float targetW = _widthMm / 25.4f * dpiX;
-                        float targetH = _heightMm / 25.4f * dpiY;
-                        // El DC tiene origen en el area imprimible; -offX/-offY es
-                        // la esquina fisica de la hoja. Centramos ahi el diseno.
-                        float drawX = (physW - targetW) / 2f - offX;
-                        float drawY = (physH - targetH) / 2f - offY;
-                        Log("design(px)=" + targetW + "x" + targetH + " dpi=" + dpiX + "x" + dpiY
-                            + " at=" + drawX + "," + drawY + " (mm=" + _widthMm + "x" + _heightMm + ")");
 
-                        foreach (string pagePath in PagePaths) {
+                        for (int pi = 0; pi < PagePaths.Count; pi++) {
+                            string pagePath = PagePaths[pi];
+                            // Tamano de dibujo de ESTA hoja: PAGE_MM si vino, sino
+                            // el global WIDTH_MM/HEIGHT_MM (PDF de tamanos mixtos).
+                            float wMm = PageW[pi] > 0 ? PageW[pi] : _widthMm;
+                            float hMm = PageH[pi] > 0 ? PageH[pi] : _heightMm;
+                            float targetW = wMm / 25.4f * dpiX;
+                            float targetH = hMm / 25.4f * dpiY;
+                            // El DC tiene origen en el area imprimible; -offX/-offY es
+                            // la esquina fisica de la hoja. Centramos ahi el diseno.
+                            float drawX = (physW - targetW) / 2f - offX;
+                            float drawY = (physH - targetH) / 2f - offY;
+
                             if (StartPage(hDC) <= 0) {
                                 Log("StartPage fallo en " + pagePath);
                                 continue;
@@ -383,6 +427,7 @@ namespace PrintLayoutHelper {
                                 byte[] bytes = File.ReadAllBytes(pagePath);
                                 using (var ms = new MemoryStream(bytes))
                                 using (var img = Image.FromStream(ms)) {
+                                    RotateImage(img, PageRot[pi]);
                                     g.DrawImage(img, drawX, drawY, targetW, targetH);
                                 }
                             } catch (Exception drawEx) {
@@ -430,6 +475,8 @@ namespace PrintLayoutHelper {
         [DllImport("gdi32.dll")]
         static extern int GetDeviceCaps(IntPtr hdc, int nIndex);
 
+        const int HORZRES = 8;   // ancho del area imprimible en px
+        const int VERTRES = 10;  // alto del area imprimible en px
         const int LOGPIXELSX = 88;
         const int LOGPIXELSY = 90;
         const int PHYSICALWIDTH = 110;
@@ -437,6 +484,17 @@ namespace PrintLayoutHelper {
         const int PHYSICALOFFSETX = 112;
         const int PHYSICALOFFSETY = 113;
         const int DM_COPIES = 0x00000100;
+
+        // Rota la imagen in-place segun grados (0/90/180/270). Otros valores no
+        // hacen nada. Usado para la "orientacion automatica" de PDF.
+        static void RotateImage(Image img, int deg) {
+            if (img == null) return;
+            switch (((deg % 360) + 360) % 360) {
+                case 90: img.RotateFlip(RotateFlipType.Rotate90FlipNone); break;
+                case 180: img.RotateFlip(RotateFlipType.Rotate180FlipNone); break;
+                case 270: img.RotateFlip(RotateFlipType.Rotate270FlipNone); break;
+            }
+        }
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         struct DOCINFO {
@@ -504,6 +562,106 @@ namespace PrintLayoutHelper {
             Console.Out.WriteLine("DEVMODE_OUT=" + Convert.ToBase64String(resultDm));
             Console.Out.Flush();
             return 0;
+        }
+
+        // ---------------- PAGEINFO mode ----------------
+        // Devuelve, para el DEVMODE configurado (DEVMODE_FILE) o el default del
+        // driver, el tamano fisico de la hoja + area imprimible + margenes +
+        // orientacion + duplex. Lo usa la ventana "Imprimir con PrintLayout"
+        // para armar las hojas de fotos y mostrar "Hoja: A4 210x297 mm".
+        // Todas las medidas en mm.
+        static int RunPageInfo(string device, string devmodeFile) {
+            if (string.IsNullOrEmpty(device)) {
+                WriteResult(false, "Falta DEVICE para pageinfo.");
+                return 1;
+            }
+            byte[] dm = null;
+            if (!string.IsNullOrEmpty(devmodeFile) && File.Exists(devmodeFile)) {
+                try { dm = File.ReadAllBytes(devmodeFile); } catch (Exception ex) { Log("pageinfo read devmode: " + ex.Message); }
+            }
+            if (dm == null) {
+                try { dm = GetDefaultDevMode(device); } catch (Exception ex) { Log("pageinfo default devmode: " + ex.Message); }
+            }
+
+            IntPtr pDevMode = IntPtr.Zero;
+            if (dm != null && dm.Length > 0) {
+                pDevMode = Marshal.AllocHGlobal(dm.Length);
+                Marshal.Copy(dm, 0, pDevMode, dm.Length);
+            }
+            try {
+                IntPtr hDC = CreateDC("WINSPOOL", device, null, pDevMode);
+                if (hDC == IntPtr.Zero) {
+                    WriteResult(false, "No se pudo abrir la impresora (CreateDC err=" + Marshal.GetLastWin32Error() + ").");
+                    return 1;
+                }
+                try {
+                    int dpiX = GetDeviceCaps(hDC, LOGPIXELSX); if (dpiX <= 0) dpiX = 300;
+                    int dpiY = GetDeviceCaps(hDC, LOGPIXELSY); if (dpiY <= 0) dpiY = 300;
+                    float physWmm = GetDeviceCaps(hDC, PHYSICALWIDTH) / (float)dpiX * 25.4f;
+                    float physHmm = GetDeviceCaps(hDC, PHYSICALHEIGHT) / (float)dpiY * 25.4f;
+                    float printWmm = GetDeviceCaps(hDC, HORZRES) / (float)dpiX * 25.4f;
+                    float printHmm = GetDeviceCaps(hDC, VERTRES) / (float)dpiY * 25.4f;
+                    float marginLmm = GetDeviceCaps(hDC, PHYSICALOFFSETX) / (float)dpiX * 25.4f;
+                    float marginTmm = GetDeviceCaps(hDC, PHYSICALOFFSETY) / (float)dpiY * 25.4f;
+
+                    // Orientacion + duplex desde el DEVMODE (si lo tenemos). Offsets
+                    // DEVMODEW: dmFields=72, dmOrientation=76, dmDuplex=94.
+                    string orientation = physWmm > physHmm ? "landscape" : "portrait";
+                    int duplex = 0;
+                    if (dm != null && dm.Length >= 96) {
+                        int fields = dm[72] | (dm[73] << 8) | (dm[74] << 16) | (dm[75] << 24);
+                        if ((fields & 0x00000001) != 0) { // DM_ORIENTATION
+                            short o = (short)(dm[76] | (dm[77] << 8));
+                            orientation = o == 2 ? "landscape" : "portrait";
+                        }
+                        if ((fields & 0x00001000) != 0) { // DM_DUPLEX
+                            short d = (short)(dm[94] | (dm[95] << 8));
+                            duplex = d >= 2 ? 1 : 0;
+                        }
+                    }
+
+                    var ci = CultureInfo.InvariantCulture;
+                    Console.Out.WriteLine("OK=1");
+                    Console.Out.WriteLine("PAPER_W_MM=" + physWmm.ToString("0.##", ci));
+                    Console.Out.WriteLine("PAPER_H_MM=" + physHmm.ToString("0.##", ci));
+                    Console.Out.WriteLine("PRINT_W_MM=" + printWmm.ToString("0.##", ci));
+                    Console.Out.WriteLine("PRINT_H_MM=" + printHmm.ToString("0.##", ci));
+                    Console.Out.WriteLine("MARGIN_L_MM=" + marginLmm.ToString("0.##", ci));
+                    Console.Out.WriteLine("MARGIN_T_MM=" + marginTmm.ToString("0.##", ci));
+                    Console.Out.WriteLine("ORIENTATION=" + orientation);
+                    Console.Out.WriteLine("DUPLEX=" + duplex);
+                    Console.Out.Flush();
+                    return 0;
+                } finally {
+                    DeleteDC(hDC);
+                }
+            } finally {
+                if (pDevMode != IntPtr.Zero) Marshal.FreeHGlobal(pDevMode);
+            }
+        }
+
+        // DEVMODE default del driver via DocumentProperties(DM_OUT_BUFFER) sin
+        // prompt. Devuelve los bytes o null.
+        static byte[] GetDefaultDevMode(string device) {
+            IntPtr hPrinter;
+            if (!OpenPrinter(device, out hPrinter, IntPtr.Zero)) return null;
+            try {
+                int needed = DocumentProperties(IntPtr.Zero, hPrinter, device, IntPtr.Zero, IntPtr.Zero, 0);
+                if (needed <= 0) return null;
+                IntPtr pOut = Marshal.AllocHGlobal(needed);
+                try {
+                    for (int i = 0; i < needed; i++) Marshal.WriteByte(pOut, i, 0);
+                    int code = DocumentProperties(IntPtr.Zero, hPrinter, device, pOut, IntPtr.Zero, DM_OUT_BUFFER);
+                    if (code != IDOK) return null;
+                    byte[] buf = new byte[needed];
+                    Marshal.Copy(pOut, buf, 0, needed);
+                    return buf;
+                } finally {
+                    Marshal.FreeHGlobal(pOut);
+                }
+            } finally {
+                ClosePrinter(hPrinter);
+            }
         }
 
         enum DocumentPropertiesResult { Ok, Canceled, Error }
@@ -631,8 +789,13 @@ namespace PrintLayoutHelper {
 
             // Sin DEVMODE custom: forzamos PaperSize del template como source
             // of truth. Esto reemplaza el PaperSize del driver — apunta a que
-            // PrintLayout maneje el tamano fisico de hoja.
-            e.PageSettings.PaperSize = MakePaperSize();
+            // PrintLayout maneje el tamano fisico de hoja. Con PAGE_MM por hoja
+            // (PDF de tamanos mixtos), cada hoja lleva su propio PaperSize.
+            float wMm = (_pageIdx < PageW.Count && PageW[_pageIdx] > 0) ? PageW[_pageIdx] : _widthMm;
+            float hMm = (_pageIdx < PageH.Count && PageH[_pageIdx] > 0) ? PageH[_pageIdx] : _heightMm;
+            int widthHi = (int)Math.Round(wMm / 25.4f * 100f);
+            int heightHi = (int)Math.Round(hMm / 25.4f * 100f);
+            e.PageSettings.PaperSize = new PaperSize("PrintLayout " + widthHi + "x" + heightHi, widthHi, heightHi);
             e.PageSettings.Landscape = false;
         }
 
@@ -646,6 +809,7 @@ namespace PrintLayoutHelper {
             byte[] bytes = File.ReadAllBytes(PagePaths[_pageIdx]);
             using (var ms = new MemoryStream(bytes))
             using (var img = Image.FromStream(ms)) {
+                RotateImage(img, _pageIdx < PageRot.Count ? PageRot[_pageIdx] : 0);
                 e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
                 e.Graphics.SmoothingMode = SmoothingMode.HighQuality;
                 e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
@@ -653,8 +817,10 @@ namespace PrintLayoutHelper {
                 // Igual criterio que el camino CreateDC: NO estirar a la hoja.
                 // Dibujar el diseno a su tamano REAL en mm y centrarlo. PageUnit
                 // default = Display (1/100 pulgada), por eso mm→1/100" = /25.4*100.
-                float targetW = _widthMm / 25.4f * 100f;
-                float targetH = _heightMm / 25.4f * 100f;
+                float wMm = PageW[_pageIdx] > 0 ? PageW[_pageIdx] : _widthMm;
+                float hMm = PageH[_pageIdx] > 0 ? PageH[_pageIdx] : _heightMm;
+                float targetW = wMm / 25.4f * 100f;
+                float targetH = hMm / 25.4f * 100f;
                 float drawX = e.PageBounds.Left + (e.PageBounds.Width - targetW) / 2f;
                 float drawY = e.PageBounds.Top + (e.PageBounds.Height - targetH) / 2f;
                 e.Graphics.DrawImage(img, drawX, drawY, targetW, targetH);

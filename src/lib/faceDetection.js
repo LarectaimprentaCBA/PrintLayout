@@ -33,12 +33,22 @@ function loadHtmlImage(dataUrl) {
 
 export async function detectFaces(dataUrl) {
   try {
-    await ensureModelLoaded();
     const img = await loadHtmlImage(dataUrl);
-    const options = new faceapi.SsdMobilenetv1Options({
-      minConfidence: MIN_CONFIDENCE,
-    });
-    const detections = await faceapi.detectAllFaces(img, options);
+    return await detectFacesFromInput(img);
+  } catch (err) {
+    console.warn('[faceDetection] falló la detección:', err);
+    return [];
+  }
+}
+
+// Detecta caras sobre un HTMLImageElement o HTMLCanvasElement ya decodificado.
+// Lo usa la ventana "Imprimir con PrintLayout" para no pasar por dataURL: dibuja
+// el ImageBitmap a un canvas chico y detecta ahí (rápido, no congela con 100 fotos).
+export async function detectFacesFromInput(input) {
+  try {
+    await ensureModelLoaded();
+    const options = new faceapi.SsdMobilenetv1Options({ minConfidence: MIN_CONFIDENCE });
+    const detections = await faceapi.detectAllFaces(input, options);
     return detections.map((d) => ({
       x: Math.round(d.box.x),
       y: Math.round(d.box.y),

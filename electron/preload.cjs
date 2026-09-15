@@ -212,6 +212,27 @@ contextBridge.exposeInMainWorld('printlayout', {
       return () => ipcRenderer.removeListener('qrcut:log', handler);
     },
   },
+  // "Imprimir con PrintLayout" (ventana del clic derecho de Windows).
+  quickprint: {
+    getFiles: () => ipcRenderer.invoke('quickprint:get-files'),
+    readFile: (filePath) => ipcRenderer.invoke('quickprint:read-file', filePath),
+    pageInfo: (deviceName) => ipcRenderer.invoke('quickprint:page-info', { deviceName }),
+    pdfInfo: (filePath) => ipcRenderer.invoke('quickprint:pdf-info', { path: filePath }),
+    renderPdfPage: (filePath, pageIndex, dpi) =>
+      ipcRenderer.invoke('quickprint:render-pdf-page', { path: filePath, pageIndex, dpi }),
+    // Impresión de fotos por streaming (una hoja a la vez → memoria plana).
+    photosBegin: () => ipcRenderer.invoke('quickprint:photos-begin'),
+    photosAdd: (id, buffer) => ipcRenderer.invoke('quickprint:photos-add', { id, buffer }),
+    photosPrint: (id, opts) => ipcRenderer.invoke('quickprint:photos-print', { id, ...opts }),
+    photosCancel: (id) => ipcRenderer.invoke('quickprint:photos-cancel', { id }),
+    printPdf: (payload) => ipcRenderer.invoke('quickprint:print-pdf', payload),
+    close: () => ipcRenderer.invoke('quickprint:close'),
+    onFilesAdded: (cb) => {
+      const handler = (_evt, payload) => cb(payload);
+      ipcRenderer.on('quickprint:files-added', handler);
+      return () => ipcRenderer.removeListener('quickprint:files-added', handler);
+    },
+  },
   // Calibración de color por impresora.
   color: {
     listPrinters: () => ipcRenderer.invoke('color:list-printers'),

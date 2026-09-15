@@ -56,3 +56,28 @@ if ($err) {
 }
 
 Remove-Item $pngPath -Force -ErrorAction SilentlyContinue
+
+# ---------------------------------------------------------------------------
+# MODE=pageinfo — no imprime, solo consulta el tamano de hoja / area imprimible
+# / margenes / orientacion / duplex de la impresora default. Redirigimos stdin
+# desde un archivo UTF-8 SIN BOM (el StreamWriter de PS 5.1 puede meter un
+# preamble que corrompe la 1ra linea; Node escribe utf-8 limpio como el archivo).
+# ---------------------------------------------------------------------------
+Write-Host ""
+Write-Host "[smoke] === MODE=pageinfo ==="
+$dev = (Get-CimInstance Win32_Printer | Where-Object { $_.Default }).Name
+if (-not $dev) { $dev = (Get-CimInstance Win32_Printer | Select-Object -First 1).Name }
+Write-Host "[smoke] Impresora default: $dev"
+$inFile = Join-Path $env:TEMP "printlayout-pageinfo.txt"
+$enc = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($inFile, "MODE=pageinfo`nDEVICE=$dev`nEND=1`n", $enc)
+$errFile = Join-Path $env:TEMP "printlayout-pageinfo-err.txt"
+$piOut = & cmd /c "`"$helper`" < `"$inFile`" 2>`"$errFile`""
+Write-Host "[smoke] pageinfo stdout:"
+Write-Host $piOut
+if ($piOut -match 'PAPER_W_MM' -and $piOut -match 'PRINT_W_MM' -and $piOut -match 'DUPLEX=') {
+    Write-Host "[smoke] pageinfo OK (devolvio tamano + area imprimible + duplex)."
+} else {
+    Write-Host "[smoke] pageinfo FALLO — falta alguna clave esperada."
+}
+Remove-Item $inFile, $errFile -Force -ErrorAction SilentlyContinue
