@@ -44,6 +44,7 @@ export default function PdfView({ files, deviceName, pageInfo, busy, setBusy, on
   const [scalePct, setScalePct] = useState(100);
   const [orientation, setOrientation] = useState('auto');
   const [toast, setToast] = useState(null);
+  const [pageImg, setPageImg] = useState(null); // { img, wMm, hMm } de la página actual
   const previewRef = useRef(null);
   const previewCache = useRef(new Map()); // pageIndex -> {dataUrl,wMm,hMm}
 
@@ -74,9 +75,11 @@ export default function PdfView({ files, deviceName, pageInfo, busy, setBusy, on
     return 0;
   }, [orientation, sheetLandscape]);
 
+  // 1) Traer la IMAGEN de la página actual (Ghostscript, baja resolución). Cachea.
   useEffect(() => {
-    if (!current || !previewRef.current) return;
+    if (!current) return;
     let dead = false;
+    setPageImg(null);
     (async () => {
       setPreviewErr('');
       let entry = previewCache.current.get(previewPage);
@@ -89,25 +92,57 @@ export default function PdfView({ files, deviceName, pageInfo, busy, setBusy, on
       }
       setPreviewInfo({ wMm: entry.wMm, hMm: entry.hMm });
       const img = new Image();
-      img.onload = () => {
-        if (dead) return;
-        const canvas = previewRef.current;
-        if (!canvas) return;
-        const rot = rotFor(entry.wMm, entry.hMm);
-        if (rot === 90 || rot === 270) { canvas.width = img.height; canvas.height = img.width; }
-        else { canvas.width = img.width; canvas.height = img.height; }
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.save();
-        ctx.translate(canvas.width / 2, canvas.height / 2);
-        if (rot) ctx.rotate((rot * Math.PI) / 180);
-        ctx.drawImage(img, -img.width / 2, -img.height / 2);
-        ctx.restore();
-      };
+      img.onload = () => { if (!dead) setPageImg({ img, wMm: entry.wMm, hMm: entry.hMm }); };
       img.src = entry.dataUrl;
     })();
     return () => { dead = true; };
-  }, [current, previewPage, rotFor]);
+  }, [current, previewPage]);
+
+  // 2) Dibujar la HOJA (tamaño real de la impresora) con el diseño posicionado y a
+  // la escala del modo elegido. Se re-dibuja al cambiar tamaño/orientación/escala,
+  // así se ve EN VIVO cómo va a salir. El área imprimible va marcada con línea de
+  // puntos; el diseño se centra en la hoja física (igual que la impresión).
+  useEffect(() => {
+    const canvas = previewRef.current;
+    if (!canvas || !pageImg) return;
+    const pxPerMm = PREVIEW_DPI / 25.4;
+    const paperW = pageInfo?.paperWmm || pageImg.wMm;
+    const paperH = pageInfo?.paperHmm || pageImg.hMm;
+    const printW = pageInfo?.printWmm || paperW;
+    const printH = pageInfo?.printHmm || paperH;
+    const sheetWpx = Math.max(1, Math.round(paperW * pxPerMm));
+    const sheetHpx = Math.max(1, Math.round(paperH * pxPerMm));
+    canvas.width = sheetWpx; canvas.height = sheetHpx;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, sheetWpx, sheetHpx);
+
+    // Área imprimible (línea de puntos, tenue).
+    const mL = (pageInfo?.marginLmm || 0) * pxPerMm;
+    const mT = (pageInfo?.marginTmm || 0) * pxPerMm;
+    ctx.strokeStyle = 'rgba(0,0,0,.15)'; ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+    ctx.strokeRect(mL, mT, printW * pxPerMm, printH * pxPerMm);
+    ctx.setLineDash([]);
+
+    // Tamaño de dibujo del diseño según el modo (misma fórmula que la impresión).
+    const rot = rotFor(pageImg.wMm, pageImg.hMm);
+    let ew = pageImg.wMm, eh = pageImg.hMm;
+    if (rot) { ew = pageImg.hMm; eh = pageImg.wMm; }
+    let twMm, thMm;
+    if (sizeMode === 'actual') { twMm = ew; thMm = eh; }
+    else if (sizeMode === 'custom') { const s = (Number(scalePct) || 100) / 100; twMm = ew * s; thMm = eh * s; }
+    else if (sizeMode === 'fitlarge') { const f = Math.min(printW / ew, printH / eh, 1); twMm = ew * f; thMm = eh * f; }
+    else { const f = Math.min(printW / ew, printH / eh); twMm = ew * f; thMm = eh * f; } // fit
+    const targetWpx = twMm * pxPerMm, targetHpx = thMm * pxPerMm;
+
+    ctx.save();
+    ctx.translate(sheetWpx / 2, sheetHpx / 2); // centrado en la hoja física
+    if (rot) ctx.rotate((rot * Math.PI) / 180);
+    const boxW = (rot === 90 || rot === 270) ? targetHpx : targetWpx;
+    const boxH = (rot === 90 || rot === 270) ? targetWpx : targetHpx;
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(pageImg.img, -boxW / 2, -boxH / 2, boxW, boxH);
+    ctx.restore();
+  }, [pageImg, sizeMode, scalePct, orientation, pageInfo, rotFor]);
 
   // Escala que se aplicará (para el texto "Escala: N%").
   const scaleShownPct = (() => {
