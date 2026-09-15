@@ -215,6 +215,7 @@ export default function App() {
     reorderTab,
   } = useTabs();
   const [sharing, setSharing] = useState(false);
+  const [sharingAll, setSharingAll] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [presetsModalOpen, setPresetsModalOpen] = useState(false);
   const [pdfToImageOpen, setPdfToImageOpen] = useState(false);
@@ -483,6 +484,45 @@ export default function App() {
       setToast({ kind: 'error', text: `Error al compartir: ${err.message}` });
     } finally {
       setSharing(false);
+    }
+  };
+
+  // "Compartir todas": re-sube a las demás PC TODAS las plantillas que ya están
+  // compartidas (con sus cambios actuales). Útil cuando Mariano edita varias de
+  // una (ej. al cambiar el tamaño de papel). Secuencial: cada compartir toca el
+  // manifest del repo, en serie no hay conflictos de sha. Reporta el resumen.
+  const handleShareAll = async () => {
+    if (sharingAll || sharing) return;
+    const toShare = templates.filter((t) => t.sharedAt);
+    if (toShare.length === 0) {
+      setToast({ kind: 'info', text: 'No hay plantillas compartidas para actualizar.' });
+      return;
+    }
+    if (!window.confirm(
+      `Subir los cambios de ${toShare.length} plantilla(s) compartida(s) a TODAS las PC?\n\n`
+      + 'Las otras computadoras las reciben al tocar "Actualizar" (o al abrir la app).',
+    )) return;
+    setSharingAll(true);
+    let ok = 0;
+    const failed = [];
+    try {
+      for (let i = 0; i < toShare.length; i++) {
+        setToast({ kind: 'info', text: `Compartiendo plantillas… ${i + 1}/${toShare.length}` });
+        try {
+          const r = await share(toShare[i]);
+          if (r?.ok) ok += 1; else failed.push(toShare[i].name);
+        } catch (_) {
+          failed.push(toShare[i].name);
+        }
+      }
+      setToast({
+        kind: failed.length ? 'error' : 'success',
+        text: failed.length
+          ? `Se compartieron ${ok} de ${toShare.length}. Fallaron: ${failed.slice(0, 6).join(', ')}${failed.length > 6 ? '…' : ''}.`
+          : `${ok} plantilla(s) compartida(s). Las otras PC las reciben al Actualizar.`,
+      });
+    } finally {
+      setSharingAll(false);
     }
   };
 
@@ -4828,6 +4868,8 @@ export default function App() {
           onEditGeometry={handleEditTemplateGeometry}
           onOpenInTab={handleOpenTemplateFromManager}
           onRenameCategoria={handleRenameCategoria}
+          onShareAll={handleShareAll}
+          sharingAll={sharingAll}
           onClose={() => setTemplatesManagerOpen(false)}
         />
 

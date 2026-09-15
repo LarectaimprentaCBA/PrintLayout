@@ -26,8 +26,11 @@ export default function TemplatesManagerModal({
   onEditGeometry,
   onOpenInTab,
   onRenameCategoria,
+  onShareAll,
+  sharingAll = false,
   onClose,
 }) {
+  const sharedCount = useMemo(() => templates.filter((t) => t.sharedAt).length, [templates]);
   const [query, setQuery] = useState('');
   const [selectedCarpeta, setSelectedCarpeta] = useState(TODAS);
   // Edición inline de nombre + carpeta de una fila.
@@ -453,13 +456,30 @@ export default function TemplatesManagerModal({
               ? 'Modo La Recta: podés marcar oficiales y editar todo.'
               : 'Las plantillas “oficiales” están protegidas (🔒).'}
           </p>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded border border-ink-700 px-3 py-1 text-xs text-ink-200 hover:bg-ink-800"
-          >
-            Cerrar
-          </button>
+          <div className="flex items-center gap-2">
+            {canShare && onShareAll && (
+              <button
+                type="button"
+                onClick={onShareAll}
+                disabled={sharingAll || sharedCount === 0}
+                title={
+                  sharedCount === 0
+                    ? 'No hay plantillas compartidas para actualizar'
+                    : 'Sube los cambios de TODAS las plantillas compartidas a las demás PC (útil cuando editás varias, ej. al cambiar el papel)'
+                }
+                className="rounded border border-accent-500/50 bg-accent-600/15 px-3 py-1 text-xs text-accent-200 hover:bg-accent-600/25 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {sharingAll ? 'Compartiendo…' : `☁ Compartir todas${sharedCount ? ` (${sharedCount})` : ''}`}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded border border-ink-700 px-3 py-1 text-xs text-ink-200 hover:bg-ink-800"
+            >
+              Cerrar
+            </button>
+          </div>
         </div>
       </div>
     </div>
