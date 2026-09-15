@@ -339,7 +339,7 @@ function runPython(scriptName, { args = [], stdin = null } = {}) {
 // userData/state-debug.log. Fire-and-forget (send, no invoke) para no frenar la
 // UI. Rota el archivo si pasa ~4MB. QUITAR cuando se encuentre la causa raíz.
 const DEBUG_LOG_PATH = path.join(app.getPath('userData'), 'state-debug.log');
-ipcMain.on('debug:log', (_evt, msg) => {
+function appendDebugLog(msg) {
   try {
     try {
       const st = fs.statSync(DEBUG_LOG_PATH);
@@ -351,7 +351,8 @@ ipcMain.on('debug:log', (_evt, msg) => {
     } catch (_) { /* archivo nuevo */ }
     fs.appendFileSync(DEBUG_LOG_PATH, `${new Date().toISOString()} ${msg}\n`);
   } catch (_) { /* best-effort */ }
-});
+}
+ipcMain.on('debug:log', (_evt, msg) => appendDebugLog(msg));
 
 ipcMain.handle('templates:list', () => templatesStore.list());
 ipcMain.handle('templates:save', (_evt, template) => templatesStore.save(template));
@@ -1885,36 +1886,60 @@ ipcMain.handle('print:pdf', async (_evt, payload) => {
   const pagePaths = [];
 
   // Corrección de color: si esta impresora (por su IP) tiene una calibración ACTIVA en
-  // esta PC, y no es una impresión con diálogo ni la carta de calibración, aplicar la LUT
-  // a cada hoja. La identidad es la IP (el nombre de cola cambia entre PC). Best-effort:
-  // si algo falla, se imprime sin corregir. El bucle de píxeles corre en un worker.
+  // esta PC, aplicar la LUT a cada hoja. La identidad es la IP (el nombre de cola cambia
+  // entre PC). Best-effort: si algo falla, se imprime SIN corregir y se avisa (colorStatus).
+  // Rendimiento: si NO hay ninguna calibración activa, no se resuelve nada (0 ms). Si hay,
+  // se usa el mapa cola→IP ya cacheado (~0 ms); solo si esta cola no está en el mapa se
+  // resuelve ESA sola cola con límite de tiempo.
   let applier = null;
+  let colorCal = null, colorIp = null;
+  // colorStatus.state: 'no-active' | 'no-corresponde' | 'aplicada' | 'fallo'
+  let colorStatus = { state: 'no-active' };
+  const tColor0 = Date.now();
   try {
-    if (showDialog === false && !noColorCorrection && deviceName) {
+    if (showDialog === false && !noColorCorrection && deviceName && colorStore.hasAnyActive()) {
       const manual = colorStore.getManualIp();
-      const ip = await colorPrinters.resolveIp(deviceName, manual);
-      const cal = ip ? colorStore.getActiveForIp(ip) : null;
-      const S = cal ? (cal.lutSize || 17) : 0;
-      const expected = S * S * S * 3;
-      if (cal && Array.isArray(cal.lut) && cal.lut.length === expected) {
-        applier = new ColorApplier({ V: cal.lut, S });
-        console.log(`[color] corrigiendo impresión a ${deviceName} (IP ${ip}, calibración ${cal.id})`);
-      } else if (cal) {
-        console.warn(`[color] calibración ${cal.id} con LUT inválida (${cal.lut && cal.lut.length} ≠ ${expected}); se imprime sin corregir.`);
+      let ip = colorPrinters.resolveFromCache(deviceName, manual); // ~0 ms (caché)
+      let timedOut = false;
+      if (!ip) {
+        ip = await colorPrinters.resolveOneQueue(deviceName, manual, 900); // una sola cola, acotado
+        if (!ip) timedOut = true;
       }
+      colorIp = ip;
+      const cal = ip ? colorStore.getActiveForIp(ip) : null;
+      if (cal) {
+        const S = cal.lutSize || 17;
+        const expected = S * S * S * 3;
+        if (Array.isArray(cal.lut) && cal.lut.length === expected) {
+          applier = new ColorApplier({ V: cal.lut, S });
+          colorCal = cal;
+        } else {
+          colorStatus = { state: 'fallo', reason: 'la tabla de la calibración es inválida' };
+        }
+      } else if (timedOut) {
+        // Hay calibraciones activas pero no pudimos identificar esta impresora por IP.
+        colorStatus = { state: 'fallo', reason: 'no se pudo identificar la impresora (IP) a tiempo' };
+      } else {
+        colorStatus = { state: 'no-corresponde' };
+      }
+    } else if (showDialog !== false || noColorCorrection) {
+      colorStatus = { state: 'no-corresponde' };
     }
   } catch (err) {
-    console.warn('[color] no se pudo resolver la calibración:', err.message);
+    colorStatus = { state: 'fallo', reason: err.message || 'error al resolver la calibración' };
   }
+  const colorResolveMs = Date.now() - tColor0;
 
+  const msPerPage = [];
   try {
     for (let i = 0; i < images.length; i++) {
       const p = path.join(tmpDir, `page-${String(i).padStart(3, '0')}.png`);
       let buf = dataUrlToBuffer(images[i]);
       if (applier) {
-        const t0 = Date.now();
-        buf = await applier.applyPng(buf);
-        console.log(`[color] hoja ${i + 1}/${images.length} corregida en ${Date.now() - t0} ms`);
+        const r = await applier.applyPng(buf);
+        buf = r.buffer;
+        msPerPage.push(r.ms);
+        if (!r.ok && colorStatus.state !== 'fallo') colorStatus = { state: 'fallo', reason: r.reason, page: i + 1 };
       }
       fs.writeFileSync(p, buf);
       pagePaths.push(p);
@@ -1925,6 +1950,14 @@ ipcMain.handle('print:pdf', async (_evt, payload) => {
     return { ok: false, error: `No se pudieron preparar las hojas: ${err.message}` };
   }
   if (applier) applier.dispose();
+  if (applier && colorStatus.state !== 'fallo') colorStatus = { state: 'aplicada' };
+
+  // Log de la corrección (impresora, IP, calibración, hojas, ms/hoja) o de la falla.
+  if (colorStatus.state === 'aplicada') {
+    appendDebugLog(`[color] OK impresora="${deviceName}" ip=${colorIp} cal=${colorCal && colorCal.id} hojas=${images.length} resolveMs=${colorResolveMs} msPorHoja=[${msPerPage.join(',')}]`);
+  } else if (colorStatus.state === 'fallo') {
+    appendDebugLog(`[color] FALLO impresora="${deviceName}" ip=${colorIp} cal=${colorCal && colorCal.id} motivo="${colorStatus.reason}"${colorStatus.page ? ' hoja=' + colorStatus.page : ''}`);
+  }
 
   // Construir input del helper. Ver protocolo en helper/PrintHelper.cs.
   const lines = ['MODE=print'];
@@ -1992,7 +2025,7 @@ ipcMain.handle('print:pdf', async (_evt, payload) => {
         result[ln.slice(0, eq)] = ln.slice(eq + 1);
       }
       if (result.OK === '1') {
-        settle({ ok: true });
+        settle({ ok: true, color: colorStatus });
       } else if (result.CANCELED === '1' || code === 2) {
         settle({ ok: false, canceled: true });
       } else {
@@ -2099,7 +2132,8 @@ ipcMain.handle('color:delete-shared', async (_evt, id) => {
 // anterior local se guarda como backup. Propaga borrados (si el manifest tiene ≥1 entrada).
 ipcMain.handle('color:sync-pull', async () => {
   try {
-    const remote = await colorSync.listRemote();
+    const rm = await colorSync.getRemote();
+    const remote = rm.calibraciones;
     const local = colorStore.list();
     const localById = new Map(local.map((c) => [c.id, c]));
     let added = 0, updated = 0, removed = 0;
@@ -2129,13 +2163,16 @@ ipcMain.handle('color:sync-pull', async () => {
       });
       if (loc) updated++; else added++;
     }
-    // Propagar borrados: local compartida cuyo id ya no está en el manifest.
-    if (remote.length > 0) {
+    // Propagar borrados: local compartida cuyo id ya no está en el manifest. SOLO si el
+    // manifest EXISTE (aunque esté vacío). Si no existe (404) o hubo error de red (que
+    // lanza y cae al catch), NO se borra nada.
+    if (rm.exists) {
       const remoteIds = new Set(remote.map((e) => e.id));
       for (const c of colorStore.list()) {
         if (c.sharedAt && !remoteIds.has(c.id)) { colorStore.addBackup(c); colorStore.remove(c.id); removed++; }
       }
     }
+    if (added || updated || removed) appendDebugLog(`[color] sync-pull: ${added} nuevas, ${updated} actualizadas, ${removed} borradas`);
     return { ok: true, added, updated, removed };
   } catch (err) { return { ok: false, error: err.message, added: 0, updated: 0, removed: 0 }; }
 });
@@ -2430,6 +2467,12 @@ app.whenReady().then(() => {
   intakeService.start(mainWindow);
   qrCutServer.start(mainWindow);
   qrCutRelay.start();   // portero: escucha en 0.0.0.0:relayPort si relayActivo
+
+  // Corrección de color: si hay alguna calibración activa, armar el mapa cola→IP en
+  // segundo plano (para no sumar demora al imprimir) y refrescarlo cada 3 minutos.
+  const refreshColorMap = () => { try { if (colorStore.hasAnyActive()) colorPrinters.refresh(); } catch (_) {} };
+  setTimeout(refreshColorMap, 2000);
+  setInterval(refreshColorMap, 3 * 60 * 1000);
 
   app.on('activate', () => {
     // macOS (dock): si no hay ventana, la creamos; si está oculta, la mostramos.

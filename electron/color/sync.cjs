@@ -198,7 +198,18 @@ async function remove(id) {
 }
 
 async function listRemote() { const m = await fetchManifest(); return m.calibraciones || []; }
+
+// Como listRemote pero distingue manifest INEXISTENTE (404 → exists:false, no borrar nada)
+// de manifest EXISTENTE y vacío (exists:true → propagar borrados). Un error de red LANZA
+// (fetchContent tira en !ok que no sea 404) → el llamador no borra nada.
+async function getRemote() {
+  const text = await fetchContent(MANIFEST_PATH);
+  if (text === null) return { exists: false, calibraciones: [] };
+  let m;
+  try { m = JSON.parse(text); } catch (e) { throw new Error('manifest de calibraciones invalido: ' + e.message); }
+  return { exists: true, calibraciones: Array.isArray(m.calibraciones) ? m.calibraciones : [] };
+}
 async function pull(id) { const t = await fetchContent(`calibraciones/${id}.json`); return t ? JSON.parse(t) : null; }
 function hasToken() { return !!getToken(); }
 
-module.exports = { hashCalibrationContent, toShared, listRemote, pull, push, remove, hasToken };
+module.exports = { hashCalibrationContent, toShared, listRemote, getRemote, pull, push, remove, hasToken };

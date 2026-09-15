@@ -39,13 +39,15 @@ class ColorApplier {
     return this._readyPromise;
   }
 
-  // pngBuffer (Buffer) → Buffer PNG corregido. Si algo falla, devuelve el original.
+  // pngBuffer (Buffer) → { buffer, ok, reason, ms }. Si algo falla, buffer = original
+  // (best-effort: nunca rompe la impresión) y ok=false con el motivo.
   async applyPng(pngBuffer) {
+    const t0 = Date.now();
     try {
       await this._ensure();
       const img = nativeImage.createFromBuffer(pngBuffer);
       const { width, height } = img.getSize();
-      if (!width || !height) return pngBuffer;
+      if (!width || !height) return { buffer: pngBuffer, ok: false, reason: 'no se pudo decodificar la hoja', ms: Date.now() - t0 };
       const bmp = img.toBitmap(); // Buffer BGRA
       const ab = bmp.buffer.slice(bmp.byteOffset, bmp.byteOffset + bmp.byteLength);
       const id = ++this.seq;
@@ -53,12 +55,13 @@ class ColorApplier {
         this.pending.set(id, resolve);
         this.worker.postMessage({ type: 'apply', id, buffer: ab, width, height }, [ab]);
       });
-      if (res.error || !res.buffer) return pngBuffer;
+      if (res.error || !res.buffer) return { buffer: pngBuffer, ok: false, reason: 'el proceso de corrección falló', ms: Date.now() - t0 };
       const out = nativeImage.createFromBitmap(Buffer.from(res.buffer), { width, height });
       const png = out.toPNG();
-      return png && png.length ? png : pngBuffer;
+      if (!png || !png.length) return { buffer: pngBuffer, ok: false, reason: 'no se pudo recodificar la hoja', ms: Date.now() - t0 };
+      return { buffer: png, ok: true, reason: null, ms: Date.now() - t0 };
     } catch (e) {
-      return pngBuffer; // best-effort: nunca romper la impresión
+      return { buffer: pngBuffer, ok: false, reason: e.message || 'error desconocido', ms: Date.now() - t0 };
     }
   }
 

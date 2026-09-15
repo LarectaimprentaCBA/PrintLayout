@@ -72,6 +72,11 @@ function setActive(id, active) {
   return { ok: true, calibration: cal };
 }
 
+// ¿Hay alguna calibración activa en esta PC? (barato: evita resolver IP si no hace falta)
+function hasAnyActive() {
+  return readAll().calibrations.some((c) => c.active);
+}
+
 // Devuelve la calibración ACTIVA cuya impresora a corregir tiene esa IP (o null).
 function getActiveForIp(ip) {
   if (!ip) return null;
@@ -106,6 +111,6 @@ function markShared(id, sharedAt, sharedHash) {
 
 module.exports = {
   storePath, readAll, writeAll, list, get, save, remove,
-  setActive, getActiveForIp, getManualIp, setManualIp, markShared,
+  setActive, getActiveForIp, hasAnyActive, getManualIp, setManualIp, markShared,
   addBackup, listBackups,
 };

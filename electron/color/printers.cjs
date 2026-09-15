@@ -65,4 +65,54 @@ async function resolveIp(deviceName, manualIp = {}) {
   return null;
 }
 
-module.exports = { list, resolveIp };
+// Refresca el mapa cola→IP en segundo plano (no lanza). Para tener la IP lista sin
+// bloquear la impresión.
+async function refresh() {
+  try { await list(true); } catch (_) { /* best-effort */ }
+}
+
+// Resuelve SIN lanzar PowerShell: solo con lo que ya está en caché + el mapa manual.
+// Devuelve la IP o null (null = "no lo sé todavía", el llamador puede resolver esa cola).
+function resolveFromCache(deviceName, manualIp = {}) {
+  if (!deviceName) return null;
+  if (manualIp && manualIp[deviceName]) return manualIp[deviceName];
+  if (cache && cache.printers) {
+    const found = cache.printers.find((p) => p.name === deviceName);
+    if (found && found.ip) return found.ip;
+  }
+  return null;
+}
+
+// Resuelve UNA sola cola con PowerShell, con límite de tiempo. Devuelve IP o null.
+// Rápido porque consulta una sola impresora (no enumera todas).
+function resolveOneQueue(deviceName, manualIp = {}, timeoutMs = 900) {
+  if (!deviceName) return Promise.resolve(null);
+  if (manualIp && manualIp[deviceName]) return Promise.resolve(manualIp[deviceName]);
+  const q = String(deviceName).replace(/'/g, "''");
+  const ps = `
+$ErrorActionPreference='SilentlyContinue'
+$p = Get-Printer -Name '${q}'
+$ip = $null
+if ($p) {
+  $port = Get-PrinterPort -Name $p.PortName
+  if ($port.PrinterHostAddress) { $ip = $port.PrinterHostAddress }
+  elseif ($p.PortName -match '(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3})') { $ip = $matches[1] }
+}
+if ($ip) { Write-Output $ip }
+`;
+  return new Promise((resolve) => {
+    let out = '', done = false;
+    const finish = (v) => { if (done) return; done = true; resolve(v); };
+    const p = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { windowsHide: true });
+    const killer = setTimeout(() => { try { p.kill(); } catch (_) {} finish(null); }, timeoutMs);
+    p.stdout.on('data', (d) => { out += d; });
+    p.on('error', () => { clearTimeout(killer); finish(null); });
+    p.on('close', () => {
+      clearTimeout(killer);
+      const m = out.trim().match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
+      finish(m ? m[1] : null);
+    });
+  });
+}
+
+module.exports = { list, resolveIp, refresh, resolveFromCache, resolveOneQueue };

@@ -327,7 +327,10 @@ export default function ColorCalModal({ open, onClose }) {
   );
 }
 
-function ListView({ cals, printers, canShare, busy, nameForIp, printersWithoutIp, onCalibrate, onImport, onToggle, onDelete, onShare, onDeleteShared, onPull, onSetManual, fmtDate }) {
+function ListView({ cals, printers, manualIp, canShare, busy, nameForIp, printersWithoutIp, onCalibrate, onImport, onToggle, onDelete, onShare, onDeleteShared, onPull, onSetManual, fmtDate }) {
+  const manualRef = useRef(null);
+  const localHasIp = (ip) => !!ip && (printers.some((p) => p.ip === ip) || Object.values(manualIp || {}).includes(ip));
+  const scrollToManual = () => manualRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   return (
     <>
       <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -357,6 +360,12 @@ function ListView({ cals, printers, canShare, busy, nameForIp, printersWithoutIp
                 </div>
               )}
               {c.origen === 'importada' && <div className="text-[10px] text-ink-500">importada{c.archivoOrigen?.name ? ' de ' + c.archivoOrigen.name : ''}</div>}
+              {!localHasIp(c.correctPrinter?.ip) && (
+                <div className="mt-1 flex items-start gap-2 rounded border border-amber-700/50 bg-amber-950/30 px-2 py-1 text-[11px] text-amber-300">
+                  <span>Esta PC no tiene ninguna impresora con IP {c.correctPrinter?.ip || '(sin IP)'}: asignala en “Impresoras sin IP visible” o la corrección no se va a aplicar.</span>
+                  <button onClick={scrollToManual} className="shrink-0 rounded border border-amber-700 px-1.5 py-0.5 text-[10px] hover:bg-amber-900/40">Asignar IP</button>
+                </div>
+              )}
               <div className="mt-2 flex flex-wrap gap-2">
                 <button onClick={() => onToggle(c)} disabled={busy === 'active'} className={'rounded px-2 py-1 text-xs ' + (c.active ? 'border border-amber-700 text-amber-300 hover:bg-amber-950/40' : 'bg-green-700 text-white hover:bg-green-600')}>
                   {c.active ? 'Desactivar' : 'Activar'}
@@ -376,7 +385,7 @@ function ListView({ cals, printers, canShare, busy, nameForIp, printersWithoutIp
       )}
 
       {printersWithoutIp.length > 0 && (
-        <div className="mt-4 rounded border border-ink-700 bg-ink-950/40 p-3">
+        <div ref={manualRef} className="mt-4 rounded border border-ink-700 bg-ink-950/40 p-3">
           <p className="text-xs font-medium text-ink-200">Impresoras sin IP visible (asigná su IP a mano)</p>
           <p className="mb-2 text-[11px] text-ink-500">Algunas colas (WSD/red) no muestran la IP. Escribí la IP de la máquina para que la corrección la reconozca.</p>
           {printersWithoutIp.map((p) => (

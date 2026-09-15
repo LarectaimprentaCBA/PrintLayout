@@ -46,6 +46,7 @@ export default function PrintModal({
   totalPages = 1,
   currentPage = 0,
   showCutMarksOption = false,
+  colorRefreshTick = 0,
   showRegistrationCross = false,
   showBackOffset = false,
   backOffsetXmm = 0,
@@ -70,8 +71,19 @@ export default function PrintModal({
   // calibrar el "Ajuste de dorso" midiendo el desfase del volteo a contraluz.
   const [registrationCross, setRegistrationCross] = useState(false);
   const [colorActive, setColorActive] = useState(null); // {referenceIp, paperName, updatedAt} | null
+  const [pullTick, setPullTick] = useState(0);
 
-  // Cartel "Corrección de color activa" según la impresora elegida (por IP).
+  // Al abrir, bajar cambios de calibración en segundo plano (no bloquea: usa lo que ya
+  // hay y actualiza el cartel para la próxima). Si la red falla, no pasa nada.
+  useEffect(() => {
+    if (!open) return;
+    window.printlayout?.color?.syncPull?.()
+      .then((r) => { if (r && (r.added || r.updated || r.removed)) setPullTick((t) => t + 1); })
+      .catch(() => {});
+  }, [open]);
+
+  // Cartel "Corrección de color activa" según la impresora elegida (por IP). Se rearma
+  // cuando cambia la impresora, cuando un pull trae cambios (local o de fondo).
   useEffect(() => {
     if (!open || !deviceName) { setColorActive(null); return undefined; }
     let cancelled = false;
@@ -79,7 +91,7 @@ export default function PrintModal({
       .then((r) => { if (!cancelled) setColorActive(r?.ok ? r.active : null); })
       .catch(() => { if (!cancelled) setColorActive(null); });
     return () => { cancelled = true; };
-  }, [open, deviceName]);
+  }, [open, deviceName, colorRefreshTick, pullTick]);
 
   useEffect(() => {
     if (!open) return;

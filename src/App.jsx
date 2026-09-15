@@ -222,6 +222,7 @@ export default function App() {
   const [mazosPublicadosOpen, setMazosPublicadosOpen] = useState(false);
   const [qrCutPanelOpen, setQrCutPanelOpen] = useState(false);
   const [colorCalOpen, setColorCalOpen] = useState(false);
+  const [colorRefreshTick, setColorRefreshTick] = useState(0);
   // Config del server QR (posición del QR + prefijo del nombre). Se usa para
   // dibujar el QR en la vista previa y en la impresión directa. Se refresca al
   // abrir la app y al cerrar el panel "Corte QR".
@@ -415,8 +416,21 @@ export default function App() {
     // Tambien pulleamos presets de hoja en silencio. No avisa nada si falla.
     syncPullPaperPresets().catch(() => {});
     // Y las calibraciones de color compartidas (otras PC las bajan al abrir).
-    window.printlayout?.color?.syncPull?.().catch(() => {});
+    window.printlayout?.color?.syncPull?.().then((r) => {
+      if (r && (r.added || r.updated || r.removed)) setColorRefreshTick((t) => t + 1);
+    }).catch(() => {});
   }, [templatesLoading, syncPull, syncPullPaperPresets]);
+
+  // PrintLayout vive en la bandeja por días: bajar cambios de calibración de color en
+  // segundo plano cada 10 minutos (sin frenar nada; si la red falla, no pasa nada).
+  useEffect(() => {
+    const id = setInterval(() => {
+      window.printlayout?.color?.syncPull?.().then((r) => {
+        if (r && (r.added || r.updated || r.removed)) setColorRefreshTick((t) => t + 1);
+      }).catch(() => {});
+    }, 10 * 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
 
   const handleShare = async (template) => {
     if (!template || sharing) return;
@@ -4253,7 +4267,13 @@ export default function App() {
                 : ` Corte "${selected.cutId}.plt" guardado en la carpeta QR.`)
             : ` ⚠ No se pudo guardar el corte automáticamente (${cut.error}). Usá "Guardar corte QR".`;
         }
-        setToast({ kind: 'success', text: base + cutNote });
+        // Corrección de color: si la impresora tenía calibración activa pero la corrección
+        // falló, se imprimió igual (sin corregir) → aviso visible.
+        if (result?.color?.state === 'fallo') {
+          setToast({ kind: 'error', text: `${base}${cutNote} ⚠️ Se imprimió SIN corrección de color: ${result.color.reason || 'error desconocido'}.` });
+        } else {
+          setToast({ kind: 'success', text: base + cutNote });
+        }
       } else {
         setToast({ kind: 'error', text: `No se pudo imprimir: ${result?.error ?? 'desconocido'}` });
       }
@@ -5061,6 +5081,7 @@ export default function App() {
           totalPages={layout.pageCount}
           currentPage={currentPage}
           showCutMarksOption={selectedHasGeneratedMarks}
+          colorRefreshTick={colorRefreshTick}
           showRegistrationCross={!!selected?.doubleSided}
           showBackOffset={!!printPrompt && printPrompt.face === 'back' && !!selected?.doubleSided}
           backOffsetXmm={backOffsetXmm}
