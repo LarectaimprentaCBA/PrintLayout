@@ -2744,28 +2744,47 @@ export default function App() {
     };
     if (!cacheOnly) setContourComputing(true);
     try {
-      const cortes = await contourCutsByAssignments(assignments, cells, layout.imageMap, {
-        params,
-        paramsByImage: selected.contourByImage || null,
-        cache: contourCacheRef.current,
-        cacheOnly,
-      });
+      // Corte por contorno POR HOJA: cuando el trabajo tiene más piezas que
+      // celdas, se pagina (mismas celdas repetidas, imágenes DISTINTAS por hoja →
+      // contornos distintos). Calculamos el contorno de CADA hoja con su tramo de
+      // asignaciones y guardamos `cortesPorPagina`, así cada hoja lleva su propio
+      // corte y su propio QR (base, base-h2, base-h3…). La paginación es la MISMA
+      // que usa la impresión: ceil(asignaciones / celdas-por-hoja).
+      const perPage = Math.max(1, cells.length);
+      const numPages = Math.max(1, Math.ceil(assignments.length / perPage));
+      const cortesPorPagina = [];
+      for (let p = 0; p < numPages; p++) {
+        const pageAssign = assignments.slice(p * perPage, (p + 1) * perPage);
+        // eslint-disable-next-line no-await-in-loop
+        const pc = await contourCutsByAssignments(pageAssign, cells, layout.imageMap, {
+          params,
+          paramsByImage: selected.contourByImage || null,
+          cache: contourCacheRef.current,
+          cacheOnly,
+        });
+        cortesPorPagina.push(pc || []);
+      }
       // Si cambiaste de pestaña mientras calculaba, NO escribimos (evita que el
       // corte de esta plantilla caiga en otra).
       if (activeTabIdRef.current !== runTabId) return;
-      // Red de seguridad: si hay celdas con imagen pero el resultado quedó VACÍO,
+      // Red de seguridad: si hay celdas con imagen pero NINGUNA hoja dio contorno,
       // NO pisamos los cortes guardados. Pasa cuando el caché de trazado está frío
       // (tras cambiar de pestaña o reiniciar la app) y el re-mapeo no encuentra
       // nada → antes esto BORRABA el corte bueno. Se recalcula con "Aplicar
       // contorno". (Si el usuario vació las celdas, hasAssigned es false y sí se
       // limpia el corte, como corresponde.)
       const hasAssigned = assignments.some(Boolean);
-      if (hasAssigned && (!cortes || cortes.length === 0)) return;
+      const anyCut = cortesPorPagina.some((pc) => pc && pc.length);
+      if (hasAssigned && !anyCut) return;
+      const cortes = cortesPorPagina[0] ?? [];
+      // Solo guardamos cortesPorPagina si hay MÁS de una hoja (una sola → el
+      // camino de siempre con `cortes`, así no cambia nada en trabajos de 1 hoja).
+      const base = { cortes, cortesPorPagina: numPages > 1 ? cortesPorPagina : undefined };
       handlePatchActiveTemplate(
         cacheOnly
-          ? { cortes, contourAppliedMapSig: contourMapSig }
+          ? { ...base, contourAppliedMapSig: contourMapSig }
           : {
-            cortes,
+            ...base,
             contourAppliedTraceSig: contourTraceSig,
             contourAppliedAssignSig: contourAssignSig,
             contourAppliedMapSig: contourMapSig,
