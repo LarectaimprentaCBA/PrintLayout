@@ -203,7 +203,9 @@ export default function PdfView({ files, deviceName, pageInfo, busy, setBusy, on
         <div style={previewBox}>
           {previewErr
             ? <div style={{ color: '#fca5a5', fontSize: 13, textAlign: 'center', padding: 20 }}>{previewErr}</div>
-            : <canvas ref={previewRef} style={{ maxWidth: '100%', maxHeight: '48vh', background: '#fff', boxShadow: '0 2px 10px rgba(0,0,0,.5)' }} />}
+            : !pageImg
+              ? <div style={{ color: '#9ca3af', fontSize: 13 }}>Generando vista previa…</div>
+              : <canvas ref={previewRef} style={{ maxWidth: '100%', maxHeight: '48vh', background: '#fff', boxShadow: '0 2px 10px rgba(0,0,0,.5)' }} />}
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>
           {pageCount > 1 && (

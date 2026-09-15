@@ -2356,8 +2356,6 @@ app.whenReady().then(() => {
     resolvePrintHelper, devmodeFilePath, ghostscriptBin,
     GHOSTSCRIPT_DIR, appendDebugLog, appIconImage, isDev,
   });
-  // Reparar el verbo del clic derecho si falta (p. ej. lo borraron a mano).
-  repairContextMenuVerb();
 
   // Arranque por doble clic en un .pljob: abrimos ese trabajo apenas cargue el
   // renderer (openJobFileInRenderer también muestra la ventana).
@@ -2367,6 +2365,9 @@ app.whenReady().then(() => {
   // aparte (la app queda en la bandeja; NO mostramos la ventana principal).
   const initialPrint = quickPrint.filesFromArgv(process.argv);
   if (initialPrint.length) quickPrint.enqueue(initialPrint);
+
+  // Reparar el verbo del clic derecho si falta (diferido: no retrasa la ventana).
+  setTimeout(repairContextMenuVerb, 3000);
 
   setupAutoUpdate(mainWindow);
   intakeService.start(mainWindow);

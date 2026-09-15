@@ -137,7 +137,7 @@ function enqueue(files) {
   // selección). Esperamos una ventanita para juntar TODA la selección en una
   // sola ventana. 350 ms alcanza y no se nota.
   if (coalesceTimer) clearTimeout(coalesceTimer);
-  coalesceTimer = setTimeout(flushCoalesce, 350);
+  coalesceTimer = setTimeout(flushCoalesce, 250);
 }
 
 // ── PrintHelper: pageinfo ────────────────────────────────────────────────────
@@ -382,7 +382,9 @@ async function printPdf({ path: pdfPath, pages, dpi, sizeMode, scalePct, orienta
     if (!jobPages.length) return { ok: false, error: 'No se pudo preparar ninguna página.' };
 
     // WIDTH_MM/HEIGHT_MM global = fallback; cada página lleva su PAGE_MM real.
-    return printCore.runPrintJob({
+    // OJO: `return await` es OBLIGATORIO — sin await, el finally borraría la
+    // carpeta de PNG ANTES de que la impresión los lea (ENOENT).
+    return await printCore.runPrintJob({
       pages: jobPages,
       pageWidthMm: info.paperWmm, pageHeightMm: info.paperHmm,
       deviceName, copies, showDialog: false, docName: withMachine(docName),

@@ -1,7 +1,10 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, lazy, Suspense } from 'react';
 import PrinterBar from './PrinterBar.jsx';
-import PhotoView from './PhotoView.jsx';
 import PdfView from './PdfView.jsx';
+
+// PhotoView arrastra el motor de detección de caras (~3.7 MB). Carga diferida:
+// abrir SOLO un PDF no lo baja (la ventana abre más rápido).
+const PhotoView = lazy(() => import('./PhotoView.jsx'));
 
 const LS_PRINTER = 'quickprint.printer';
 
@@ -104,16 +107,18 @@ export default function QuickPrintApp() {
         </div>
       )}
       {mode === 'photos' && (
-        <PhotoView
-          files={photos}
-          deviceName={deviceName}
-          pageInfo={pageInfo}
-          busy={busy}
-          setBusy={setBusy}
-          onDone={onPhotosDone}
-          onCancel={close}
-          hasPdfQueue={pdfs.length > 0}
-        />
+        <Suspense fallback={<div style={{ opacity: 0.7 }}>Preparando…</div>}>
+          <PhotoView
+            files={photos}
+            deviceName={deviceName}
+            pageInfo={pageInfo}
+            busy={busy}
+            setBusy={setBusy}
+            onDone={onPhotosDone}
+            onCancel={close}
+            hasPdfQueue={pdfs.length > 0}
+          />
+        </Suspense>
       )}
       {mode === 'pdf' && (
         <PdfView
