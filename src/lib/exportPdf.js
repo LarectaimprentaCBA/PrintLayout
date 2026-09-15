@@ -160,8 +160,9 @@ export function drawCornerMarks(page, {
 // Se dibuja IGUAL en frente y dorso → al imprimir ambas caras y mirarlas a
 // contraluz, el desplazamiento entre las cruces del frente y las del dorso ES el
 // desfase del volteo manual. Con eso Mariano sabe cuánto poner en "Ajuste de
-// dorso (mm)". La cruz del CENTRO es el punto invariante del volteo (medir
-// corrimiento); las 4 de las esquinas ayudan a ver si además hay giro/rotación.
+// dorso (mm)". Solo las 4 cruces de las ESQUINAS: alcanzan para medir el
+// corrimiento y ver si hay giro, y quedan fuera del diseño (la del centro lo
+// arruinaba porque Mariano imprime hojas llenas de diseño).
 export function drawRegistrationCross(page, {
   pageWpt, pageHpt, marginMm = 7,
 }) {
@@ -173,9 +174,7 @@ export function drawRegistrationCross(page, {
     page.drawLine({ start: { x: cx, y: cy - a }, end: { x: cx, y: cy + a }, thickness, color: black });
   };
   const m = marginMm * MM_TO_PT;
-  // Centro (brazo más largo: es la referencia principal para el corrimiento).
-  cross(pageWpt / 2, pageHpt / 2, 6);
-  // Esquinas (brazo corto).
+  // Solo las esquinas (sin la del centro, que caía sobre el diseño).
   cross(m, m, 3);
   cross(pageWpt - m, m, 3);
   cross(m, pageHpt - m, 3);
