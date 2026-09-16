@@ -76,6 +76,56 @@ function FocalPanOverlay({ image, innerWmm, innerHmm, pxPerMm, style, onChange }
   );
 }
 
+// Tirador para MOVER a mano el troquel interno (agujero para colgar). El agujero
+// es uniforme en toda la grilla: se arrastra desde CUALQUIER pieza y se aplica a
+// todas. Como la rotación de la imagen se hornea en el bitmap (el corte no sabe
+// que giró), moverlo a mano es la forma de ponerlo donde va, sin importar el giro.
+// Guarda dxMm (respecto del centro de la celda) y fromTopMm (desde el borde de
+// arriba). Clampea para que el círculo entero quede dentro de la pieza.
+function TroquelHandle({ cell, troquel, pxPerMm, onChange }) {
+  const dragRef = useRef(null);
+  const r = (Number(troquel.diameterMm) || 0) / 2;
+  const dx = Number(troquel.dxMm) || 0;
+  const fromTop = Number(troquel.fromTopMm) || 0;
+  const cxMm = cell.x + cell.w / 2 + dx;
+  const cyMm = cell.y + fromTop;
+  const sizePx = Math.max(12, (Number(troquel.diameterMm) || 0) * pxPerMm);
+
+  const onPointerDown = (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ }
+    dragRef.current = { x: e.clientX, y: e.clientY, dx, fromTop };
+  };
+  const onPointerMove = (e) => {
+    const d = dragRef.current;
+    if (!d || !(pxPerMm > 0)) return;
+    let ndx = d.dx + (e.clientX - d.x) / pxPerMm;
+    let nFromTop = d.fromTop + (e.clientY - d.y) / pxPerMm;
+    // Que el círculo entero quede dentro de la celda.
+    ndx = Math.max(r - cell.w / 2, Math.min(cell.w / 2 - r, ndx));
+    nFromTop = Math.max(r, Math.min(cell.h - r, nFromTop));
+    const round1 = (v) => Math.round(v * 10) / 10;
+    onChange(round1(ndx), round1(nFromTop));
+  };
+  const endDrag = (e) => {
+    dragRef.current = null;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
+  };
+  return (
+    <div
+      className="absolute z-30 rounded-full border-2 border-sky-400 bg-sky-400/25 cursor-grab active:cursor-grabbing"
+      style={{ left: cxMm * pxPerMm - sizePx / 2, top: cyMm * pxPerMm - sizePx / 2, width: sizePx, height: sizePx }}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      onClick={(e) => e.stopPropagation()}
+      title="Arrastrá para mover el agujero (se aplica a todas las piezas)"
+    />
+  );
+}
+
 export default function LayoutCanvas({
   template,
   assignments,
@@ -96,6 +146,7 @@ export default function LayoutCanvas({
   qr = null,
   onUploadPdfClick,
   onCreateGridClick,
+  onSetTroquelPos,
 }) {
   // QR de corte para la vista previa (SVG). Mismo texto/posición que la
   // impresión (qrMatrix + qrPlacementMm compartidos con exportPdf). Solo en el
@@ -541,6 +592,20 @@ export default function LayoutCanvas({
                 ))}
               </svg>
             )}
+            {/* Tiradores para mover a mano el troquel interno (agujero). Uniforme
+                en toda la grilla: arrastrás cualquiera y se mueven todos. Solo en
+                grillas editables con troquel activo (no en plantillas de PDF). */}
+            {onSetTroquelPos && template.temporal && !template.pdfBase64
+              && template.troquel?.enabled && Number(template.troquel.diameterMm) > 0
+              && cells.map((cell, i) => (
+                <TroquelHandle
+                  key={`troquel-${i}`}
+                  cell={cell}
+                  troquel={template.troquel}
+                  pxPerMm={pxPerMm}
+                  onChange={onSetTroquelPos}
+                />
+              ))}
           </div>
         </div>
       </div>

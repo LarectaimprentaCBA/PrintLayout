@@ -4723,6 +4723,8 @@ export default function App() {
             onSetFocalPoint={(imageId, fp) => layout.updateImage(imageId, { focalPoint: fp })}
             onUploadPdfClick={() => blankPdfInputRef.current?.click()}
             onCreateGridClick={() => setGridModalOpen(true)}
+            onSetTroquelPos={(dxMm, fromTopMm) =>
+              handleUpdateTemporalTemplate({ troquel: { ...(selected?.troquel || {}), dxMm, fromTopMm } })}
           />
           <PropertiesSidebar
             template={selected}
