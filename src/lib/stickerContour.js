@@ -9,7 +9,8 @@
 
 import { solidBgRemoval } from './contour/solidBgRemoval.js'
 import { traceContour } from './contour/trace.js'
-import { mergeContours, CLIPPER_SCALE } from './contour/offset.js'
+import { mergeContours, intersectPolys, CLIPPER_SCALE } from './contour/offset.js'
+import { cellShapePoly } from './grid.js'
 
 function blobToDataUrl(blob) {
   return new Promise((resolve, reject) => {
@@ -83,9 +84,14 @@ export async function computeStickerContour(fileOrBlob, {
  * @param {object} opts
  * @param {number} opts.bleedMm - sangrado en mm (default 0 = silueta exacta)
  * @param {string} opts.joinType - 'round' | 'miter' | 'square' (para el sangrado)
+ * @param {Array<[number,number]>} [opts.clipPoly] - forma del casillero (mm, mismo
+ *        sistema de coordenadas que `cell`). Si viene, el contorno se RECORTA
+ *        contra ella: la línea no se sale de la pieza. Con una foto sin fondo
+ *        recortable (traza el rectángulo entero) el resultado es exactamente esa
+ *        forma → plantilla circular = línea redonda, no cuadrada.
  * @returns {Array<Array<[number,number]>>} polilíneas mm cerradas
  */
-export function contoursToCellCortes(contours, cell, imgW, imgH, { bleedMm = 0, includeHoles = false, smoothMm = 0, joinType = 'round' } = {}) {
+export function contoursToCellCortes(contours, cell, imgW, imgH, { bleedMm = 0, includeHoles = false, smoothMm = 0, joinType = 'round', clipPoly = null } = {}) {
   if (!contours?.length || !imgW || !imgH) return []
   // Encuadre 'contain': escala que entra en la celda preservando aspecto.
   const s = Math.min(cell.w / imgW, cell.h / imgH)
@@ -103,7 +109,20 @@ export function contoursToCellCortes(contours, cell, imgW, imgH, { bleedMm = 0, 
   // Agranda por la sangría, une lo que se toca y SIMPLIFICA la línea final (RDP).
   // Con includeHoles OFF solo quedan los contornos de afuera (lo de adentro no se corta).
   const merged = mergeContours(clip, bleedMm, { joinType, includeHoles, simplifyMm: smoothMm })
-  return merged.map(poly => closePoly(poly.map(p => [p.X / CLIPPER_SCALE, p.Y / CLIPPER_SCALE])))
+  // Límite por la forma del casillero. Va DESPUÉS del suavizado para que el
+  // círculo/redondeado salga exacto (si se recortara antes, el RDP/Chaikin lo
+  // facetaría). Sin clipPoly el resultado es idéntico al de siempre.
+  const limited = clipPoly && clipPoly.length >= 3
+    ? intersectPolys(
+      merged,
+      [clipPoly.map(([x, y]) => ({
+        X: Math.round(x * CLIPPER_SCALE),
+        Y: Math.round(y * CLIPPER_SCALE),
+      }))],
+      { includeHoles },
+    )
+    : merged
+  return limited.map(poly => closePoly(poly.map(p => [p.X / CLIPPER_SCALE, p.Y / CLIPPER_SCALE])))
 }
 
 /**
@@ -193,6 +212,15 @@ export async function contourCutsByAssignments(assignments, cells, imageMap, {
     // quedarían enormes para RDP → facetado; los normalizo al default.
     let smoothMm = p.smoothMm ?? 0.12
     if (!(smoothMm >= 0 && smoothMm <= 0.5)) smoothMm = 0.12
+    // Límite por la FORMA DEL CASILLERO ("Limitar a la forma"). 'none' = como
+    // siempre (la silueta manda). 'auto' = la forma propia de cada celda
+    // (medidas múltiples, cell.shape). El resto fuerza esa forma en toda la hoja.
+    const clipShapeCfg = p.clipShape ?? 'none'
+    const clipShape = clipShapeCfg === 'auto'
+      ? (cell.shape === 'circle' ? 'circle' : cell.shape === 'rounded' ? 'rounded' : 'rect')
+      : clipShapeCfg
+    const clipMarginMm = Math.max(0, Number(p.clipMarginMm) || 0)
+    const clipCornerRadiusMm = Math.max(0, Number(p.clipCornerRadiusMm) || 0)
 
     // Cache por IMAGEN con su "traceKey" = SOLO los params que afectan el TRAZADO.
     // sangría/huecos/suavizado NO entran: son mapeo (re-unen sobre el sc ya
@@ -223,10 +251,16 @@ export async function contourCutsByAssignments(assignments, cells, imageMap, {
     // celda en el origen, y para cada celda solo TRASLADA por (cell.x, cell.y).
     // El merge+RDP (lo caro) corre una sola vez aunque la hoja tenga 15 iguales.
     const cw = Math.round(cell.w * 100), ch = Math.round(cell.h * 100)
-    const mapKey = `${imgId}:${cw}:${ch}:${bleedMm}:${includeHoles}:${smoothMm}`
+    const mapKey = `${imgId}:${cw}:${ch}:${bleedMm}:${includeHoles}:${smoothMm}:${clipShape}:${clipMarginMm}:${clipCornerRadiusMm}`
     let base = mapCache.get(mapKey)
     if (!base) {
-      base = contoursToCellCortes(sc.contours, { x: 0, y: 0, w: cell.w, h: cell.h }, sc.maskedW, sc.maskedH, { bleedMm, includeHoles, smoothMm })
+      // La celda se normaliza al origen para poder reusar el cálculo en todas las
+      // celdas iguales → el recorte también se arma en el origen.
+      const clipPoly = cellShapePoly(
+        { x: 0, y: 0, w: cell.w, h: cell.h },
+        { shape: clipShape, cutMarginMm: clipMarginMm, cornerRadiusMm: clipCornerRadiusMm },
+      )
+      base = contoursToCellCortes(sc.contours, { x: 0, y: 0, w: cell.w, h: cell.h }, sc.maskedW, sc.maskedH, { bleedMm, includeHoles, smoothMm, clipPoly })
       mapCache.set(mapKey, base)
     }
     for (const poly of base) cortes.push(poly.map(([x, y]) => [x + cell.x, y + cell.y]))

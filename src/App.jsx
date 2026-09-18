@@ -1398,6 +1398,18 @@ export default function App() {
     if (!activeTab?.template) return;
     updateActiveTab((tab) => {
       const next = { ...tab.template, ...updates };
+      // Al pasar a "Contorno" desde una forma no rectangular, arrancamos con el
+      // límite puesto en ESA forma: si venías de Círculo, el contorno sale redondo
+      // (antes salía el rectángulo de la foto y había que arreglarlo a mano).
+      // En medidas múltiples (cada celda con su forma) usa 'auto' = la de cada una.
+      if (updates.cutShape === 'contour'
+        && tab.template.cutShape !== 'contour'
+        && next.contourClipShape === undefined) {
+        const prevShape = tab.template.cutShape ?? 'rect';
+        next.contourClipShape = (next.celdas ?? []).some((c) => c.shape)
+          ? 'auto'
+          : (prevShape === 'circle' || prevShape === 'rounded') ? prevShape : 'none';
+      }
       // Forma de corte "Contorno": los cortes son los contornos por imagen, los
       // recalcula un efecto async (contourCutsByAssignments). NO los regeneramos
       // como rectángulos acá para no pisarlos.
@@ -2709,6 +2721,11 @@ export default function App() {
       b: selected.contourBleedMm ?? 0,
       h: selected.contourIncludeHoles === true,
       s: selected.contourSmoothMm ?? 0.12,
+      // El límite por forma de casillero es MAPEO (un recorte sobre lo ya
+      // trazado) → cambiarlo se aplica al instante, sin re-trazar.
+      cs: selected.contourClipShape ?? 'none',
+      cm: selected.cutMarginMm ?? 0,
+      cr: Number(selected.cornerRadiusMm) || 0,
       by: pickByImage(selected.contourByImage, MAP_KEYS),
     })
     : '';
@@ -2741,6 +2758,13 @@ export default function App() {
       includeHoles: selected.contourIncludeHoles === true,
       outerBorder: selected.contourOuterBorder ?? true,
       smoothMm: selected.contourSmoothMm ?? 0.12,
+      // "Limitar a la forma": recorta el contorno contra la forma del casillero
+      // (círculo/redondeado/rectángulo) usando el MISMO margen/radio que usaría
+      // esa forma de corte. Así una plantilla circular da línea redonda aunque la
+      // imagen no tenga fondo recortable (antes salía el rectángulo de la foto).
+      clipShape: selected.contourClipShape ?? 'none',
+      clipMarginMm: selected.cutMarginMm ?? 0,
+      clipCornerRadiusMm: Number(selected.cornerRadiusMm) || 0,
     };
     if (!cacheOnly) setContourComputing(true);
     try {

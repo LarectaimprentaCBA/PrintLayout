@@ -208,6 +208,52 @@ export function unionOuter(polys) {
 }
 
 /**
+ * Intersección (Clipper) de `subject` contra `clip`. La usa el corte por
+ * CONTORNO para LIMITARLO a la forma del casillero (círculo / redondeado /
+ * rectángulo): la línea nunca se sale de la pieza. Caso típico: una foto sin
+ * fondo recortable traza el rectángulo entero → al intersectarlo con el círculo
+ * de la celda queda EXACTAMENTE ese círculo, en vez de un cuadrado.
+ *
+ * Se aplica DESPUÉS del suavizado (RDP/Chaikin) para que la forma del casillero
+ * salga exacta y no facetada. Mismo criterio exterior/hueco que mergeContours.
+ * Ambos en unidades Clipper (x1000). clip vacío → devuelve subject sin tocar.
+ */
+export function intersectPolys(subject, clip, { includeHoles = false } = {}) {
+  if (!subject || subject.length === 0) return []
+  if (!clip || clip.length === 0) return subject
+
+  const cl = new ClipperLib.Clipper()
+  cl.AddPaths(orientForClipper(subject), ClipperLib.PolyType.ptSubject, true)
+  cl.AddPaths(orientForClipper(clip), ClipperLib.PolyType.ptClip, true)
+  const tree = new ClipperLib.PolyTree()
+  cl.Execute(
+    ClipperLib.ClipType.ctIntersection,
+    tree,
+    ClipperLib.PolyFillType.pftNonZero,
+    ClipperLib.PolyFillType.pftNonZero,
+  )
+
+  const out = []
+  if (includeHoles) {
+    const walk = (node) => {
+      for (const child of node.Childs() || []) {
+        const c = child.Contour()
+        if (c && c.length >= 3) out.push(c)
+        walk(child)
+      }
+    }
+    walk(tree)
+  } else {
+    for (const child of tree.Childs() || []) {
+      if (child.IsHole()) continue
+      const c = child.Contour()
+      if (c && c.length >= 3) out.push(c)
+    }
+  }
+  return out
+}
+
+/**
  * Reproduce el "Create Contour": agranda TODAS las formas por la sangría, las
  * UNE (lo que al crecer se toca se fusiona; si cierra un hueco, la figura cierra)
  * y devuelve las líneas de corte finales (en unidades Clipper x1000).

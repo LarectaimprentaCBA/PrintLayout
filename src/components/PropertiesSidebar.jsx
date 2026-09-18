@@ -1103,10 +1103,26 @@ function TroquelControls({ template, onUpdate }) {
   );
 }
 
+// Opciones de "Limitar a la forma" del corte por contorno: contra qué forma del
+// casillero se recorta la silueta trazada. 'auto' solo tiene sentido cuando cada
+// celda trae su propia forma (medidas múltiples), por eso se muestra aparte.
+const CLIP_SHAPES = [
+  ['none', 'Ninguna', 'Sin límite: el corte sigue solo la silueta de la imagen'],
+  ['rect', 'Rect', 'Recorta contra el rectángulo del casillero'],
+  ['circle', 'Círculo', 'Recorta contra el círculo del casillero (plantillas circulares)'],
+  ['rounded', 'Redond.', 'Recorta contra el rectángulo de puntas redondeadas'],
+];
+
 // Controles de la forma de corte "Contorno": motor + ajustes de hoja + avanzado,
 // y override por imagen (default de hoja + ajuste propio de la imagen seleccionada).
 function ContourControls({ template, onUpdate, onApply, dirty, computing }) {
   const [adv, setAdv] = useState(false);
+  // Si las celdas traen forma propia (medidas múltiples), 'auto' es una opción
+  // más: cada casillero se recorta con SU forma.
+  const perCellShapes = (template.celdas ?? []).some((c) => c.shape);
+  const CLIP_OPTS = perCellShapes
+    ? [...CLIP_SHAPES.slice(0, 1), ['auto', 'Cada una', 'Recorta cada casillero con su propia forma'], ...CLIP_SHAPES.slice(1)]
+    : CLIP_SHAPES;
 
   const dEngine = template.contourEngine ?? 'potrace';
   const dTol = template.contourTolerance ?? 32;
@@ -1117,6 +1133,7 @@ function ContourControls({ template, onUpdate, onApply, dirty, computing }) {
   const dSmooth = normSimplifyMm(template.contourSmoothMm);
   const dOpt = template.contourOpttolerance ?? 0.2;
   const dOuter = template.contourOuterBorder ?? true;
+  const dClip = template.contourClipShape ?? 'none';
   const nCutPts = (template.cortes || []).reduce((a, c) => a + (c?.length || 0), 0);
 
   return (
@@ -1135,6 +1152,25 @@ function ContourControls({ template, onUpdate, onApply, dirty, computing }) {
           ))}
         </div>
       </CRow>
+
+      <CRow label="Limitar a la forma">
+        <div className="flex gap-0.5 rounded border border-ink-700 bg-ink-800 p-0.5">
+          {CLIP_OPTS.map(([val, lbl, tip]) => (
+            <button
+              key={val}
+              type="button"
+              title={tip}
+              onClick={() => onUpdate({ contourClipShape: val })}
+              className={`rounded px-1.5 py-0.5 text-[10px] ${dClip === val ? 'bg-accent-600 text-white' : 'text-ink-300 hover:bg-ink-700'}`}
+            >
+              {lbl}
+            </button>
+          ))}
+        </div>
+      </CRow>
+      <p className="text-[10px] leading-snug text-ink-500">
+        Recorta el contorno contra la forma del casillero, así nunca se sale de la pieza. En una plantilla circular elegí <b>Círculo</b> y la línea sale redonda aunque la foto no tenga fondo para recortar (antes salía cuadrada). <b>Ninguna</b> = sigue solo la silueta, como antes.
+      </p>
 
       <div className="pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-500">Toda la hoja</div>
       <CCheck label="Cortar por el borde externo" checked={dOuter} onChange={(v) => onUpdate({ contourOuterBorder: v })} />

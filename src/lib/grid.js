@@ -327,6 +327,27 @@ export function generateCutsPerCell(cells, { cutMarginMm = 0 } = {}) {
   return polylines;
 }
 
+// Polilínea CERRADA con la forma de UNA pieza (el casillero), en mm. Es la MISMA
+// geometría que generan los botones de "Forma corte" (Rectángulo / Círculo /
+// Redondeado), así el corte por CONTORNO recortado contra ella calza exacto con
+// lo que cortaría esa forma. shape 'none' (o celda inválida) → null = sin límite.
+export function cellShapePoly(cell, { shape = 'rect', cutMarginMm = 0, cornerRadiusMm = 0 } = {}) {
+  if (!cell || shape === 'none') return null;
+  if (shape === 'circle') return cellsToCircleCuts([cell], { cutMarginMm })[0] ?? null;
+  if (shape === 'rounded') {
+    return cellsToRoundedRectCuts([cell], { cutMarginMm, cornerRadiusMm })[0] ?? null;
+  }
+  // Rectángulo: lo armamos acá explícito (cellsToCuts emite las marcas de corte,
+  // no un anillo cerrado) para tener siempre un polígono válido para el clip.
+  const m = Math.max(0, Number(cutMarginMm) || 0);
+  const x0 = cell.x + m;
+  const y0 = cell.y + m;
+  const x1 = cell.x + cell.w - m;
+  const y1 = cell.y + cell.h - m;
+  if (x1 <= x0 || y1 <= y0) return null;
+  return [[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]];
+}
+
 // Troquel interno (agujero) de UNA celda: un círculo chico dentro de la pieza,
 // para colgar (ojal de etiqueta). Posición del centro:
 //   - horizontal: centro de la celda + dxMm (dxMm>0 = hacia la derecha)
