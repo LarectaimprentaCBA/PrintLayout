@@ -258,6 +258,51 @@ function base64ToBytes(base64) {
   return bytes;
 }
 
+// Path SVG de un rectangulo con puntas redondeadas (0,0)-(w,h), y hacia ABAJO.
+function roundedRectPath(w, h, r) {
+  const rr = Math.max(0, Math.min(r, w / 2, h / 2));
+  if (rr <= 0) return `M 0 0 H ${w} V ${h} H 0 Z`;
+  return [
+    `M ${rr} 0`, `H ${w - rr}`, `A ${rr} ${rr} 0 0 1 ${w} ${rr}`,
+    `V ${h - rr}`, `A ${rr} ${rr} 0 0 1 ${w - rr} ${h}`,
+    `H ${rr}`, `A ${rr} ${rr} 0 0 1 0 ${h - rr}`,
+    `V ${rr}`, `A ${rr} ${rr} 0 0 1 ${rr} 0`, 'Z',
+  ].join(' ');
+}
+
+// Dibuja el borde blanco / la linea de marco CON LA FORMA DE LA PIEZA.
+// Antes era siempre drawRectangle: en una plantilla CIRCULAR el marco salia
+// como un recuadro CUADRADO sobre una pieza redonda (y al cortar quedaban 4
+// tiras de linea sueltas). 'contour' y cualquier otra forma caen a rectangulo.
+// insetPt achica la caja por los 4 lados (lo usamos para meter la linea DENTRO
+// del corte: medio grosor + el margen de corte).
+function drawPieceShape(page, shape, {
+  x, y, w, h, insetPt = 0, radiusPt = 0, fill = null, borderColor = null, borderWidth = 0,
+}) {
+  const opts = {};
+  if (fill) opts.color = fill;
+  if (borderColor) { opts.borderColor = borderColor; opts.borderWidth = borderWidth; }
+  if (shape === 'circle') {
+    const r = Math.min(w, h) / 2 - insetPt;
+    if (r <= 0) return;
+    page.drawEllipse({ x: x + w / 2, y: y + h / 2, xScale: r, yScale: r, ...opts });
+    return;
+  }
+  const bx = x + insetPt;
+  const by = y + insetPt;
+  const bw = w - 2 * insetPt;
+  const bh = h - 2 * insetPt;
+  if (bw <= 0 || bh <= 0) return;
+  if (shape === 'rounded' && radiusPt > 0) {
+    // drawSvgPath usa el eje Y invertido y ancla el (0,0) del path en (x,y).
+    page.drawSvgPath(roundedRectPath(bw, bh, Math.max(0, radiusPt - insetPt)), {
+      x: bx, y: by + bh, ...opts,
+    });
+    return;
+  }
+  page.drawRectangle({ x: bx, y: by, width: bw, height: bh, ...opts });
+}
+
 // Renderiza una "cara" (frente o dorso) como pagina(s) sobre un doc existente.
 // El embedCache se comparte entre llamadas para que las mismas imagenes usadas
 // en frente y dorso se embeban una sola vez.
@@ -437,6 +482,12 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
       // Línea de filete: marco de color fino sobre el borde EXTERIOR de la celda.
       const lineMm = Math.max(0, Number(image.frame?.lineMm ?? template.cellBorderLineMm) || 0);
       const lineRgb = hexToRgb(image.frame?.color ?? template.cellBorderColor);
+      // Forma de la PIEZA (la que define el corte). El borde blanco y la linea
+      // de marco la SIGUEN, para que en plantillas circulares no salga un
+      // recuadro cuadrado sobre una pieza redonda.
+      const pieceShape = cell.shape ?? template.cutShape ?? 'rect';
+      const cutMarginPt = Math.max(0, Number(template.cutMarginMm) || 0) * MM_TO_PT;
+      const cornerRadiusPt = Math.max(0, Number(template.cornerRadiusMm) || 0) * MM_TO_PT;
 
       const cellWpt = cell.w * MM_TO_PT;
       const cellHpt = cell.h * MM_TO_PT;
@@ -510,11 +561,20 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
       if (lineMm > 0) {
         const lwPt = lineMm * MM_TO_PT;
         const half = lwPt / 2;
-        page.drawRectangle({
-          x: cellXpt + half,
-          y: cellBottomYpt + half,
-          width: cellWpt - lwPt,
-          height: cellHpt - lwPt,
+        // En rectangulo se mantiene EXACTO lo de siempre (caja de la celda,
+        // media linea hacia adentro). En circulo/redondeado se mete ademas el
+        // margen de corte, para que la linea quede DENTRO de la pieza y no la
+        // corte la cuchilla.
+        const inset = pieceShape === 'circle' || pieceShape === 'rounded'
+          ? half + cutMarginPt
+          : half;
+        drawPieceShape(page, pieceShape, {
+          x: cellXpt,
+          y: cellBottomYpt,
+          w: cellWpt,
+          h: cellHpt,
+          insetPt: inset,
+          radiusPt: cornerRadiusPt,
           borderColor: lineRgb,
           borderWidth: lwPt,
         });

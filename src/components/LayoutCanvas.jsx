@@ -453,6 +453,7 @@ export default function LayoutCanvas({
                     cellWmm={cell.w}
                     cellHmm={cell.h}
                     cutMarginMm={template.cutMarginMm ?? 0}
+                    cornerRadiusMm={template.cornerRadiusMm ?? 0}
                     cellNumber={template.doubleSided ? globalIdx + 1 : null}
                     rotate90={cellNeedsRotation(cell, img, mixedOrientations)}
                     cellWpx={w}

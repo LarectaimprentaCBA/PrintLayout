@@ -13,6 +13,7 @@ export default function CellSlot({
   cellWmm = 0,
   cellHmm = 0,
   cutMarginMm = 0,
+  cornerRadiusMm = 0,
   cellNumber = null,
   whiteBorderPx = 0,
   borderLinePx = 0,
@@ -89,6 +90,33 @@ export default function CellSlot({
     }
   }
 
+  // Marco (linea de filete) CON LA FORMA DE LA PIEZA. Antes era siempre
+  // `inset-0` = un rectangulo: en una plantilla circular quedaba un recuadro
+  // CUADRADO sobre una pieza redonda, y al cortar quedaban 4 tiras sueltas.
+  // Mismo criterio que el PDF (exportPdf.drawPieceShape).
+  const pxX = cellWmm > 0 && cellWpx > 0 ? cellWpx / cellWmm : 0;
+  const pxY = cellHmm > 0 && cellHpx > 0 ? cellHpx / cellHmm : 0;
+  const mX = (cutMarginMm || 0) * pxX;
+  const mY = (cutMarginMm || 0) * pxY;
+  let frameBox = { left: 0, top: 0, width: '100%', height: '100%', radius: 0 };
+  if (isCircle && cellWpx > 0 && cellHpx > 0) {
+    const d = Math.min(cellWpx - 2 * mX, cellHpx - 2 * mY);
+    if (d > 0) {
+      frameBox = {
+        left: (cellWpx - d) / 2, top: (cellHpx - d) / 2, width: d, height: d, radius: '50%',
+      };
+    }
+  } else if (cutShape === 'rounded' && cellWpx > 0 && cellHpx > 0) {
+    const bw = cellWpx - 2 * mX;
+    const bh = cellHpx - 2 * mY;
+    if (bw > 0 && bh > 0) {
+      frameBox = {
+        left: mX, top: mY, width: bw, height: bh,
+        radius: Math.max(0, (cornerRadiusMm || 0) * pxX - Math.min(mX, mY)),
+      };
+    }
+  }
+
   return (
     <div
       ref={setRefs}
@@ -141,8 +169,16 @@ export default function CellSlot({
       {circleOverlay}
       {borderLinePx > 0 && image && (
         <div
-          className="pointer-events-none absolute inset-0"
-          style={{ border: `${Math.max(borderLinePx, 1)}px solid ${borderLineColor}` }}
+          className="pointer-events-none absolute"
+          style={{
+            left: frameBox.left,
+            top: frameBox.top,
+            width: frameBox.width,
+            height: frameBox.height,
+            borderRadius: frameBox.radius,
+            boxSizing: 'border-box',
+            border: `${Math.max(borderLinePx, 1)}px solid ${borderLineColor}`,
+          }}
           aria-hidden
         />
       )}
