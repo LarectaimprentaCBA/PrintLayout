@@ -27,7 +27,8 @@
     "test:dobble": "node src/dobble/__tests__/buildDobbleJob.smoke.mjs",
     "test:dobble-intake": "node electron/intake/__tests__/dobble-intake.test.cjs",
     "evidence:dobble": "electron src/dobble/__tests__/gen-evidence.cjs",
-    "evidence:dobble-combo": "electron src/dobble/__tests__/gen-evidence-combo.cjs"
+    "evidence:dobble-combo": "electron src/dobble/__tests__/gen-evidence-combo.cjs",
+    "test:color-icc": "node src/lib/colorCalibration/__tests__/icc.test.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.1.0",
