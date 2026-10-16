@@ -21,6 +21,7 @@ export default function CellSlot({
   rotate90 = false,
   cellWpx = 0,
   cellHpx = 0,
+  bleedPx = null,
 }) {
   const draggable = useDraggable({
     id: `cell:${cellIdx}`,
@@ -98,6 +99,11 @@ export default function CellSlot({
   const pxY = cellHmm > 0 && cellHpx > 0 ? cellHpx / cellHmm : 0;
   const mX = (cutMarginMm || 0) * pxX;
   const mY = (cutMarginMm || 0) * pxY;
+  // ¿Esta pieza sangra hacia afuera? Solo en el borde del bloque, con corte
+  // lineal, en modo Rellenar y sin marco blanco (si hay marco, el filo blanco
+  // es justamente lo que el usuario quiere).
+  const sangra = !!bleedPx && !!image && isCover && whiteBorderPx === 0 && !rotate90;
+
   let frameBox = { left: 0, top: 0, width: '100%', height: '100%', radius: 0 };
   if (isCircle && cellWpx > 0 && cellHpx > 0) {
     const d = Math.min(cellWpx - 2 * mX, cellHpx - 2 * mY);
@@ -130,14 +136,31 @@ export default function CellSlot({
         e.stopPropagation();
         onContextMenu?.(cellIdx, image);
       }}
-      className={`absolute flex cursor-pointer items-center justify-center overflow-hidden text-accent-500/70 transition ${outline} ${
+      className={`absolute flex cursor-pointer items-center justify-center ${sangra ? 'overflow-visible' : 'overflow-hidden'} text-accent-500/70 transition ${outline} ${
         isDragging ? 'opacity-30' : ''
       }`}
       style={borderStyle ? { ...style, ...borderStyle } : style}
       {...draggable.listeners}
       {...draggable.attributes}
     >
-      {image ? (
+      {image && sangra ? (
+        // Pieza del BORDE con corte lineal: el dibujo se estira hacia afuera
+        // hasta donde va a cortar la cuchilla, para que no quede un filo
+        // blanco. Igual que en el PDF (exportPdf, "Sangrado del BORDE").
+        <img
+          src={image.dataUrl}
+          alt={image.name}
+          draggable={false}
+          className="pointer-events-none absolute max-w-none object-cover"
+          style={{
+            left: -bleedPx.l,
+            top: -bleedPx.t,
+            width: `calc(100% + ${bleedPx.l + bleedPx.r}px)`,
+            height: `calc(100% + ${bleedPx.t + bleedPx.b}px)`,
+            ...(objectPosition ? { objectPosition: `${objectPosition.x}% ${objectPosition.y}%` } : null),
+          }}
+        />
+      ) : image ? (
         rotate90 ? (
           // Casillero de orientación opuesta a la imagen: la mostramos girada 90°
           // (CW, igual que la impresión). Caja con dimensiones INTERCAMBIADAS para

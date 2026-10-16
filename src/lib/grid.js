@@ -470,3 +470,34 @@ export const BUILTIN_PAPER_PRESETS = [
 // Alias retro-compat: codigo viejo que importe PAPER_PRESETS sigue funcionando
 // con solo los presets built-in (el modal nuevo recibe la lista mergeada como prop).
 export const PAPER_PRESETS = BUILTIN_PAPER_PRESETS;
+
+// Límites del bloque de celdas (mm). null si no hay celdas.
+export function blockBounds(cells) {
+  if (!Array.isArray(cells) || !cells.length) return null;
+  return {
+    minX: Math.min(...cells.map((c) => c.x)),
+    maxX: Math.max(...cells.map((c) => c.x + c.w)),
+    minY: Math.min(...cells.map((c) => c.y)),
+    maxY: Math.max(...cells.map((c) => c.y + c.h)),
+  };
+}
+
+// SANGRADO DEL BORDE para el corte lineal. El corte del perímetro va
+// `overcutMm` hacia AFUERA (para que la fila/columna del borde se corte entera
+// aunque la impresión venga movida). Si el diseño terminara justo en la celda,
+// esas piezas saldrían con un filo BLANCO entre el dibujo y el corte. Esta
+// función dice cuánto hay que estirar el dibujo por cada lado que toca el
+// borde del bloque, para que llegue EXACTO hasta donde corta la cuchilla.
+// Devuelve {l, r, t, b} en mm (0 en los lados interiores).
+export function edgeBleedForCell(cell, bounds, overcutMm) {
+  const oc = Math.max(0, Number(overcutMm) || 0);
+  const z = { l: 0, r: 0, t: 0, b: 0 };
+  if (!cell || !bounds || oc <= 0) return z;
+  const EPS = 0.01;
+  return {
+    l: Math.abs(cell.x - bounds.minX) < EPS ? oc : 0,
+    r: Math.abs(cell.x + cell.w - bounds.maxX) < EPS ? oc : 0,
+    t: Math.abs(cell.y - bounds.minY) < EPS ? oc : 0,
+    b: Math.abs(cell.y + cell.h - bounds.maxY) < EPS ? oc : 0,
+  };
+}
