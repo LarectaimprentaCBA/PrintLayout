@@ -2108,11 +2108,36 @@ ipcMain.handle('updater:install-now', () => {
   return { ok: true };
 });
 
+// ¿Hay un instalador YA descargado esperando? electron-updater lo deja en
+// %LOCALAPPDATA%<app>-updaterpending y lo instala al SALIR de la app.
+// Pero PrintLayout vive en la bandeja y casi nunca sale, así que el update se
+// quedaba ahí para siempre y el botón "Actualizar" decía "ya tenés la última".
+function pendingUpdateInfo() {
+  try {
+    const base = process.env.LOCALAPPDATA;
+    if (!base) return null;
+    const dir = path.join(base, `${app.getName().toLowerCase()}-updater`, 'pending');
+    const exe = fs.readdirSync(dir).find((f) => f.toLowerCase().endsWith('.exe'));
+    if (!exe) return null;
+    const m = exe.match(/-(\d+\.\d+\.\d+)\.exe$/i);
+    return { file: path.join(dir, exe), version: m ? m[1] : null };
+  } catch (_) { return null; }
+}
 ipcMain.handle('updater:check-now', async () => {
   if (!app.isPackaged) return { ok: false, error: 'Solo en builds instalados.' };
   try {
     const r = await autoUpdater.checkForUpdates();
-    return { ok: true, version: r?.updateInfo?.version };
+    const actual = app.getVersion();
+    const pend = pendingUpdateInfo();
+    const version = r?.updateInfo?.version || pend?.version || null;
+    return {
+      ok: true,
+      version,
+      actual,
+      // true = el instalador ya está bajado y se puede reiniciar e instalar ya.
+      lista: !!pend && !!pend.version && pend.version !== actual,
+      hayNueva: !!version && version !== actual,
+    };
   } catch (err) {
     return { ok: false, error: String(err?.message || err) };
   }

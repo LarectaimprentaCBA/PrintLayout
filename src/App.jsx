@@ -1435,7 +1435,7 @@ export default function App() {
         // Corte lineal (guillotina): líneas completas de lado a lado, piezas
         // pegadas, perímetro corrido hacia afuera. Solo para grillas regulares
         // de fondo liso. Ignora troquel/forma (es otro modo de corte).
-        next.cortes = cellsToLinearCuts(celdas, { overcutMm: next.linearOvercutMm ?? 2 });
+        next.cortes = cellsToLinearCuts(celdas, { overcutMm: next.linearOvercutMm ?? 1 });
       } else if (troquelOn) {
         // Troquel interno activo: por cada celda, primero el agujero y después el
         // corte externo (orden que necesita el plotter: cortar el ojal con la
@@ -1685,7 +1685,7 @@ export default function App() {
     // cortes por celda. Piezas pegadas (el modal fuerza separación 0) + perímetro
     // 2mm hacia afuera. Solo para grillas regulares de fondo liso.
     const cortes = markMarginMm > 0
-      ? (linearCut ? cellsToLinearCuts(cells, { overcutMm: 2 }) : generateCuts(cells, { cutShape, cutMarginMm }))
+      ? (linearCut ? cellsToLinearCuts(cells, { overcutMm: 1 }) : generateCuts(cells, { cutShape, cutMarginMm }))
       : [];
     // Doble faz: NO horneamos las celdas del dorso. Se derivan al vuelo desde
     // `celdas` espejando segun backMirror (cellPositions/mirrorCellsForBack).
@@ -3639,7 +3639,7 @@ export default function App() {
     setEditGeometryTemplate(null);
     if (!base) return;
     const cortes = markMarginMm > 0
-      ? (linearCut ? cellsToLinearCuts(cells, { overcutMm: 2 }) : generateCuts(cells, { cutShape, cutMarginMm }))
+      ? (linearCut ? cellsToLinearCuts(cells, { overcutMm: 1 }) : generateCuts(cells, { cutShape, cutMarginMm }))
       : [];
     try {
       await update({
@@ -4531,6 +4531,16 @@ export default function App() {
       if (!r?.ok) {
         setUpdateChecking(false);
         setToast({ kind: 'error', text: r?.error || 'No se pudo buscar actualizaciones.' });
+      } else if (r.lista) {
+        // El instalador YA estaba bajado y esperando (se instala al salir, y la
+        // app vive en la bandeja, así que podía quedarse ahí para siempre).
+        // Mostramos el cartel de "Reiniciar e instalar" en vez de decir que ya
+        // está todo al día, que era lo que confundía.
+        setUpdateChecking(false);
+        setUpdateInfo({ version: r.version });
+      } else if (r.hayNueva) {
+        setUpdateChecking(false);
+        setUpdateInfo({ version: r.version });
       }
       // Si ok: los eventos update-available / update-not-available / ready
       // continúan el flujo y liberan updateChecking.
