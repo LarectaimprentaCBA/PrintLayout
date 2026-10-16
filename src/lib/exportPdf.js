@@ -10,7 +10,6 @@ import {
   hasMixedOrientations,
   cellNeedsRotation,
 } from './templates.js';
-import { blockBounds, edgeBleedForCell } from './grid.js';
 import { coverCropRect, coverObjectPosition } from './faceDetection.js';
 import { cropImageDataUrl } from './imageCrop.js';
 import { rotateImageDataUrl90CW } from './imageRotate.js';
@@ -442,20 +441,6 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
       ? pageStartOffset(template, p, face)
       : p * cells.length;
 
-    // ── Sangrado del BORDE (corte lineal) ──────────────────────────────────
-    // Con "Corte lineal" el corte del PERÍMETRO va `linearOvercutMm` hacia
-    // AFUERA, para que la fila/columna del borde se corte entera aunque la
-    // impresión venga un poco movida. Si el diseño terminara justo en la celda,
-    // esas piezas saldrían con un filo BLANCO entre el dibujo y el corte.
-    // Por eso las celdas que tocan el borde del bloque estiran el dibujo hacia
-    // afuera hasta donde va a cortar la cuchilla.
-    // Solo en modo "Rellenar" (cover): en "Enteras" (contain) la imagen no
-    // llega al borde de la celda, así que no hay nada que sangrar.
-    const sangradoMm = template.linearCut === true
-      ? Math.max(0, Number(template.linearOvercutMm ?? 2) || 0)
-      : 0;
-    const bloque = sangradoMm > 0 ? blockBounds(cells) : null;
-
     const page = doc.addPage([pageW, pageH]);
 
     const bgPage = await backgroundForPage(p);
@@ -521,20 +506,6 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
       const baseX = cellXpt + bPt;
       const baseYBottom = cellBottomYpt + bPt;
       const cellFitMode = image.fitOverride ?? layoutFitMode;
-      // Cuánto se estira el dibujo hacia afuera por cada lado que toca el borde
-      // del bloque (ver "Sangrado del BORDE" arriba). Con marco blanco NO se
-      // aplica: ahí el usuario quiere justamente un filo blanco.
-      const sangra = bloque && bMm === 0 && cellFitMode === 'cover';
-      const ex = sangra ? edgeBleedForCell(cell, bloque, sangradoMm) : { l: 0, r: 0, t: 0, b: 0 };
-      const { l: exL, r: exR, t: exT, b: exB } = ex;
-      const drawWmm = innerWmm + exL + exR;
-      const drawHmm = innerHmm + exT + exB;
-      const drawWpt = drawWmm * MM_TO_PT;
-      const drawHpt = drawHmm * MM_TO_PT;
-      const drawXpt = baseX - exL * MM_TO_PT;
-      // En PDF la Y crece hacia ARRIBA: estirar hacia el borde de ABAJO de la
-      // hoja (exB) baja la esquina inferior.
-      const drawYpt = baseYBottom - exB * MM_TO_PT;
       // Casillero de orientación opuesta a la imagen (medidas mezcladas): usamos
       // la imagen ya rotada 90° para que llene bien; el recorte/dibujo sigue igual.
       const drawImageObj = cellNeedsRotation(cell, image, mixedOrientations)
@@ -554,14 +525,14 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
       }
 
       if (cellFitMode === 'cover') {
-        const embedded = await embedCoverCrop(drawImageObj, drawWmm, drawHmm);
+        const embedded = await embedCoverCrop(drawImageObj, innerWmm, innerHmm);
         // Al rotar 180° el ancla (x,y) de pdf-lib queda en la esquina opuesta,
         // por eso desplazamos al vertice superior-derecho del rectangulo.
         page.drawImage(embedded, {
-          x: rotate180 ? drawXpt + drawWpt : drawXpt,
-          y: rotate180 ? drawYpt + drawHpt : drawYpt,
-          width: drawWpt,
-          height: drawHpt,
+          x: rotate180 ? baseX + innerWpt : baseX,
+          y: rotate180 ? baseYBottom + innerHpt : baseYBottom,
+          width: innerWpt,
+          height: innerHpt,
           rotate: rotate180 ? degrees(180) : undefined,
         });
       } else {

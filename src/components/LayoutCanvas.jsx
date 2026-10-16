@@ -10,7 +10,6 @@ import {
   cellNeedsRotation,
 } from '../lib/templates.js';
 import { offsetPolygons } from '../lib/contour/offset.js';
-import { blockBounds, edgeBleedForCell } from '../lib/grid.js';
 import { coverObjectPosition, coverCropRect, focalPoint } from '../lib/faceDetection.js';
 import { renderPdfPage1Preview } from '../lib/pdfPreview.js';
 import { qrMatrix, qrPlacementMm } from '../lib/exportPdf.js';
@@ -363,13 +362,6 @@ export default function LayoutCanvas({
     : (currentPage ?? 0) * (cellsPerPage ?? cells.length);
   const totalPages = pageCount ?? 1;
   const pxPerMm = PX_PER_MM_AT_100 * scale;
-  // Sangrado del BORDE en corte lineal: el corte del perímetro va hacia afuera,
-  // así que el dibujo de las piezas del borde se estira hasta ahí (si no, salen
-  // con un filo blanco). Mismo criterio que el PDF (exportPdf).
-  const sangradoMm = template?.linearCut === true
-    ? Math.max(0, Number(template.linearOvercutMm ?? 2) || 0)
-    : 0;
-  const bloqueCeldas = sangradoMm > 0 ? blockBounds(cells) : null;
 
   return (
     <main className="relative flex flex-1 flex-col overflow-hidden bg-ink-950">
@@ -451,12 +443,6 @@ export default function LayoutCanvas({
                     isSelected={selectedCell === globalIdx}
                     fitMode={fitMode}
                     objectPosition={objectPosition}
-                    bleedPx={bloqueCeldas && bMm === 0
-                      ? (() => { const e = edgeBleedForCell(cell, bloqueCeldas, sangradoMm);
-                        return (e.l || e.r || e.t || e.b)
-                          ? { l: e.l * pxPerMm, r: e.r * pxPerMm, t: e.t * pxPerMm, b: e.b * pxPerMm }
-                          : null; })()
-                      : null}
                     whiteBorderPx={bMm * pxPerMm}
                     borderLinePx={Math.max(0, Number(img?.frame?.lineMm ?? template.cellBorderLineMm) || 0) * pxPerMm}
                     borderLineColor={img?.frame?.color ?? template.cellBorderColor ?? '#000000'}
