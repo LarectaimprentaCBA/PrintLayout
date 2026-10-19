@@ -1862,6 +1862,77 @@ ipcMain.handle('print:has-printer-config', async (_evt, payload) => {
   return { ok: true, exists: fs.existsSync(dmFile) };
 });
 
+// Corre el PrintHelper con unas líneas de input y devuelve el key=value de salida.
+function runHelperKV(lines, { windowsHide = true, timeoutMs = 15000 } = {}) {
+  return new Promise((resolve) => {
+    const helperExe = resolvePrintHelper();
+    if (!helperExe) return resolve({ ok: false, error: 'No se encontro PrintHelper.exe.' });
+    let out = '', err = '', settled = false;
+    const settle = (r) => { if (settled) return; settled = true; resolve(r); };
+    let proc;
+    try { proc = spawn(helperExe, [], { windowsHide }); }
+    catch (e) { return settle({ ok: false, error: e.message }); }
+    const killer = setTimeout(() => { try { proc.kill(); } catch {} settle({ ok: false, error: 'La impresora no respondió a tiempo.' }); }, timeoutMs);
+    proc.stdout.on('data', (d) => { out += d.toString('utf-8'); });
+    proc.stderr.on('data', (d) => { err += d.toString('utf-8'); });
+    proc.on('error', (e) => { clearTimeout(killer); settle({ ok: false, error: e.message }); });
+    proc.on('close', (code) => {
+      clearTimeout(killer);
+      const r = {};
+      for (const ln of out.split(/\r?\n/)) { const eq = ln.indexOf('='); if (eq > 0) r[ln.slice(0, eq)] = ln.slice(eq + 1); }
+      if (r.OK !== '1') return settle({ ok: false, error: r.ERROR || err.trim() || `PrintHelper exit ${code}`, kv: r });
+      settle({ ok: true, kv: r });
+    });
+    try { proc.stdin.write(lines.concat('END=1').join('\n') + '\n', 'utf-8'); proc.stdin.end(); }
+    catch (e) { clearTimeout(killer); settle({ ok: false, error: e.message }); }
+  });
+}
+
+// Qué configuración tiene hoy una impresora: la que usa PrintLayout y la que
+// usa Windows (que es la que agarran Corel y el resto). Se lee del driver.
+ipcMain.handle('print:printer-config-info', async (_evt, payload) => {
+  const { deviceName } = payload ?? {};
+  if (!deviceName) return { ok: false, error: 'Falta el nombre de la impresora.' };
+  const dmFile = devmodeFilePath(deviceName);
+  const tieneApp = !!dmFile && fs.existsSync(dmFile);
+  const leer = async (conDevmode) => {
+    const lines = ['MODE=pageinfo', `DEVICE=${deviceName}`];
+    if (conDevmode) lines.push(`DEVMODE_FILE=${dmFile}`);
+    const r = await runHelperKV(lines);
+    if (!r.ok) return null;
+    return {
+      paper: r.kv.PAPER_NAME || '', media: r.kv.MEDIA_NAME || '',
+      quality: r.kv.QUALITY_NAME || '', icm: r.kv.ICM_NAME || '',
+      icmOn: r.kv.ICM_ON === '1' ? true : (r.kv.ICM_ON === '0' ? false : null),
+    };
+  };
+  try {
+    const windows = await leer(false);
+    const app_ = tieneApp ? await leer(true) : null;
+    const difiere = !!(app_ && windows) && ['paper', 'media', 'quality', 'icm']
+      .some((k) => (app_[k] || '') !== (windows[k] || ''));
+    return { ok: true, app: app_, windows, difiere, tieneApp };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+
+// Aplica la configuración que PrintLayout tiene guardada para esa impresora como
+// PREDETERMINADA de Windows, para que valga también en Corel y los demás programas.
+// Sin esto, la carta de calibración y el trabajo real pueden salir con papel y
+// calidad distintos, y entonces el perfil no corresponde.
+ipcMain.handle('print:apply-config-to-windows', async (_evt, payload) => {
+  const { deviceName } = payload ?? {};
+  if (!deviceName) return { ok: false, error: 'Falta el nombre de la impresora.' };
+  const dmFile = devmodeFilePath(deviceName);
+  if (!dmFile || !fs.existsSync(dmFile)) {
+    return { ok: false, error: 'Todavía no configuraste esta impresora en PrintLayout. Tocá “Configurar impresora” primero.' };
+  }
+  const r = await runHelperKV(['MODE=setdefault', `DEVICE=${deviceName}`, `DEVMODE_FILE=${dmFile}`]);
+  if (!r.ok) {
+    return { ok: false, error: `No se pudo aplicar a Windows: pedí que lo haga un usuario administrador. (${r.error})` };
+  }
+  return { ok: true, level: Number(r.kv.LEVEL) || 9 };
+});
+
 ipcMain.handle('print:pdf', async (_evt, payload) => {
   const {
     images,
@@ -1896,7 +1967,7 @@ ipcMain.handle('color:list-printers', async () => {
 });
 
 ipcMain.handle('color:list', async () => {
-  try { return { ok: true, calibrations: colorStore.list(), manualIp: colorStore.getManualIp() }; }
+  try { return { ok: true, calibrations: colorStore.list(), manualIp: colorStore.getManualIp(), manualPrinter: colorStore.getManualPrinter() }; }
   catch (err) { return { ok: false, error: err.message, calibrations: [] }; }
 });
 
@@ -1937,15 +2008,39 @@ ipcMain.handle('color:set-manual-ip', async (_evt, payload) => {
   catch (err) { return { ok: false, error: err.message }; }
 });
 
+// Asigna una COLA de impresión a una impresora de calibración (per-PC). La cola
+// es la identidad estable: la IP del puerto puede quedar vieja sin que nadie se
+// entere. Guardamos igual la IP y el puerto para poder avisar si cambian.
+ipcMain.handle('color:set-manual-printer', async (_evt, payload) => {
+  const { queue, ip, queueName, port } = payload || {};
+  try {
+    const r = colorStore.setManualPrinter(queue, (ip || queueName || port)
+      ? { ip, queue: queueName, port } : null);
+    return r;
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+
 // Resuelve la calibración activa para una cola (para el cartel "Corrección activa").
+// Mismo orden que al imprimir: primero la asignación manual por cola, después la IP.
 ipcMain.handle('color:resolve-active', async (_evt, payload) => {
   const { deviceName } = payload || {};
   try {
-    const ip = await colorPrinters.resolveIp(deviceName, colorStore.getManualIp());
-    const cal = ip ? colorStore.getActiveForIp(ip) : null;
+    const manualRec = colorStore.getManualPrinter()[deviceName] || null;
+    let ip = manualRec ? (manualRec.ip || null) : null;
+    let cal = null;
+    if (manualRec) {
+      cal = colorStore.getActiveForQueue(deviceName);
+    } else {
+      ip = await colorPrinters.resolveIp(deviceName, colorStore.getManualIp());
+      cal = ip ? colorStore.getActiveForIp(ip, deviceName) : null;
+    }
     return {
-      ok: true, ip,
-      active: cal ? { id: cal.id, referenceIp: cal.referencePrinter && cal.referencePrinter.ip, paperName: cal.paperName, createdAt: cal.createdAt, updatedAt: cal.updatedAt } : null,
+      ok: true, ip, via: manualRec ? 'cola' : 'ip',
+      active: cal ? {
+        id: cal.id, referenceIp: cal.referencePrinter && cal.referencePrinter.ip,
+        paperName: cal.paperName, createdAt: cal.createdAt, updatedAt: cal.updatedAt,
+        config: cal.config || null,
+      } : null,
     };
   } catch (err) { return { ok: false, error: err.message, ip: null, active: null }; }
 });
@@ -2167,44 +2262,6 @@ ipcMain.handle('color:sync-pull', async () => {
     if (added || updated || removed) appendDebugLog(`[color] sync-pull: ${added} nuevas, ${updated} actualizadas, ${removed} borradas`);
     return { ok: true, added, updated, removed, idsTocados };
   } catch (err) { return { ok: false, error: err.message, added: 0, updated: 0, removed: 0, idsTocados: [] }; }
-});
-
-// Abre Preferencias de la impresora y DEVUELVE el DEVMODE elegido (base64) SIN guardarlo
-// en la config de la impresora (queda dentro de la sesión de calibración).
-ipcMain.handle('color:configure-paper', async (_evt, payload) => {
-  const { deviceName, baseDevmodeB64 } = payload || {};
-  if (!deviceName) return { ok: false, error: 'Falta el nombre de la impresora.' };
-  const helperExe = resolvePrintHelper();
-  if (!helperExe) return { ok: false, error: 'No se encontro PrintHelper.exe.' };
-  return await new Promise((resolve) => {
-    let stdout = '', stderr = '', settled = false;
-    const settle = (r) => { if (settled) return; settled = true; resolve(r); };
-    let proc;
-    try { proc = spawn(helperExe, [], { windowsHide: false }); }
-    catch (err) { settle({ ok: false, error: `No se pudo iniciar PrintHelper: ${err.message}` }); return; }
-    proc.stdout.on('data', (d) => { stdout += d.toString('utf-8'); });
-    proc.stderr.on('data', (d) => { stderr += d.toString('utf-8'); });
-    proc.on('error', (err) => settle({ ok: false, error: `PrintHelper fallo: ${err.message}` }));
-    proc.on('close', (code) => {
-      const result = {};
-      for (const ln of stdout.split(/\r?\n/)) { const eq = ln.indexOf('='); if (eq <= 0) continue; result[ln.slice(0, eq)] = ln.slice(eq + 1); }
-      if (result.OK === '1' && result.DEVMODE_OUT) settle({ ok: true, devmodeB64: result.DEVMODE_OUT });
-      else if (result.CANCELED === '1' || code === 2) settle({ ok: true, canceled: true });
-      else settle({ ok: false, error: result.ERROR || stderr.trim() || `PrintHelper exit ${code}` });
-    });
-    const lines = ['MODE=configure', `DEVICE=${deviceName}`];
-    let tmpBase = null;
-    if (typeof baseDevmodeB64 === 'string' && baseDevmodeB64) {
-      try {
-        tmpBase = path.join(os.tmpdir(), `pl-devmode-${Date.now()}.bin`);
-        fs.writeFileSync(tmpBase, Buffer.from(baseDevmodeB64, 'base64'));
-        lines.push(`DEVMODE_FILE=${tmpBase}`);
-      } catch { /* sin base */ }
-    }
-    lines.push('END=1');
-    try { proc.stdin.write(lines.join('\n') + '\n', 'utf-8'); proc.stdin.end(); }
-    catch (err) { settle({ ok: false, error: `No se pudo enviar input al helper: ${err.message}` }); }
-  });
 });
 
 function setupAutoUpdate(parentWin) {

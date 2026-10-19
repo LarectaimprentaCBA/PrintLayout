@@ -40,6 +40,38 @@ function parseRange(text, totalPages) {
   return [...result].sort((a, b) => a - b);
 }
 
+// Muestra la configuración que está activa HOY para la impresora, leída del
+// driver. "—" = el driver no lo declara en el DEVMODE estándar (muchos lo
+// guardan en su parte privada): preferimos decir que no lo sabemos antes que
+// inventar un valor.
+function PrinterConfigPanel({ info }) {
+  if (!info) return null;
+  const { app: cfgApp, windows, difiere, tieneApp } = info;
+  const activa = tieneApp && cfgApp ? cfgApp : windows;
+  if (!activa) return null;
+  const dato = (v) => (v && String(v).trim() ? v : '—');
+  return (
+    <div className="mt-1.5 rounded border border-ink-700 bg-ink-950/40 px-2 py-1.5 text-[11px] text-ink-300">
+      <div className="text-ink-400">
+        {tieneApp && cfgApp ? 'Configuración que usa PrintLayout' : 'Configuración de Windows'}:
+      </div>
+      <div className="mt-0.5">
+        Papel <b className="text-ink-200">{dato(activa.paper)}</b>
+        {' · '}Tipo <b className="text-ink-200">{dato(activa.media)}</b>
+        {' · '}Calidad <b className="text-ink-200">{dato(activa.quality)}</b>
+        {' · '}Color <b className={activa.icmOn === true ? 'text-amber-300' : 'text-ink-200'}>{dato(activa.icm)}</b>
+      </div>
+      {difiere && windows && (
+        <div className="mt-1 rounded border border-amber-700/50 bg-amber-950/20 px-1.5 py-1 text-amber-200">
+          Windows tiene otra: papel {dato(windows.paper)} · tipo {dato(windows.media)} ·
+          calidad {dato(windows.quality)} · color {dato(windows.icm)}. Corel va a
+          imprimir con <b>esa</b>, no con la de PrintLayout.
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function PrintModal({
   open,
   faceLabel,
@@ -52,6 +84,18 @@ export default function PrintModal({
   backOffsetXmm = 0,
   backOffsetYmm = 0,
   onBackOffsetChange,
+  // Impresora preseleccionada (la usa el asistente de calibración, que ya sabe
+  // a cuál va cada carta). Si no viene, se usa la última / la predeterminada.
+  initialPrinter = '',
+  title,
+  // La carta de calibración se manda SIN corregir: el cartel verde de
+  // "corrección activa" sería mentira, así que se reemplaza por el aviso real.
+  noColorCorrection = false,
+  // Avisar en ámbar si el driver tiene la gestión de color encendida (calibración).
+  warnDriverColor = false,
+  // La calibración imprime a una impresora puntual: que eso no cambie cuál queda
+  // elegida la próxima vez que se imprima un trabajo normal.
+  rememberPrinter = true,
   onConfirm,
   onCancel,
 }) {
@@ -72,6 +116,12 @@ export default function PrintModal({
   const [registrationCross, setRegistrationCross] = useState(false);
   const [colorActive, setColorActive] = useState(null); // {referenceIp, paperName, updatedAt} | null
   const [pullTick, setPullTick] = useState(0);
+  // Qué configuración tiene hoy la impresora, leída del driver: la de PrintLayout
+  // y la de Windows (la que agarran Corel y los demás).
+  const [cfgInfo, setCfgInfo] = useState(null); // {app, windows, difiere, tieneApp} | null
+  const [cfgTick, setCfgTick] = useState(0);
+  const [alsoWindows, setAlsoWindows] = useState(false);
+  const [applyMsg, setApplyMsg] = useState(null); // {kind, text}
 
   // Al abrir, bajar cambios de calibración en segundo plano (no bloquea: usa lo que ya
   // hay y actualiza el cartel para la próxima). Si la red falla, no pasa nada.
@@ -113,9 +163,11 @@ export default function PrintModal({
         setPrinters(list);
         const last = localStorage.getItem(LS_LAST_PRINTER);
         const lastExists = last && list.some((p) => p.name === last);
-        const def = lastExists
+        const pedida = initialPrinter && list.some((p) => p.name === initialPrinter)
+          ? initialPrinter : '';
+        const def = pedida || (lastExists
           ? last
-          : list.find((p) => p.isDefault)?.name ?? list[0]?.name ?? '';
+          : list.find((p) => p.isDefault)?.name ?? list[0]?.name ?? '');
         setDeviceName(def);
         // Copias SIEMPRE arranca en 1 (no recordar la última): así no se imprime
         // de más por accidente. Se cambia a mano si hacen falta más.
@@ -129,7 +181,7 @@ export default function PrintModal({
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, initialPrinter]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -158,6 +210,27 @@ export default function PrintModal({
     })();
     return () => { cancelled = true; };
   }, [open, deviceName]);
+
+  // Configuración real del driver (papel, calidad, gestión de color), para
+  // PrintLayout y para Windows. Tarda un poco: abre la impresora, así que va en
+  // su propio efecto y no bloquea nada.
+  useEffect(() => {
+    if (!open || !deviceName) { setCfgInfo(null); return undefined; }
+    let cancelled = false;
+    setCfgInfo(null);
+    setApplyMsg(null);
+    (async () => {
+      try {
+        const r = await window.printlayout.pdf.printerConfigInfo?.(deviceName);
+        if (!cancelled) setCfgInfo(r?.ok ? r : null);
+      } catch {
+        if (!cancelled) setCfgInfo(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [open, deviceName, cfgTick]);
+
+  useEffect(() => { if (open) { setAlsoWindows(false); setApplyMsg(null); } }, [open]);
 
   // Indices 0-based de las paginas que se van a imprimir, segun el modo.
   // null = error de parseo del rango.
@@ -188,7 +261,7 @@ export default function PrintModal({
   const handleConfirm = () => {
     if (!canPrint) return;
     try {
-      localStorage.setItem(LS_LAST_PRINTER, deviceName);
+      if (rememberPrinter) localStorage.setItem(LS_LAST_PRINTER, deviceName);
     } catch {}
     onConfirm?.({
       deviceName,
@@ -200,6 +273,37 @@ export default function PrintModal({
     });
   };
 
+  // Escribe la configuración de PrintLayout como predeterminada de Windows, así
+  // Corel y los demás imprimen con lo mismo. Si Windows no deja, lo dice claro
+  // y no rompe nada.
+  const applyToWindows = async () => {
+    if (!deviceName) return false;
+    try {
+      const r = await window.printlayout.pdf.applyPrinterConfigToWindows?.(deviceName);
+      if (r?.ok) {
+        setApplyMsg({ kind: 'ok', text: 'Aplicada también a Windows (Corel y los demás programas).' });
+        setCfgTick((t) => t + 1);
+        return true;
+      }
+      setApplyMsg({ kind: 'error', text: r?.error || 'No se pudo aplicar a Windows.' });
+      return false;
+    } catch (err) {
+      setApplyMsg({ kind: 'error', text: err.message });
+      return false;
+    }
+  };
+
+  const handleAlsoWindows = async (checked) => {
+    setAlsoWindows(checked);
+    setApplyMsg(null);
+    if (!checked) return;
+    if (!hasCustomPrefs) {
+      setApplyMsg({ kind: 'info', text: 'Tocá “Configurar impresora”: lo que elijas se va a aplicar también a Windows.' });
+      return;
+    }
+    await applyToWindows();
+  };
+
   const handleOpenConfig = async () => {
     if (!deviceName || openingConfig) return;
     setOpeningConfig(true);
@@ -208,6 +312,8 @@ export default function PrintModal({
       const r = await window.printlayout.pdf.openPrinterConfig(deviceName);
       if (r?.configured) {
         setHasCustomPrefs(true);
+        setCfgTick((t) => t + 1);
+        if (alsoWindows) await applyToWindows();
       } else if (r?.canceled) {
         // Cancelo el dialog — no hacemos nada.
       } else if (!r?.ok) {
@@ -224,7 +330,7 @@ export default function PrintModal({
     if (!deviceName) return;
     try {
       const r = await window.printlayout.pdf.resetPrinterConfig(deviceName);
-      if (r?.ok) setHasCustomPrefs(false);
+      if (r?.ok) { setHasCustomPrefs(false); setAlsoWindows(false); setCfgTick((t) => t + 1); }
     } catch (err) {
       setError(err.message);
     }
@@ -241,12 +347,12 @@ export default function PrintModal({
     >
       <div className="w-[420px] rounded-lg border border-ink-700 bg-ink-900 p-4 shadow-2xl">
         <h3 className="text-sm font-semibold text-ink-100">
-          Imprimir{faceLabel ? ` — ${faceLabel}` : ''}
+          {title || `Imprimir${faceLabel ? ` — ${faceLabel}` : ''}`}
         </h3>
         <p className="mt-1 text-[11px] leading-relaxed text-ink-500">
           "Configurar impresora" guarda papel/calidad/color/bandeja/etc. solo
-          para PrintLayout — no toca los predeterminados de Windows ni los de
-          otras apps.
+          para PrintLayout. Si querés que valga también en Corel y los demás
+          programas, tildá la casilla de abajo.
         </p>
 
         {error && (
@@ -256,7 +362,7 @@ export default function PrintModal({
         )}
 
         <div className="mt-4 space-y-3 text-xs text-ink-200">
-          <label className="block">
+          <div className="block">
             <span className="mb-1 block text-ink-400">Impresora</span>
             <div className="flex gap-2">
               <select
@@ -300,13 +406,55 @@ export default function PrintModal({
                 </button>
               </div>
             )}
-            {colorActive && (
+            <label className="mt-1.5 flex cursor-pointer items-start gap-2 rounded border border-ink-700 bg-ink-950/40 px-2 py-1.5">
+              <input
+                type="checkbox"
+                checked={alsoWindows}
+                onChange={(e) => handleAlsoWindows(e.target.checked)}
+                disabled={!deviceName}
+                className="mt-0.5 accent-accent-600"
+              />
+              <span>
+                <span className="block text-ink-200">Usar también en los demás programas (Corel, PDF…)</span>
+                <span className="block text-[10px] leading-snug text-ink-500">
+                  Deja esta configuración como la predeterminada de Windows para
+                  esta impresora. Sin esto, Corel imprime con lo que tenga Windows.
+                </span>
+              </span>
+            </label>
+            {applyMsg && (
+              <div className={'mt-1.5 rounded border px-2 py-1 text-[11px] ' + (
+                applyMsg.kind === 'error' ? 'border-red-800 bg-red-950/40 text-red-300'
+                  : applyMsg.kind === 'ok' ? 'border-green-700/40 bg-green-950/30 text-green-300'
+                    : 'border-ink-700 bg-ink-950/40 text-ink-300')}>
+                {applyMsg.text}
+              </div>
+            )}
+
+            <PrinterConfigPanel info={cfgInfo} />
+
+            {warnDriverColor && cfgInfo?.app?.icmOn === true && (
+              <div className="mt-1.5 rounded border border-amber-700/60 bg-amber-950/30 px-2 py-1 text-[11px] text-amber-200">
+                Esta impresora tiene la <b>gestión de color del driver encendida</b>
+                {cfgInfo.app.icm ? ` (${cfgInfo.app.icm})` : ''}. La carta tiene que
+                salir <b>sin</b> gestión de color o la medición queda mal: entrá a
+                “Configurar impresora” y apagala.
+              </div>
+            )}
+
+            {colorActive && !noColorCorrection && (
               <div className="mt-1.5 rounded border border-green-700/40 bg-green-950/30 px-2 py-1 text-[11px] text-green-300">
                 🎨 Corrección de color activa{colorActive.updatedAt ? ' — calibrada el ' + new Date(colorActive.updatedAt).toLocaleDateString() : ''}
                 {colorActive.paperName ? ' (' + colorActive.paperName + ')' : ''}.
               </div>
             )}
-          </label>
+            {noColorCorrection && (
+              <div className="mt-1.5 rounded border border-ink-700 bg-ink-950/40 px-2 py-1 text-[11px] text-ink-400">
+                Esta hoja se manda <b>sin corrección de color</b> y a tamaño real: es
+                lo que hay que medir.
+              </div>
+            )}
+          </div>
 
           <label className="block">
             <span className="mb-1 block text-ink-400">Copias</span>

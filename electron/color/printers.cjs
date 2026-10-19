@@ -83,11 +83,14 @@ function resolveFromCache(deviceName, manualIp = {}) {
   return null;
 }
 
-// Resuelve UNA sola cola con PowerShell, con límite de tiempo. Devuelve IP o null.
+// Resuelve UNA sola cola con PowerShell, con límite de tiempo.
+// Devuelve { ip, timedOut }. La distinción importa: `ip: null, timedOut: false`
+// quiere decir "esa cola NO tiene IP" (una impresora USB, o Imprimir en PDF), y
+// eso no es un fallo — avisar ahí sería una alarma falsa.
 // Rápido porque consulta una sola impresora (no enumera todas).
 function resolveOneQueue(deviceName, manualIp = {}, timeoutMs = 900) {
-  if (!deviceName) return Promise.resolve(null);
-  if (manualIp && manualIp[deviceName]) return Promise.resolve(manualIp[deviceName]);
+  if (!deviceName) return Promise.resolve({ ip: null, timedOut: false });
+  if (manualIp && manualIp[deviceName]) return Promise.resolve({ ip: manualIp[deviceName], timedOut: false });
   const q = String(deviceName).replace(/'/g, "''");
   const ps = `
 $ErrorActionPreference='SilentlyContinue'
@@ -104,13 +107,14 @@ if ($ip) { Write-Output $ip }
     let out = '', done = false;
     const finish = (v) => { if (done) return; done = true; resolve(v); };
     const p = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { windowsHide: true });
-    const killer = setTimeout(() => { try { p.kill(); } catch (_) {} finish(null); }, timeoutMs);
+    const killer = setTimeout(() => { try { p.kill(); } catch (_) {} finish({ ip: null, timedOut: true }); }, timeoutMs);
     p.stdout.on('data', (d) => { out += d; });
-    p.on('error', () => { clearTimeout(killer); finish(null); });
+    p.on('error', () => { clearTimeout(killer); finish({ ip: null, timedOut: true }); });
     p.on('close', () => {
       clearTimeout(killer);
       const m = out.trim().match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
-      finish(m ? m[1] : null);
+      // Terminó bien: si no hay IP es porque esa cola no la tiene, no por tiempo.
+      finish({ ip: m ? m[1] : null, timedOut: false });
     });
   });
 }

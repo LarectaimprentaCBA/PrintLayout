@@ -112,6 +112,10 @@ contextBridge.exposeInMainWorld('printlayout', {
       ipcRenderer.invoke('print:reset-printer-config', { deviceName }),
     hasPrinterConfig: (deviceName) =>
       ipcRenderer.invoke('print:has-printer-config', { deviceName }),
+    printerConfigInfo: (deviceName) =>
+      ipcRenderer.invoke('print:printer-config-info', { deviceName }),
+    applyPrinterConfigToWindows: (deviceName) =>
+      ipcRenderer.invoke('print:apply-config-to-windows', { deviceName }),
     extractImages: (bytes) => ipcRenderer.invoke('pdf:extract-images', { bytes }),
     renderRegions: (bytes, dpi) => ipcRenderer.invoke('pdf:render-regions', { bytes, dpi }),
     readExtractedImage: (filePath) =>
@@ -242,12 +246,13 @@ contextBridge.exposeInMainWorld('printlayout', {
     setActive: (id, active) => ipcRenderer.invoke('color:set-active', { id, active }),
     getManualIp: () => ipcRenderer.invoke('color:get-manual-ip'),
     setManualIp: (queue, ip) => ipcRenderer.invoke('color:set-manual-ip', { queue, ip }),
+    // Asignar una COLA a una impresora de calibración (rec = {ip, queueName, port} o null para quitar).
+    setManualPrinter: (queue, rec) => ipcRenderer.invoke('color:set-manual-printer', { queue, ...(rec || {}) }),
     resolveActive: (deviceName) => ipcRenderer.invoke('color:resolve-active', { deviceName }),
     canShare: () => ipcRenderer.invoke('color:can-share'),
     share: (id) => ipcRenderer.invoke('color:share', id),
     deleteShared: (id) => ipcRenderer.invoke('color:delete-shared', id),
     syncPull: () => ipcRenderer.invoke('color:sync-pull'),
-    configurePaper: (deviceName, baseDevmodeB64) => ipcRenderer.invoke('color:configure-paper', { deviceName, baseDevmodeB64 }),
     // Perfil ICC exportado: los bytes los arma el renderer, el main los escribe.
     writeIcc: (payload) => ipcRenderer.invoke('color:write-icc', payload),
     saveIccAs: (defaultName, bytes) => ipcRenderer.invoke('color:save-icc-as', { defaultName, bytes }),

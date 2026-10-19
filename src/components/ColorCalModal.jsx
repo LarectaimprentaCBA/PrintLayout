@@ -4,10 +4,14 @@ import { renderCalibrationCharts } from '../lib/colorCalibration/chart.js';
 import { analyzePair, analyzeCorrected, parseCube, parseInformePrevisto, parseInformeReal } from '../lib/colorCalibration/analyze.js';
 import { construirPerfil } from '../lib/colorCalibration/iccExport.js';
 import { construirCartasArchivos } from '../lib/colorCalibration/chartFiles.js';
+import PrintModal from './PrintModal.jsx';
 
 // Asistente de calibración de color por impresora. Corrige una impresora "pálida" para
 // que imprima como una de referencia. La identidad de la impresora es su IP (el nombre de
-// cola cambia entre PC). Todo dentro de PrintLayout. Ver electron/color/* + src/lib/colorCalibration/*.
+// cola cambia entre PC), salvo en las colas asignadas A MANO: ahí manda el nombre de la
+// cola, porque hay impresoras (las Epson, por "EpsonNet Print Port") que se encuentran
+// por MAC y cuyo puerto de Windows se queda con una IP vieja.
+// Todo dentro de PrintLayout. Ver electron/color/* + src/lib/colorCalibration/*.
 
 const api = () => (typeof window !== 'undefined' ? window.printlayout?.color : null);
 const fmtDate = (s) => { try { return new Date(s).toLocaleDateString(); } catch { return ''; } };
@@ -16,6 +20,7 @@ export default function ColorCalModal({ open, onClose }) {
   const [printers, setPrinters] = useState([]);
   const [cals, setCals] = useState([]);
   const [manualIp, setManualIp] = useState({});
+  const [manualPrinter, setManualPrinter] = useState({}); // cola → {ip, queue, port, assignedAt}
   const [canShare, setCanShare] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState('');
@@ -34,10 +39,14 @@ export default function ColorCalModal({ open, onClose }) {
   const [correctDev, setCorrectDev] = useState('');
   const [refDev, setRefDev] = useState('');
   const [paperName, setPaperName] = useState('');
-  const [refDevmode, setRefDevmode] = useState(null);
-  const [correctDevmode, setCorrectDevmode] = useState(null);
   const [sessionId, setSessionId] = useState(0);
-  const [printedCharts, setPrintedCharts] = useState(false);
+  const [printedRef, setPrintedRef] = useState(false);
+  const [printedCor, setPrintedCor] = useState(false);
+  // Cuál carta se está por imprimir con el modal de impresión de siempre.
+  const [printChart, setPrintChart] = useState(null); // 'ref' | 'correct' | null
+  // Configuración real (papel/calidad/color) con la que se imprimen las cartas.
+  const [cfgRef, setCfgRef] = useState(null);
+  const [cfgCorrect, setCfgCorrect] = useState(null);
   const [scanA, setScanA] = useState(null);
   const [scanB, setScanB] = useState(null);
   const [analysis, setAnalysis] = useState(null); // {lut, informe, stats, ...}
@@ -59,6 +68,7 @@ export default function ColorCalModal({ open, onClose }) {
     setPrinters(pr.printers || []);
     setCals(ls.calibrations || []);
     setManualIp(ls.manualIp || {});
+    setManualPrinter(ls.manualPrinter || {});
     setCanShare(!!cs.canShare);
     setLoaded(true);
   };
@@ -66,20 +76,46 @@ export default function ColorCalModal({ open, onClose }) {
   useEffect(() => { if (open) { setLoaded(false); setFeedback(null); setView('list'); reload(); } }, [open]);
   useEffect(() => {
     if (!open) return undefined;
-    const onKey = (e) => { if (e.key === 'Escape') onClose?.(); };
+    // Con el modal de impresión abierto, Escape es suyo: si no, cerraría los dos.
+    const onKey = (e) => { if (e.key === 'Escape' && !printChart) onClose?.(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  }, [open, onClose, printChart]);
 
+  // Al llegar al paso de imprimir, leemos del driver qué papel/calidad/gestión
+  // de color tienen las dos impresoras: hace falta para avisar si el driver va a
+  // "mejorar" el color (y arruinar la medición) y para dejar anotado con qué
+  // configuración se hizo la calibración.
+  useEffect(() => {
+    if (view !== 'wizard' || step !== 3) return undefined;
+    let cancelled = false;
+    const leer = async (dev, set) => {
+      if (!dev) { set(null); return; }
+      try {
+        const r = await window.printlayout?.pdf?.printerConfigInfo?.(dev);
+        if (!cancelled) set(r?.ok ? ((r.tieneApp && r.app) ? r.app : r.windows) : null);
+      } catch { if (!cancelled) set(null); }
+    };
+    leer(refDev, setCfgRef);
+    leer(correctDev, setCfgCorrect);
+    return () => { cancelled = true; };
+  }, [view, step, refDev, correctDev]);
+
+  // La asignación a mano gana sobre la IP del puerto: el puerto puede tener una
+  // IP vieja (EpsonNet encuentra la máquina por MAC y nadie se entera).
   const ipOf = useMemo(() => (name) => {
+    const rec = manualPrinter[name];
+    if (rec && rec.ip) return rec.ip;
     const p = printers.find((x) => x.name === name);
-    return (p && p.ip) || manualIp[name] || null;
-  }, [printers, manualIp]);
+    return (p && p.ip) || null;
+  }, [printers, manualPrinter]);
 
   const nameForIp = useMemo(() => (ip) => {
-    const p = printers.find((x) => x.ip === ip) || printers.find((x) => manualIp[x.name] === ip);
+    const asignada = Object.keys(manualPrinter).find((q) => manualPrinter[q].ip === ip);
+    if (asignada) return asignada;
+    const p = printers.find((x) => x.ip === ip);
     return p ? p.name : ip;
-  }, [printers, manualIp]);
+  }, [printers, manualPrinter]);
 
   if (!open) return null;
 
@@ -224,16 +260,26 @@ export default function ColorCalModal({ open, onClose }) {
     await reload();
     setBusy('');
   };
+  // Asigna una COLA a una impresora de calibración. Guarda además el nombre de
+  // la cola y el del puerto, que no cambian aunque la impresora tome otra IP.
   const setManual = async (queue, ip) => {
-    await api().setManualIp(queue, ip.trim());
+    const limpia = String(ip || '').trim();
+    const p = printers.find((x) => x.name === queue);
+    const r = await api().setManualPrinter(queue, limpia
+      ? { ip: limpia, queueName: queue, port: (p && p.port) || '' }
+      : null);
+    if (r?.ok) notify('ok', limpia ? `Asignada: ${queue} → ${limpia}` : `Asignación quitada de ${queue}.`);
+    else notify('error', r?.error || 'No se pudo guardar la asignación.');
     await reload();
   };
 
   // ── Wizard ──────────────────────────────────────────────────────────────────
   const startWizard = () => {
     setStep(1); setCorrectDev(''); setRefDev(''); setPaperName('');
-    setRefDevmode(null); setCorrectDevmode(null); setSessionId(newSessionId());
-    setPrintedCharts(false); setScanA(null); setScanB(null); setAnalysis(null);
+    setSessionId(newSessionId());
+    setPrintedRef(false); setPrintedCor(false); setPrintChart(null);
+    setCfgRef(null); setCfgCorrect(null);
+    setScanA(null); setScanB(null); setAnalysis(null);
     setFeedback(null); setView('wizard');
   };
 
@@ -271,8 +317,14 @@ export default function ColorCalModal({ open, onClose }) {
       const cal = {
         id: 'cal-imp-' + Date.now().toString(36),
         engineVersion: 1,
-        correctPrinter: { ip: correctIp, queue: correctDev },
-        referencePrinter: { ip: ipOf(refDev) || '', queue: refDev },
+        correctPrinter: {
+          ip: correctIp, queue: correctDev,
+          port: (printers.find((x) => x.name === correctDev) || {}).port || '',
+        },
+        referencePrinter: {
+          ip: ipOf(refDev) || '', queue: refDev,
+          port: (printers.find((x) => x.name === refDev) || {}).port || '',
+        },
         paperName: paperName || '',
         lutSize: lut.S,
         lut: Array.from(lut.V),
@@ -292,41 +344,51 @@ export default function ColorCalModal({ open, onClose }) {
     setBusy('');
   };
 
-  const configurePaper = async (which) => {
-    const dev = which === 'ref' ? refDev : correctDev;
-    if (!dev) return;
-    setBusy('paper');
-    const r = await api().configurePaper(dev);
-    setBusy('');
-    if (r.canceled) return;
-    if (!r.ok) { notify('error', r.error || 'No se pudo abrir Preferencias.'); return; }
-    if (which === 'ref') setRefDevmode(r.devmodeB64); else setCorrectDevmode(r.devmodeB64);
-    notify('ok', 'Papel elegido para ' + (which === 'ref' ? 'la de referencia' : 'la que se corrige') + '.');
+  // Cada carta se manda con el MODAL DE IMPRESIÓN DE SIEMPRE: así se elige la
+  // impresora y se entra a "Configurar impresora" como en cualquier trabajo, en
+  // vez de imprimir en silencio con una configuración que el usuario no ve.
+  const abrirImpresionCarta = (which) => {
+    if (!refDev || !correctDev || refDev === correctDev) { notify('error', 'Elegí dos impresoras distintas.'); return; }
+    setFeedback(null);
+    setPrintChart(which);
   };
 
-  const printCharts = async () => {
-    if (!refDev || !correctDev || refDev === correctDev) { notify('error', 'Elegí dos impresoras distintas.'); return; }
+  const confirmarImpresionCarta = async ({ deviceName, copies }) => {
+    const which = printChart;
+    setPrintChart(null);
+    if (!which) return;
     setBusy('print');
     try {
       const charts = renderCalibrationCharts(sessionId, {
         referencia: 'CARTA DE COLOR - REFERENCIA (' + refDev + ')',
         correccion: 'CARTA DE COLOR - A CORREGIR (' + correctDev + ')',
       });
-      const doPrint = (dataUrl, deviceName, devmodeB64, docName) => window.printlayout.pdf.print({
-        images: [dataUrl], pageWidthMm: 210, pageHeightMm: 297,
-        deviceName, copies: 1, showDialog: false, docName, devmodeB64, noColorCorrection: true,
+      const r = await window.printlayout.pdf.print({
+        images: [which === 'ref' ? charts.referencia : charts.correccion],
+        pageWidthMm: 210, pageHeightMm: 297,
+        deviceName, copies: copies || 1, showDialog: false,
+        docName: which === 'ref' ? 'Carta color referencia' : 'Carta color a corregir',
+        noColorCorrection: true,
       });
-      const r1 = await doPrint(charts.referencia, refDev, refDevmode, 'Carta color referencia');
-      if (!r1.ok) throw new Error('referencia: ' + (r1.error || 'falló'));
-      const r2 = await doPrint(charts.correccion, correctDev, correctDevmode, 'Carta color a corregir');
-      if (!r2.ok) throw new Error('a corregir: ' + (r2.error || 'falló'));
-      setPrintedCharts(true);
-      notify('ok', 'Cartas enviadas. Con las máquinas calientes, imprimí y después escaneá las dos.');
-      setStep(4);
+      if (!r.ok) throw new Error(r.error || 'falló');
+      if (which === 'ref') setPrintedRef(true); else setPrintedCor(true);
+      // Nos guardamos con qué configuración salió: el perfil vale para ESA.
+      await leerConfig(which, deviceName);
+      notify('ok', which === 'ref' ? 'Carta de referencia enviada.' : 'Carta a corregir enviada.');
     } catch (e) {
       notify('error', 'No se pudo imprimir la carta (' + e.message + ').');
     }
     setBusy('');
+  };
+
+  // Lee del driver qué papel/calidad/gestión de color tiene hoy esa impresora.
+  const leerConfig = async (which, dev) => {
+    try {
+      const r = await window.printlayout.pdf.printerConfigInfo?.(dev);
+      if (!r?.ok) return;
+      const activa = (r.tieneApp && r.app) ? r.app : r.windows;
+      if (which === 'ref') setCfgRef(activa); else setCfgCorrect(activa);
+    } catch { /* si no se puede leer, seguimos sin el dato */ }
   };
 
   const onFiles = (files) => {
@@ -357,12 +419,21 @@ export default function ColorCalModal({ open, onClose }) {
     const refIp = ipOf(refDev);
     if (!correctIp) { notify('error', 'La impresora a corregir no tiene IP. Asigná su IP a mano en la lista y volvé a intentar.'); return; }
     setBusy('save');
+    const portOf = (name) => (printers.find((x) => x.name === name) || {}).port || '';
     const cal = {
       id: 'cal-' + sessionId + '-' + Date.now().toString(36),
       engineVersion: 1,
-      correctPrinter: { ip: correctIp, queue: correctDev },
-      referencePrinter: { ip: refIp || '', queue: refDev },
+      // Guardamos también cola y puerto: sobreviven al cambio de IP y permiten
+      // reconocer la impresora aunque el puerto quede con una IP vieja.
+      correctPrinter: { ip: correctIp, queue: correctDev, port: portOf(correctDev) },
+      referencePrinter: { ip: refIp || '', queue: refDev, port: portOf(refDev) },
       paperName: paperName || '',
+      // Con qué configuración se imprimieron las cartas: el perfil vale para ESTA.
+      config: cfgCorrect ? {
+        papel: cfgCorrect.paper || '', tipo: cfgCorrect.media || '',
+        calidad: cfgCorrect.quality || '', color: cfgCorrect.icm || '',
+        colorOn: cfgCorrect.icmOn,
+      } : null,
       lutSize: analysis.lutSize,
       lut: analysis.lut,
       results: analysis.stats ? {
@@ -380,7 +451,17 @@ export default function ColorCalModal({ open, onClose }) {
     notify('ok', 'Corrección activada para ' + correctDev + '. Ya se aplica al imprimir a esa impresora.');
   };
 
-  const printersWithoutIp = printers.filter((p) => !p.ip && !/XPS|PDF|OneNote|Fax/i.test(p.name));
+  // Colas que no muestran IP y TODAVÍA no están asignadas. Las ya asignadas se
+  // van a su propia lista (antes seguían acá y parecía que no se había guardado).
+  const printersWithoutIp = printers.filter(
+    (p) => !p.ip && !manualPrinter[p.name] && !/XPS|PDF|OneNote|Fax/i.test(p.name),
+  );
+  // Asignadas a mano, con la IP que tiene hoy la cola (para avisar si cambió).
+  const asignadas = Object.keys(manualPrinter).sort().map((name) => ({
+    name,
+    rec: manualPrinter[name],
+    ipAhora: (printers.find((p) => p.name === name) || {}).ip || null,
+  }));
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -406,7 +487,7 @@ export default function ColorCalModal({ open, onClose }) {
           ) : view === 'list' ? (
             <ListView
               cals={cals} printers={printers} manualIp={manualIp} canShare={canShare} busy={busy}
-              nameForIp={nameForIp} printersWithoutIp={printersWithoutIp}
+              nameForIp={nameForIp} printersWithoutIp={printersWithoutIp} asignadas={asignadas}
               onCalibrate={startWizard} onImport={startImport} onToggle={toggleActive} onDelete={del} onShare={share}
               onDeleteShared={deleteShared} onPull={pull} onSetManual={setManual} fmtDate={fmtDate}
               onExportIcc={exportarPerfil}
@@ -438,8 +519,8 @@ export default function ColorCalModal({ open, onClose }) {
               step={step} setStep={setStep} printers={printers} busy={busy}
               correctDev={correctDev} setCorrectDev={setCorrectDev} refDev={refDev} setRefDev={setRefDev}
               paperName={paperName} setPaperName={setPaperName}
-              refDevmode={refDevmode} correctDevmode={correctDevmode} configurePaper={configurePaper}
-              printCharts={printCharts} printedCharts={printedCharts}
+              onImprimirCarta={abrirImpresionCarta} printedRef={printedRef} printedCor={printedCor}
+              cfgRef={cfgRef} cfgCorrect={cfgCorrect}
               scanA={scanA} scanB={scanB} onFiles={onFiles} fileRef={fileRef}
               runAnalyze={runAnalyze} analysis={analysis} activate={activate}
               onCancel={() => setView('list')} ipOf={ipOf}
@@ -447,12 +528,47 @@ export default function ColorCalModal({ open, onClose }) {
           )}
         </div>
       </div>
+
+      {/* El modal de impresión de SIEMPRE, con la impresora que corresponde ya
+          elegida y su botón "Configurar impresora". */}
+      <PrintModal
+        open={!!printChart}
+        title={printChart === 'ref' ? 'Imprimir carta de referencia' : 'Imprimir carta a corregir'}
+        initialPrinter={printChart === 'ref' ? refDev : correctDev}
+        noColorCorrection
+        warnDriverColor
+        rememberPrinter={false}
+        onConfirm={confirmarImpresionCarta}
+        onCancel={() => setPrintChart(null)}
+      />
     </div>
   );
 }
 
-function ListView({ cals, printers, manualIp, canShare, busy, nameForIp, printersWithoutIp, onCalibrate, onImport, onToggle, onDelete, onShare, onDeleteShared, onPull, onSetManual, fmtDate, onExportIcc, perfil, onCerrarPerfil, onGuardarComo, onAbrirCarpeta, onGuardarCartas, onMedir, cartas, onCerrarCartas, onAbrirDir }) {
+// Campo para asignar/cambiar la IP de una cola. Arranca mostrando lo que YA está
+// guardado (antes salía siempre vacío y parecía que no se había guardado nada).
+function AsignarIp({ valor, onGuardar, onCancelar, autoFocus }) {
+  const [txt, setTxt] = useState(valor || '');
+  useEffect(() => { setTxt(valor || ''); }, [valor]);
+  return (
+    <div className="flex items-center gap-1">
+      <input
+        value={txt}
+        autoFocus={autoFocus}
+        onChange={(e) => setTxt(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') onGuardar(txt); if (e.key === 'Escape' && onCancelar) onCancelar(); }}
+        placeholder="192.168.100.x"
+        className="w-36 rounded border border-ink-700 bg-ink-900 px-2 py-1 text-xs text-ink-100"
+      />
+      <button onClick={() => onGuardar(txt)} className="rounded border border-ink-700 px-2 py-1 text-[11px] text-ink-200 hover:bg-ink-800">Guardar</button>
+      {onCancelar && <button onClick={onCancelar} className="rounded px-1.5 py-1 text-[11px] text-ink-400 hover:bg-ink-800">Cancelar</button>}
+    </div>
+  );
+}
+
+function ListView({ cals, printers, manualIp, canShare, busy, nameForIp, printersWithoutIp, asignadas = [], onCalibrate, onImport, onToggle, onDelete, onShare, onDeleteShared, onPull, onSetManual, fmtDate, onExportIcc, perfil, onCerrarPerfil, onGuardarComo, onAbrirCarpeta, onGuardarCartas, onMedir, cartas, onCerrarCartas, onAbrirDir }) {
   const manualRef = useRef(null);
+  const [editando, setEditando] = useState(null); // cola que se está reasignando
   const localHasIp = (ip) => !!ip && (printers.some((p) => p.ip === ip) || Object.values(manualIp || {}).includes(ip));
   const scrollToManual = () => manualRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   return (
@@ -518,6 +634,15 @@ function ListView({ cals, printers, manualIp, canShare, busy, nameForIp, printer
             </p>
             <p className="text-ink-400">
               El perfil vale para el <b>papel y la calidad</b> con los que se calibró.
+              {(() => {
+                const c = cals.find((x) => x.id === perfil.id);
+                const cfg = c && c.config;
+                if (!cfg) return null;
+                const partes = [cfg.papel, cfg.tipo, cfg.calidad, cfg.color ? 'color ' + cfg.color : '']
+                  .filter((v) => v && String(v).trim());
+                if (!partes.length) return null;
+                return <> Esta se hizo con: <b className="text-ink-200">{partes.join(' · ')}</b>.</>;
+              })()}
             </p>
           </div>
         </div>
@@ -551,6 +676,12 @@ function ListView({ cals, printers, manualIp, canShare, busy, nameForIp, printer
                   {typeof c.results.fuera5 === 'number' && c.results.realProm == null && <span> · quedan {c.results.fuera5} con dif ≥5</span>}
                 </div>
               )}
+              {c.config && (c.config.papel || c.config.tipo || c.config.calidad || c.config.color) && (
+                <div className="mt-1 text-[11px] text-ink-500">
+                  Hecha con: {[c.config.papel, c.config.tipo, c.config.calidad,
+                    c.config.color ? 'color ' + c.config.color : ''].filter(Boolean).join(' · ')}
+                </div>
+              )}
               {c.origen === 'importada' && <div className="text-[10px] text-ink-500">importada{c.archivoOrigen?.name ? ' de ' + c.archivoOrigen.name : ''}</div>}
               {!localHasIp(c.correctPrinter?.ip) && (
                 <div className="mt-1 flex items-start gap-2 rounded border border-amber-700/50 bg-amber-950/30 px-2 py-1 text-[11px] text-amber-300">
@@ -579,15 +710,51 @@ function ListView({ cals, printers, manualIp, canShare, busy, nameForIp, printer
         <p className="mt-3 text-[11px] text-ink-500">Compartir está deshabilitado en este equipo (falta el permiso/token de La Recta).</p>
       )}
 
+      {asignadas.length > 0 && (
+        <div className="mt-4 rounded border border-ink-700 bg-ink-950/40 p-3">
+          <p className="text-xs font-medium text-ink-200">Impresoras asignadas a mano</p>
+          <p className="mb-2 text-[11px] text-ink-500">
+            La asignación es por <b>cola de impresión</b>, no por IP: aunque la máquina
+            cambie de IP, se la sigue reconociendo.
+          </p>
+          {asignadas.map((a) => (
+            <div key={a.name} className="mt-2 border-t border-ink-800 pt-2 first:mt-0 first:border-0 first:pt-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="flex-1 truncate text-xs text-ink-200" title={a.name}>{a.name}</span>
+                {editando === a.name ? (
+                  <AsignarIp
+                    valor={a.rec.ip} autoFocus
+                    onGuardar={(v) => { setEditando(null); onSetManual(a.name, v); }}
+                    onCancelar={() => setEditando(null)}
+                  />
+                ) : (
+                  <>
+                    <span className="rounded bg-ink-800 px-1.5 py-0.5 font-mono text-[11px] text-green-300">{a.rec.ip || '(sin IP)'}</span>
+                    <button onClick={() => setEditando(a.name)} className="rounded border border-ink-700 px-2 py-0.5 text-[11px] text-ink-200 hover:bg-ink-800">Cambiar</button>
+                    <button onClick={() => onSetManual(a.name, '')} className="rounded border border-ink-700 px-2 py-0.5 text-[11px] text-ink-400 hover:bg-ink-800">Quitar</button>
+                  </>
+                )}
+              </div>
+              {a.rec.port && <div className="mt-0.5 font-mono text-[10px] text-ink-500">puerto: {a.rec.port}</div>}
+              {a.ipAhora && a.rec.ip && a.ipAhora !== a.rec.ip && (
+                <div className="mt-1 rounded border border-amber-700/50 bg-amber-950/30 px-2 py-1 text-[11px] text-amber-300">
+                  La IP cambió (antes {a.rec.ip}, ahora {a.ipAhora}). La asignación
+                  sigue valiendo porque es por cola.
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       {printersWithoutIp.length > 0 && (
         <div ref={manualRef} className="mt-4 rounded border border-ink-700 bg-ink-950/40 p-3">
-          <p className="text-xs font-medium text-ink-200">Impresoras sin IP visible (asigná su IP a mano)</p>
-          <p className="mb-2 text-[11px] text-ink-500">Algunas colas (WSD/red) no muestran la IP. Escribí la IP de la máquina para que la corrección la reconozca.</p>
+          <p className="text-xs font-medium text-ink-200">Impresoras sin IP visible (asignalas a mano)</p>
+          <p className="mb-2 text-[11px] text-ink-500">Algunas colas (WSD, EpsonNet) no muestran la IP. Escribí la IP de la máquina para que la corrección la reconozca; queda guardada contra esta cola.</p>
           {printersWithoutIp.map((p) => (
-            <div key={p.name} className="mt-1 flex items-center gap-2">
+            <div key={p.name} className="mt-1 flex flex-wrap items-center gap-2">
               <span className="flex-1 truncate text-xs text-ink-300" title={p.name}>{p.name}</span>
-              <input defaultValue={p.ip || ''} placeholder="192.168.100.x" onBlur={(e) => onSetManual(p.name, e.target.value)}
-                className="w-40 rounded border border-ink-700 bg-ink-900 px-2 py-1 text-xs text-ink-100" />
+              <AsignarIp valor="" onGuardar={(v) => onSetManual(p.name, v)} />
             </div>
           ))}
         </div>
@@ -596,11 +763,44 @@ function ListView({ cals, printers, manualIp, canShare, busy, nameForIp, printer
   );
 }
 
+// Un botón por carta, con la impresora a la que va y la configuración que tiene
+// hoy. Si el driver va a "mejorar" el color, la medición queda mal: por eso el
+// aviso en ámbar antes de imprimir y no después.
+function CartaBoton({ etiqueta, dev, hecho, cfg, disabled, onClick }) {
+  const dato = (v) => (v && String(v).trim() ? v : '—');
+  return (
+    <div className="rounded border border-ink-700 bg-ink-950/40 p-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <button onClick={onClick} disabled={disabled} className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-500 disabled:opacity-50">
+          {etiqueta}
+        </button>
+        <span className="truncate text-[11px] text-ink-400" title={dev}>{dev || '—'}</span>
+        {hecho && <span className="text-[11px] text-green-300">✓ enviada</span>}
+      </div>
+      {cfg && (
+        <div className="mt-1 text-[11px] text-ink-400">
+          Papel <b className="text-ink-200">{dato(cfg.paper)}</b>
+          {' · '}Tipo <b className="text-ink-200">{dato(cfg.media)}</b>
+          {' · '}Calidad <b className="text-ink-200">{dato(cfg.quality)}</b>
+          {' · '}Color <b className={cfg.icmOn === true ? 'text-amber-300' : 'text-ink-200'}>{dato(cfg.icm)}</b>
+        </div>
+      )}
+      {cfg && cfg.icmOn === true && (
+        <div className="mt-1 rounded border border-amber-700/60 bg-amber-950/30 px-2 py-1 text-[11px] text-amber-200">
+          Esta impresora tiene la <b>gestión de color del driver encendida</b>. La carta
+          tiene que salir <b>sin</b> gestión de color o la medición queda mal: apagala
+          desde “Configurar impresora”, en el modal que se abre con el botón de arriba.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function WizardView(props) {
   const {
     step, setStep, printers, busy, correctDev, setCorrectDev, refDev, setRefDev,
-    paperName, setPaperName, refDevmode, correctDevmode, configurePaper,
-    printCharts, printedCharts, scanA, scanB, onFiles, fileRef, runAnalyze, analysis, activate, onCancel, ipOf,
+    paperName, setPaperName, onImprimirCarta, printedRef, printedCor, cfgRef, cfgCorrect,
+    scanA, scanB, onFiles, fileRef, runAnalyze, analysis, activate, onCancel, ipOf,
   } = props;
   const realPrinters = printers.filter((p) => !/XPS|PDF|OneNote|Fax/i.test(p.name));
   const Stepper = () => (
@@ -638,19 +838,18 @@ function WizardView(props) {
 
       {step === 2 && (
         <div className="space-y-3">
-          <p className="text-xs text-ink-400">Elegí el MISMO papel (tipo, gramaje, bandeja, tamaño) en las dos impresoras. Se guarda solo para esta calibración, no cambia la configuración normal.</p>
-          <label className="block text-xs text-ink-300">Nombre del papel (para acordarte)
+          <p className="text-xs text-ink-400">
+            Poné el MISMO papel (tipo, gramaje, bandeja, tamaño) en las dos impresoras.
+            Acá solo anotás <b className="text-ink-200">cómo se llama</b>, para acordarte después.
+          </p>
+          <label className="block text-xs text-ink-300">Nombre del papel
             <input value={paperName} onChange={(e) => setPaperName(e.target.value)} placeholder='ej. Ilustración 150' className="mt-1 w-full rounded border border-ink-700 bg-ink-900 px-2 py-1.5 text-sm text-ink-100" />
           </label>
-          <div className="flex flex-wrap gap-2">
-            <button onClick={() => configurePaper('ref')} disabled={busy === 'paper'} className="rounded border border-ink-700 px-3 py-1.5 text-sm text-ink-200 hover:bg-ink-800">
-              Papel de la referencia {refDevmode ? '✓' : ''}
-            </button>
-            <button onClick={() => configurePaper('correct')} disabled={busy === 'paper'} className="rounded border border-ink-700 px-3 py-1.5 text-sm text-ink-200 hover:bg-ink-800">
-              Papel de la que se corrige {correctDevmode ? '✓' : ''}
-            </button>
-          </div>
-          <p className="text-[11px] text-ink-500">Si no elegís papel, se usa el que tenga cada impresora por defecto (igual sirve si es el mismo en las dos).</p>
+          <p className="rounded border border-ink-700 bg-ink-950/40 p-2 text-[11px] leading-snug text-ink-400">
+            La configuración de verdad (papel, calidad, gestión de color) la elegís
+            <b className="text-ink-200"> al imprimir</b>, en el paso siguiente, con el botón
+            “Configurar impresora” del modal de impresión de siempre.
+          </p>
           <div className="flex justify-between">
             <button onClick={() => setStep(1)} className="rounded border border-ink-700 px-3 py-1.5 text-sm text-ink-300 hover:bg-ink-800">Atrás</button>
             <button onClick={() => setStep(3)} className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-500">Siguiente</button>
@@ -660,11 +859,21 @@ function WizardView(props) {
 
       {step === 3 && (
         <div className="space-y-3">
-          <p className="text-xs text-ink-400">Con las dos máquinas <b className="text-ink-200">calientes</b> (imprimí unas hojas antes), mandá la carta de color a las dos. Sale una hoja en cada una.</p>
-          <button onClick={printCharts} disabled={busy === 'print'} className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-500 disabled:opacity-50">
-            {busy === 'print' ? 'Enviando…' : 'Imprimir las dos cartas'}
-          </button>
-          {printedCharts && <p className="text-[11px] text-green-300">Cartas enviadas.</p>}
+          <p className="text-xs text-ink-400">Con las dos máquinas <b className="text-ink-200">calientes</b> (imprimí unas hojas antes), mandá la carta de color a cada una. Se abre el modal de impresión de siempre, con la impresora ya elegida.</p>
+          <p className="rounded border border-amber-800/60 bg-amber-950/20 p-2 text-[11px] leading-snug text-amber-200">
+            La calibración vale para el <b>papel y la calidad</b> con los que imprimas
+            estas cartas. Si después trabajás con otra configuración, el perfil no corresponde.
+          </p>
+
+          <CartaBoton
+            etiqueta="Imprimir carta de referencia" dev={refDev} hecho={printedRef}
+            cfg={cfgRef} disabled={busy === 'print'} onClick={() => onImprimirCarta('ref')}
+          />
+          <CartaBoton
+            etiqueta="Imprimir carta a corregir" dev={correctDev} hecho={printedCor}
+            cfg={cfgCorrect} disabled={busy === 'print'} onClick={() => onImprimirCarta('correct')}
+          />
+
           <div className="flex justify-between">
             <button onClick={() => setStep(2)} className="rounded border border-ink-700 px-3 py-1.5 text-sm text-ink-300 hover:bg-ink-800">Atrás</button>
             <button onClick={() => setStep(4)} className="rounded border border-ink-700 px-3 py-1.5 text-sm text-ink-200 hover:bg-ink-800">Ya imprimí →</button>

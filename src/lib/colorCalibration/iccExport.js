@@ -26,6 +26,19 @@ export function instruccionesPerfil(cal, nombreArchivo) {
   const ipC = cal?.correctPrinter?.ip || '(sin IP)';
   const ipR = cal?.referencePrinter?.ip || '(sin IP)';
   const papel = cal?.paperName ? cal.paperName : '(no quedó anotado)';
+  const cfg = cal?.config || null;
+  const dato = (v) => (v && String(v).trim() ? String(v).trim() : '(no lo dice el driver)');
+  const bloqueConfig = cfg ? [
+    '',
+    'ESTE PERFIL VALE CON ESTA CONFIGURACIÓN',
+    '---------------------------------------',
+    `  Papel del driver : ${dato(cfg.papel)}`,
+    `  Tipo de papel    : ${dato(cfg.tipo)}`,
+    `  Calidad          : ${dato(cfg.calidad)}`,
+    `  Gestión de color : ${dato(cfg.color)}`,
+    'Si imprimís con otro papel, otra calidad u otra gestión de color, el perfil',
+    'no corresponde y hay que calibrar de nuevo.',
+  ] : [];
   return [
     'PERFIL DE COLOR DE PRINTLAYOUT',
     '==============================',
@@ -34,6 +47,7 @@ export function instruccionesPerfil(cal, nombreArchivo) {
     `Corrige la impresora: ${ipC}`,
     `Para que se parezca a: ${ipR}`,
     `Papel con el que se calibró: ${papel}`,
+    ...bloqueConfig,
     '',
     'Este perfil lleva la MISMA corrección de color que PrintLayout aplica solo',
     'cuando imprimís desde la app. Sirve para usarla desde AFUERA (Corel, o',

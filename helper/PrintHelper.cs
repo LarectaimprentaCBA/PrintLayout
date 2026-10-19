@@ -16,12 +16,18 @@
 //                         resultante en stdout (DEVMODE_OUT=<base64>).
 //                         NO escribe nada al DEVMODE del sistema.
 //   pageinfo           — devuelve tamano fisico de hoja + area imprimible +
-//                         margenes + orientacion + duplex (en mm), del
-//                         DEVMODE_FILE o del default del driver. No imprime.
+//                         margenes + orientacion + duplex (en mm) + tipo de
+//                         papel, calidad y gestion de color, del DEVMODE_FILE
+//                         o del default del driver. No imprime.
+//   setdefault         — escribe el DEVMODE_FILE como PREDETERMINADO de Windows
+//                         para esa impresora (SetPrinter nivel 9 = per-user, sin
+//                         admin; si falla, intenta el nivel 8 = global, que si
+//                         lo pide). Asi lo que se configura desde PrintLayout
+//                         vale tambien para Corel y el resto de los programas.
 //
 // Protocolo: lee key=value de stdin (1 por linea), termina con END=1.
-//   MODE=<print|configure|pageinfo>  default print
-//   DEVICE=<name>           obligatorio en configure/pageinfo; opcional en print
+//   MODE=<print|configure|pageinfo|setdefault>  default print
+//   DEVICE=<name>           obligatorio en configure/pageinfo/setdefault; opcional en print
 //   COPIES=<n>              opcional (print)
 //   SHOW_DIALOG=<0|1>       default 1 (print) — si 0, silent
 //   WIDTH_MM=<float>        ancho hoja en mm (print) — default de PAGE_MM
@@ -46,6 +52,12 @@
 //   MARGIN_L_MM / MARGIN_T_MM     (pageinfo) margen no imprimible sup-izq
 //   ORIENTATION=<portrait|landscape>  (pageinfo)
 //   DUPLEX=<0|1>                  (pageinfo) doble faz si/no
+//   PAPER_NAME=<texto>            (pageinfo) nombre del tamano de hoja
+//   MEDIA_NAME=<texto>            (pageinfo) tipo de papel del driver ("" = no lo dice)
+//   QUALITY_NAME=<texto>          (pageinfo) calidad ("" = no lo dice)
+//   ICM_NAME=<texto>              (pageinfo) gestion de color del driver
+//   ICM_ON=<0|1|?>                (pageinfo) 1 = el driver gestiona el color
+//   LEVEL=<8|9>                   (setdefault) nivel con el que se pudo escribir
 //
 // Exit codes: 0 ok, 1 error, 2 canceled.
 using System;
@@ -145,6 +157,9 @@ namespace PrintLayoutHelper {
                 }
                 if (mode == "pageinfo") {
                     return RunPageInfo(device, devmodeFile);
+                }
+                if (mode == "setdefault") {
+                    return RunSetDefault(device, devmodeFile);
                 }
 
                 if (PagePaths.Count == 0) {
@@ -622,6 +637,7 @@ namespace PrintLayoutHelper {
 
                     var ci = CultureInfo.InvariantCulture;
                     Console.Out.WriteLine("OK=1");
+                    WriteDevModeSettings(device, dm);
                     Console.Out.WriteLine("PAPER_W_MM=" + physWmm.ToString("0.##", ci));
                     Console.Out.WriteLine("PAPER_H_MM=" + physHmm.ToString("0.##", ci));
                     Console.Out.WriteLine("PRINT_W_MM=" + printWmm.ToString("0.##", ci));
@@ -637,6 +653,218 @@ namespace PrintLayoutHelper {
                 }
             } finally {
                 if (pDevMode != IntPtr.Zero) Marshal.FreeHGlobal(pDevMode);
+            }
+        }
+
+        // ---------------- SETDEFAULT mode ----------------
+        // Escribe un DEVMODE como PREDETERMINADO de Windows para esa impresora,
+        // para que lo que el usuario configura desde PrintLayout valga tambien
+        // en Corel y el resto de los programas.
+        //
+        // Nivel 9 = defaults del USUARIO actual: no pide administrador y es lo
+        // que abren las otras apps al imprimir. Si el driver o la politica no
+        // lo aceptan, probamos el nivel 8 (global de la maquina), que SI puede
+        // pedir administrador — por eso va segundo y su fallo se informa.
+        static int RunSetDefault(string device, string devmodeFile) {
+            if (string.IsNullOrEmpty(device)) {
+                WriteResult(false, "Falta DEVICE para setdefault.");
+                return 1;
+            }
+            if (string.IsNullOrEmpty(devmodeFile) || !File.Exists(devmodeFile)) {
+                WriteResult(false, "No hay configuracion guardada para esta impresora.");
+                return 1;
+            }
+            byte[] dm;
+            try {
+                dm = File.ReadAllBytes(devmodeFile);
+            } catch (Exception ex) {
+                WriteResult(false, "No se pudo leer la configuracion: " + ex.Message);
+                return 1;
+            }
+            if (dm == null || dm.Length == 0) {
+                WriteResult(false, "La configuracion guardada esta vacia.");
+                return 1;
+            }
+
+            int err9 = SetPrinterDevMode(device, 9, dm);
+            if (err9 == 0) {
+                Console.Out.WriteLine("OK=1");
+                Console.Out.WriteLine("LEVEL=9");
+                Console.Out.Flush();
+                return 0;
+            }
+            Log("SetPrinter L9 fallo " + err9 + ", pruebo L8");
+            int err8 = SetPrinterDevMode(device, 8, dm);
+            if (err8 == 0) {
+                Console.Out.WriteLine("OK=1");
+                Console.Out.WriteLine("LEVEL=8");
+                Console.Out.Flush();
+                return 0;
+            }
+            // 5 = ERROR_ACCESS_DENIED.
+            WriteResult(false, (err9 == 5 || err8 == 5)
+                ? "Windows no dio permiso para cambiar la configuracion de esta impresora."
+                : "Windows rechazo la configuracion (error " + err9 + "/" + err8 + ").");
+            return 1;
+        }
+
+        // SetPrinter con PRINTER_INFO_8/9. Devuelve 0 si salio bien, o el codigo
+        // de error de Win32.
+        static int SetPrinterDevMode(string printerName, int level, byte[] devmode) {
+            if (string.IsNullOrEmpty(printerName) || devmode == null || devmode.Length == 0) return -1;
+            if (level != 8 && level != 9) return -1;
+
+            IntPtr hPrinter;
+            var defs = new PRINTER_DEFAULTS {
+                pDatatype = IntPtr.Zero, pDevMode = IntPtr.Zero,
+                // L8 toca el default de la maquina y necesita ADMINISTER; L9 es
+                // del usuario y alcanza con USE.
+                DesiredAccess = level == 8 ? PRINTER_ACCESS_ADMINISTER : PRINTER_ACCESS_USE,
+            };
+            if (!OpenPrinterEx(printerName, out hPrinter, ref defs)) {
+                return Marshal.GetLastWin32Error();
+            }
+            try {
+                IntPtr pDevMode = Marshal.AllocHGlobal(devmode.Length);
+                try {
+                    Marshal.Copy(devmode, 0, pDevMode, devmode.Length);
+                    var info = new PRINTER_INFO_9 { pDevMode = pDevMode };
+                    int size = Marshal.SizeOf(typeof(PRINTER_INFO_9));
+                    IntPtr pInfo = Marshal.AllocHGlobal(size);
+                    try {
+                        Marshal.StructureToPtr(info, pInfo, false);
+                        if (SetPrinter(hPrinter, level, pInfo, PRINTER_COMMAND_NONE)) return 0;
+                        int err = Marshal.GetLastWin32Error();
+                        return err == 0 ? -1 : err;
+                    } finally {
+                        Marshal.FreeHGlobal(pInfo);
+                    }
+                } finally {
+                    Marshal.FreeHGlobal(pDevMode);
+                }
+            } finally {
+                ClosePrinter(hPrinter);
+            }
+        }
+
+        // ---------------- Lectura legible de un DEVMODE ----------------
+        // Papel, calidad y gestion de color tal como quedaron en el DEVMODE.
+        // OJO: solo vemos lo que el driver expone en los campos ESTANDAR de
+        // DEVMODE. Lo que guarde en su parte privada (dmDriverExtra) no se lee
+        // — por eso cada valor sale vacio cuando el driver no lo declara, en
+        // vez de inventar un default.
+        static void WriteDevModeSettings(string device, byte[] dm) {
+            string paperName = "", mediaName = "", qualityName = "", icmName = "", icmOn = "?";
+            if (dm != null && dm.Length >= 102) {
+                int fields = dm[72] | (dm[73] << 8) | (dm[74] << 16) | (dm[75] << 24);
+
+                // Tamano de hoja: dmFormName (nombre legible) o dmPaperSize.
+                if (dm.Length >= 166 && (fields & 0x00010000) != 0) { // DM_FORMNAME
+                    paperName = ReadWString(dm, 102, 32);
+                }
+                if (string.IsNullOrEmpty(paperName) && (fields & 0x00000002) != 0) { // DM_PAPERSIZE
+                    short ps = (short)(dm[78] | (dm[79] << 8));
+                    paperName = LookupCap(device, DC_PAPERS, DC_PAPERNAMES, 2, ps);
+                }
+
+                // Tipo de papel: dmMediaType (offset 196) + nombres del driver.
+                if (dm.Length >= 200 && (fields & 0x02000000) != 0) { // DM_MEDIATYPE
+                    int mt = dm[196] | (dm[197] << 8) | (dm[198] << 16) | (dm[199] << 24);
+                    mediaName = LookupCap(device, DC_MEDIATYPES, DC_MEDIATYPENAMES, 4, mt);
+                    if (string.IsNullOrEmpty(mediaName) && mt == 1) mediaName = "Estandar";
+                }
+
+                // Calidad: dmPrintQuality (90), negativo = preset; si no, dmYResolution (96).
+                if ((fields & 0x00000400) != 0) { // DM_PRINTQUALITY
+                    short q = (short)(dm[90] | (dm[91] << 8));
+                    if (q == -1) qualityName = "Borrador";
+                    else if (q == -2) qualityName = "Baja";
+                    else if (q == -3) qualityName = "Media";
+                    else if (q == -4) qualityName = "Alta";
+                    else if (q > 0) qualityName = q + " ppp";
+                }
+                if (string.IsNullOrEmpty(qualityName) && dm.Length >= 98 && (fields & 0x00002000) != 0) { // DM_YRESOLUTION
+                    short yr = (short)(dm[96] | (dm[97] << 8));
+                    if (yr > 0) qualityName = yr + " ppp";
+                }
+
+                // Gestion de color: dmICMMethod (188).
+                if (dm.Length >= 192 && (fields & 0x00800000) != 0) { // DM_ICMMETHOD
+                    int m = dm[188] | (dm[189] << 8) | (dm[190] << 16) | (dm[191] << 24);
+                    if (m == 1) { icmName = "apagada"; icmOn = "0"; }
+                    else if (m == 2) { icmName = "la maneja Windows"; icmOn = "1"; }
+                    else if (m == 3) { icmName = "la maneja el driver"; icmOn = "1"; }
+                    else if (m == 4) { icmName = "la maneja la impresora"; icmOn = "1"; }
+                }
+            }
+            Console.Out.WriteLine("PAPER_NAME=" + Sanitize(paperName));
+            Console.Out.WriteLine("MEDIA_NAME=" + Sanitize(mediaName));
+            Console.Out.WriteLine("QUALITY_NAME=" + Sanitize(qualityName));
+            Console.Out.WriteLine("ICM_NAME=" + Sanitize(icmName));
+            Console.Out.WriteLine("ICM_ON=" + icmOn);
+        }
+
+        static string Sanitize(string s) {
+            if (string.IsNullOrEmpty(s)) return "";
+            return s.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        }
+
+        // Lee una cadena WCHAR[max] embebida en un DEVMODE, cortando en el \0.
+        static string ReadWString(byte[] dm, int offset, int maxChars) {
+            var sb = new StringBuilder();
+            for (int i = 0; i < maxChars; i++) {
+                int o = offset + i * 2;
+                if (o + 1 >= dm.Length) break;
+                char c = (char)(dm[o] | (dm[o + 1] << 8));
+                if (c == '\0') break;
+                sb.Append(c);
+            }
+            return sb.ToString().Trim();
+        }
+
+        const int DC_PAPERS = 2;
+        const int DC_PAPERNAMES = 16;
+        const int DC_MEDIATYPENAMES = 34;
+        const int DC_MEDIATYPES = 35;
+
+        [DllImport("winspool.drv", EntryPoint = "DeviceCapabilitiesW", SetLastError = true, CharSet = CharSet.Unicode)]
+        static extern int DeviceCapabilities(string pDevice, string pPort, int fwCapability, IntPtr pOutput, IntPtr pDevMode);
+
+        // Busca el nombre que el DRIVER le da a un codigo (tamano de hoja, tipo de
+        // papel): pide la lista de codigos y la de nombres — vienen en el mismo
+        // orden — y devuelve el nombre del que coincide. "" si no lo encuentra.
+        static string LookupCap(string device, int capCodes, int capNames, int codeSize, int code) {
+            try {
+                int n = DeviceCapabilities(device, null, capCodes, IntPtr.Zero, IntPtr.Zero);
+                if (n <= 0) return "";
+                int idx = -1;
+                IntPtr pc = Marshal.AllocHGlobal(n * codeSize);
+                try {
+                    if (DeviceCapabilities(device, null, capCodes, pc, IntPtr.Zero) <= 0) return "";
+                    for (int i = 0; i < n; i++) {
+                        int v = codeSize == 2 ? Marshal.ReadInt16(pc, i * 2) : Marshal.ReadInt32(pc, i * 4);
+                        if (v == code) { idx = i; break; }
+                    }
+                } finally {
+                    Marshal.FreeHGlobal(pc);
+                }
+                if (idx < 0) return "";
+                int m = DeviceCapabilities(device, null, capNames, IntPtr.Zero, IntPtr.Zero);
+                if (m <= idx) return "";
+                IntPtr pn = Marshal.AllocHGlobal(m * 64 * 2);
+                try {
+                    if (DeviceCapabilities(device, null, capNames, pn, IntPtr.Zero) <= 0) return "";
+                    string s = Marshal.PtrToStringUni(IntPtr.Add(pn, idx * 64 * 2), 64);
+                    if (s == null) return "";
+                    int z = s.IndexOf('\0');
+                    if (z >= 0) s = s.Substring(0, z);
+                    return s.Trim();
+                } finally {
+                    Marshal.FreeHGlobal(pn);
+                }
+            } catch (Exception ex) {
+                Log("LookupCap fallo: " + ex.Message);
+                return "";
             }
         }
 
@@ -852,6 +1080,18 @@ namespace PrintLayoutHelper {
 
         [DllImport("winspool.drv", EntryPoint = "OpenPrinterW", SetLastError = true, CharSet = CharSet.Unicode)]
         static extern bool OpenPrinter(string pPrinterName, out IntPtr phPrinter, IntPtr pDefault);
+
+        // Misma API, pero pidiendo un nivel de acceso concreto: SetPrinter L9
+        // necesita USE y L8 necesita ADMINISTER.
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        struct PRINTER_DEFAULTS {
+            public IntPtr pDatatype;
+            public IntPtr pDevMode;
+            public int DesiredAccess;
+        }
+
+        [DllImport("winspool.drv", EntryPoint = "OpenPrinterW", SetLastError = true, CharSet = CharSet.Unicode)]
+        static extern bool OpenPrinterEx(string pPrinterName, out IntPtr phPrinter, ref PRINTER_DEFAULTS pDefault);
 
         [DllImport("winspool.drv", EntryPoint = "ClosePrinter", SetLastError = true)]
         static extern bool ClosePrinter(IntPtr hPrinter);

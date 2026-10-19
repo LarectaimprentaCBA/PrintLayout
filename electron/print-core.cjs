@@ -20,25 +20,39 @@ function dataUrlToBuffer(dataUrl) {
   return Buffer.from(m[1], 'base64');
 }
 
-// Resuelve el aplicador de corrección para una impresora (identidad = IP).
+// Resuelve el aplicador de corrección para una impresora.
 // Mismo criterio que tenía print:pdf: solo en impresión silent (showDialog===false),
-// sin noColorCorrection, y si esa IP tiene una calibración ACTIVA en esta PC.
+// sin noColorCorrection, y si esa impresora tiene una calibración ACTIVA en esta PC.
+//
+// Orden de resolución: PRIMERO la asignación manual por nombre de COLA (y ahí ni
+// siquiera miramos la IP: el nombre de cola no cambia, la IP sí), y si la cola no
+// está asignada, la IP como siempre.
 // Rendimiento: 0 ms si no hay ninguna activa; caché cola→IP si la hay.
 async function resolveColorApplier({ deviceName, showDialog, noColorCorrection }) {
-  let applier = null, colorCal = null, colorIp = null;
+  let applier = null, colorCal = null, colorIp = null, colorVia = '-';
   let colorStatus = { state: 'no-active' };
   const t0 = Date.now();
   try {
     if (showDialog === false && !noColorCorrection && deviceName && colorStore.hasAnyActive()) {
-      const manual = colorStore.getManualIp();
-      let ip = colorPrinters.resolveFromCache(deviceName, manual); // ~0 ms
+      let cal = null;
       let timedOut = false;
-      if (!ip) {
-        ip = await colorPrinters.resolveOneQueue(deviceName, manual, 900);
-        if (!ip) timedOut = true;
+      const manualRec = colorStore.getManualPrinter()[deviceName];
+      if (manualRec) {
+        colorVia = 'cola';
+        colorIp = manualRec.ip || null;
+        cal = colorStore.getActiveForQueue(deviceName);
+      } else {
+        colorVia = 'ip';
+        const manual = colorStore.getManualIp();
+        let ip = colorPrinters.resolveFromCache(deviceName, manual); // ~0 ms
+        if (!ip) {
+          const r = await colorPrinters.resolveOneQueue(deviceName, manual, 900);
+          ip = r.ip;
+          timedOut = r.timedOut;
+        }
+        colorIp = ip;
+        cal = ip ? colorStore.getActiveForIp(ip, deviceName) : null;
       }
-      colorIp = ip;
-      const cal = ip ? colorStore.getActiveForIp(ip) : null;
       if (cal) {
         const S = cal.lutSize || 17;
         const expected = S * S * S * 3;
@@ -59,7 +73,7 @@ async function resolveColorApplier({ deviceName, showDialog, noColorCorrection }
   } catch (err) {
     colorStatus = { state: 'fallo', reason: err.message || 'error al resolver la calibración' };
   }
-  return { applier, colorCal, colorIp, colorStatus, colorResolveMs: Date.now() - t0 };
+  return { applier, colorCal, colorIp, colorVia, colorStatus, colorResolveMs: Date.now() - t0 };
 }
 
 // Imprime un conjunto de hojas.
@@ -79,7 +93,7 @@ async function runPrintJob({
   if (!pageWidthMm || !pageHeightMm) return { ok: false, error: 'Tamano de hoja no definido.' };
   if (!helperExe) return { ok: false, error: 'No se encontro PrintHelper.exe.' };
 
-  let { applier, colorCal, colorIp, colorStatus, colorResolveMs } =
+  let { applier, colorCal, colorIp, colorVia, colorStatus, colorResolveMs } =
     await resolveColorApplier({ deviceName, showDialog, noColorCorrection });
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'printlayout-print-'));
@@ -123,9 +137,9 @@ async function runPrintJob({
   if (applier && colorStatus.state !== 'fallo') colorStatus = { state: 'aplicada' };
 
   if (colorStatus.state === 'aplicada') {
-    log(`[color] OK impresora="${deviceName}" ip=${colorIp} cal=${colorCal && colorCal.id} hojas=${pages.length} resolveMs=${colorResolveMs} msPorHoja=[${msPerPage.join(',')}]`);
+    log(`[color] OK impresora="${deviceName}" via=${colorVia} ip=${colorIp} cal=${colorCal && colorCal.id} hojas=${pages.length} resolveMs=${colorResolveMs} msPorHoja=[${msPerPage.join(',')}]`);
   } else if (colorStatus.state === 'fallo') {
-    log(`[color] FALLO impresora="${deviceName}" ip=${colorIp} cal=${colorCal && colorCal.id} motivo="${colorStatus.reason}"${colorStatus.page ? ' hoja=' + colorStatus.page : ''}`);
+    log(`[color] FALLO impresora="${deviceName}" via=${colorVia} ip=${colorIp} cal=${colorCal && colorCal.id} motivo="${colorStatus.reason}"${colorStatus.page ? ' hoja=' + colorStatus.page : ''}`);
   }
 
   const lines = ['MODE=print'];
