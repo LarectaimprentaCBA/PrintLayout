@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { newSessionId } from '../lib/colorCalibration/code.js';
 import { renderCalibrationCharts } from '../lib/colorCalibration/chart.js';
-import { analyzePair, parseCube, parseInformePrevisto, parseInformeReal } from '../lib/colorCalibration/analyze.js';
+import { analyzePair, analyzeCorrected, parseCube, parseInformePrevisto, parseInformeReal } from '../lib/colorCalibration/analyze.js';
 import { construirPerfil } from '../lib/colorCalibration/iccExport.js';
+import { construirCartasArchivos } from '../lib/colorCalibration/chartFiles.js';
 
 // Asistente de calibración de color por impresora. Corrige una impresora "pálida" para
 // que imprima como una de referencia. La identidad de la impresora es su IP (el nombre de
@@ -20,6 +21,12 @@ export default function ColorCalModal({ open, onClose }) {
   const [busy, setBusy] = useState('');
   const [feedback, setFeedback] = useState(null); // {kind,text}
   const [perfil, setPerfil] = useState(null); // {id, path, dir, hash, bytes, fileName, iccBytes}
+  const [cartas, setCartas] = useState(null); // {dir, sessionId}
+  // Medir resultado: escaneos de la carta de referencia y de la corregida.
+  const [medRef, setMedRef] = useState(null);
+  const [medCor, setMedCor] = useState(null);
+  const [medResultado, setMedResultado] = useState(null); // {informe, stats}
+  const [medCal, setMedCal] = useState('');
 
   const [view, setView] = useState('list'); // 'list' | 'wizard'
   // Wizard
@@ -134,6 +141,62 @@ export default function ColorCalModal({ open, onClose }) {
   const exportarPerfil = async (cal) => {
     setBusy('icc');
     await generarPerfil(cal);
+    setBusy('');
+  };
+
+  // Guarda las dos cartas (PNG + PDF a tamaño real) para imprimirlas desde
+  // afuera, por ejemplo desde Corel con el perfil puesto.
+  const guardarCartas = async () => {
+    setBusy('cartas');
+    try {
+      const sid = newSessionId();
+      const files = await construirCartasArchivos(sid);
+      const r = await api().writeCartas(sid, files);
+      if (!r?.ok) notify('error', r?.error || 'No se pudieron guardar las cartas.');
+      else {
+        setCartas({ dir: r.dir, sessionId: sid });
+        notify('ok', `Cartas guardadas (sesión ${sid}).`);
+      }
+    } catch (err) {
+      notify('error', `No se pudieron armar las cartas: ${err.message}`);
+    }
+    setBusy('');
+  };
+
+  // ── Medir resultado ────────────────────────────────────────────────────────
+  const startMedir = () => {
+    setMedRef(null); setMedCor(null); setMedResultado(null); setMedCal('');
+    setFeedback(null); setView('medir');
+  };
+
+  const runMedir = async () => {
+    if (!medRef || !medCor) { notify('error', 'Faltan los dos escaneos.'); return; }
+    setBusy('medir');
+    setMedResultado(null);
+    try {
+      const r = await analyzeCorrected(medRef, medCor);
+      setMedResultado(r);
+      notify('ok', 'Medición lista.');
+    } catch (err) {
+      notify('error', err.message || 'No se pudo medir.');
+    }
+    setBusy('');
+  };
+
+  // Deja el número REAL guardado en la calibración, para que quede a la vista
+  // en la lista junto al previsto.
+  const guardarMedicion = async () => {
+    if (!medResultado || !medCal) return;
+    setBusy('medir');
+    const cal = cals.find((c) => c.id === medCal);
+    if (cal) {
+      const r = await api().save({
+        ...cal,
+        results: { ...(cal.results || {}), realProm: medResultado.stats?.despuesProm ?? null },
+      });
+      notify(r?.ok ? 'ok' : 'error', r?.ok ? 'Resultado guardado en la calibración.' : (r?.error || 'No se pudo guardar.'));
+      await reload();
+    }
     setBusy('');
   };
 
@@ -349,6 +412,16 @@ export default function ColorCalModal({ open, onClose }) {
               onExportIcc={exportarPerfil}
               perfil={perfil} onCerrarPerfil={() => setPerfil(null)}
               onGuardarComo={guardarPerfilComo} onAbrirCarpeta={(id) => api().openPerfiles(id)}
+              onGuardarCartas={guardarCartas} onMedir={startMedir}
+              cartas={cartas} onCerrarCartas={() => setCartas(null)} onAbrirDir={(d) => api().openDir(d)}
+            />
+          ) : view === 'medir' ? (
+            <MedirView
+              cals={cals} busy={busy} nameForIp={nameForIp}
+              medRef={medRef} setMedRef={setMedRef} medCor={medCor} setMedCor={setMedCor}
+              resultado={medResultado} onMedir={runMedir}
+              medCal={medCal} setMedCal={setMedCal} onGuardar={guardarMedicion}
+              onVolver={() => setView('list')}
             />
           ) : view === 'import' ? (
             <ImportView
@@ -378,12 +451,30 @@ export default function ColorCalModal({ open, onClose }) {
   );
 }
 
-function ListView({ cals, printers, manualIp, canShare, busy, nameForIp, printersWithoutIp, onCalibrate, onImport, onToggle, onDelete, onShare, onDeleteShared, onPull, onSetManual, fmtDate, onExportIcc, perfil, onCerrarPerfil, onGuardarComo, onAbrirCarpeta }) {
+function ListView({ cals, printers, manualIp, canShare, busy, nameForIp, printersWithoutIp, onCalibrate, onImport, onToggle, onDelete, onShare, onDeleteShared, onPull, onSetManual, fmtDate, onExportIcc, perfil, onCerrarPerfil, onGuardarComo, onAbrirCarpeta, onGuardarCartas, onMedir, cartas, onCerrarCartas, onAbrirDir }) {
   const manualRef = useRef(null);
   const localHasIp = (ip) => !!ip && (printers.some((p) => p.ip === ip) || Object.values(manualIp || {}).includes(ip));
   const scrollToManual = () => manualRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   return (
     <>
+      {cartas && (
+        <div className="mb-3 rounded border border-ink-700 bg-ink-800/40 p-3">
+          <div className="flex items-start justify-between gap-2">
+            <div className="text-xs font-semibold text-ink-200">Cartas de prueba guardadas (sesión {cartas.sessionId})</div>
+            <button onClick={onCerrarCartas} className="shrink-0 rounded px-1.5 text-xs text-ink-400 hover:bg-ink-800" title="Cerrar">✕</button>
+          </div>
+          <div className="mt-1 break-all font-mono text-[10px] text-ink-400">{cartas.dir}</div>
+          <button onClick={() => onAbrirDir(cartas.dir)} className="mt-2 rounded border border-ink-700 px-2 py-1 text-xs text-ink-200 hover:bg-ink-800">Abrir carpeta</button>
+          <ul className="mt-2 ml-4 list-disc space-y-0.5 text-[11px] leading-snug text-ink-300">
+            <li><b>Imprimí el PDF</b>, no el PNG: ya está en A4 a tamaño real.</li>
+            <li>Sin ajustar a la página y <b>sin ninguna corrección de color</b>.</li>
+            <li>La <b>1-REFERENCIA</b> va en la impresora buena; la <b>2-A-CORREGIR</b>, en la que estás corrigiendo.</li>
+            <li>Escaneá las dos a 300 dpi, color, JPEG máxima calidad, sin ajustes automáticos.</li>
+            <li>Después volvé acá y tocá <b>“Medir resultado”</b>.</li>
+          </ul>
+        </div>
+      )}
+
       {perfil && (
         <div className="mb-3 rounded border border-sky-800 bg-sky-950/30 p-3">
           <div className="flex items-start justify-between gap-2">
@@ -435,6 +526,8 @@ function ListView({ cals, printers, manualIp, canShare, busy, nameForIp, printer
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <button onClick={onCalibrate} className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500">Calibrar una impresora</button>
         <button onClick={onImport} className="rounded border border-ink-600 px-3 py-1.5 text-sm text-ink-100 hover:bg-ink-800">Importar calibración (.cube)</button>
+        <button onClick={onGuardarCartas} disabled={busy === 'cartas'} title="Guarda las dos cartas de 343 colores en PNG y PDF a tamaño real, para imprimirlas desde Corel o cualquier programa" className="rounded border border-ink-700 px-3 py-1.5 text-sm text-ink-200 hover:bg-ink-800 disabled:opacity-50">{busy === 'cartas' ? 'Guardando…' : 'Guardar carta de prueba'}</button>
+        <button onClick={onMedir} className="rounded border border-ink-700 px-3 py-1.5 text-sm text-ink-200 hover:bg-ink-800">Medir resultado</button>
         <button onClick={onPull} disabled={busy === 'pull'} className="rounded border border-ink-700 px-3 py-1.5 text-sm text-ink-200 hover:bg-ink-800 disabled:opacity-50">{busy === 'pull' ? 'Actualizando…' : 'Actualizar (bajar de otras PC)'}</button>
       </div>
 
@@ -673,3 +766,90 @@ function ImportView({ printers, busy, ipOf, correctDev, setCorrectDev, refDev, s
 }
 
 function fmt1(n) { return typeof n === 'number' ? n.toFixed(1).replace('.', ',') : '—'; }
+
+// ── Medir resultado ──────────────────────────────────────────────────────────
+// Lo que faltaba del kit: comprobar lo que salió DE VERDAD. Se cargan el
+// escaneo de la carta de referencia y el de la corregida (vengan de PrintLayout
+// o impresas desde Corel) y se muestra el informe real.
+function MedirView({
+  cals, busy, nameForIp, medRef, setMedRef, medCor, setMedCor,
+  resultado, onMedir, medCal, setMedCal, onGuardar, onVolver,
+}) {
+  const archivo = (f) => (f ? `${f.name} (${Math.round(f.size / 1024)} KB)` : 'ningún archivo');
+  return (
+    <>
+      <div className="mb-3 flex items-center gap-2">
+        <button onClick={onVolver} className="rounded border border-ink-700 px-2 py-1 text-xs text-ink-300 hover:bg-ink-800">← Volver</button>
+        <h3 className="text-sm font-semibold text-ink-100">Medir resultado</h3>
+      </div>
+
+      <p className="mb-3 text-xs leading-snug text-ink-400">
+        Compara lo que salió DE VERDAD contra la impresora de referencia. Sirve igual si la
+        carta la imprimiste desde PrintLayout o desde Corel con el perfil puesto. Las dos
+        cartas tienen que ser de la <b>misma sesión</b> (lo dice el código de abajo de la hoja).
+      </p>
+
+      <div className="space-y-3">
+        <div className="rounded border border-ink-700 bg-ink-800/40 p-2">
+          <div className="text-xs font-medium text-ink-200">1) Escaneo de la carta de REFERENCIA</div>
+          <div className="mt-0.5 text-[11px] text-ink-500">La impresora buena, la que querés imitar.</div>
+          <input
+            type="file" accept="image/*"
+            onChange={(e) => setMedRef(e.target.files?.[0] || null)}
+            className="mt-1.5 w-full text-xs text-ink-300 file:mr-2 file:rounded file:border file:border-ink-700 file:bg-ink-800 file:px-2 file:py-1 file:text-xs file:text-ink-200"
+          />
+          <div className="mt-1 text-[10px] text-ink-500">{archivo(medRef)}</div>
+        </div>
+
+        <div className="rounded border border-ink-700 bg-ink-800/40 p-2">
+          <div className="text-xs font-medium text-ink-200">2) Escaneo de la carta CORREGIDA</div>
+          <div className="mt-0.5 text-[11px] text-ink-500">La impresora que estás corrigiendo, ya con la corrección aplicada.</div>
+          <input
+            type="file" accept="image/*"
+            onChange={(e) => setMedCor(e.target.files?.[0] || null)}
+            className="mt-1.5 w-full text-xs text-ink-300 file:mr-2 file:rounded file:border file:border-ink-700 file:bg-ink-800 file:px-2 file:py-1 file:text-xs file:text-ink-200"
+          />
+          <div className="mt-1 text-[10px] text-ink-500">{archivo(medCor)}</div>
+        </div>
+
+        <button
+          onClick={onMedir}
+          disabled={!medRef || !medCor || busy === 'medir'}
+          className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+        >
+          {busy === 'medir' ? 'Midiendo…' : 'Medir'}
+        </button>
+      </div>
+
+      {resultado && (
+        <div className="mt-4">
+          <pre className="max-h-80 overflow-auto rounded border border-ink-700 bg-ink-900 p-2 text-[10px] leading-snug text-ink-200">
+            {resultado.informe}
+          </pre>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span className="text-xs text-ink-400">Guardar este resultado en:</span>
+            <select
+              value={medCal}
+              onChange={(e) => setMedCal(e.target.value)}
+              className="rounded border border-ink-700 bg-ink-800 px-2 py-1 text-xs text-ink-200"
+            >
+              <option value="">(elegí una calibración)</option>
+              {cals.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {nameForIp(c.correctPrinter?.ip)} ← {nameForIp(c.referencePrinter?.ip)}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={onGuardar}
+              disabled={!medCal || busy === 'medir'}
+              className="rounded border border-ink-700 px-2 py-1 text-xs text-ink-200 hover:bg-ink-800 disabled:opacity-50"
+            >
+              Guardar
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}

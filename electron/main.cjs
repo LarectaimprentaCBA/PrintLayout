@@ -2079,6 +2079,38 @@ ipcMain.handle('color:open-perfiles', (_evt, id) => {
   } catch (err) { return { ok: false, error: err.message }; }
 });
 
+// Guarda las cartas de prueba (PNG + PDF a tamaño real) para imprimirlas desde
+// afuera de la app. Una carpeta por sesión, así no se mezclan cartas de
+// sesiones distintas (el lector las rechazaría).
+ipcMain.handle('color:write-cartas', (_evt, payload) => {
+  const { sessionId, files } = payload || {};
+  if (!sessionId || !Array.isArray(files) || !files.length) {
+    return { ok: false, error: 'Faltan las cartas.' };
+  }
+  try {
+    const dir = path.join(app.getPath('userData'), 'color-calibrations', 'cartas', String(sessionId));
+    fs.mkdirSync(dir, { recursive: true });
+    const escritos = [];
+    for (const f of files) {
+      if (!f?.name || !f?.bytes) continue;
+      const p = path.join(dir, f.name);
+      fs.writeFileSync(p, Buffer.from(f.bytes));
+      escritos.push(p);
+    }
+    appendDebugLog(`[color] cartas de prueba guardadas en ${dir} (${escritos.length} archivos)`);
+    return { ok: true, dir, archivos: escritos };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+
+ipcMain.handle('color:open-dir', (_evt, dir) => {
+  try {
+    if (!dir) return { ok: false, error: 'Sin carpeta.' };
+    fs.mkdirSync(dir, { recursive: true });
+    shell.openPath(dir);
+    return { ok: true };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+
 ipcMain.handle('color:perfiles-info', () => {
   try { return { ok: true, dir: perfilesDir(), index: leerPerfilesIndex() }; } catch (err) { return { ok: false, error: err.message }; }
 });

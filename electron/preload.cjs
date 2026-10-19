@@ -253,5 +253,8 @@ contextBridge.exposeInMainWorld('printlayout', {
     saveIccAs: (defaultName, bytes) => ipcRenderer.invoke('color:save-icc-as', { defaultName, bytes }),
     openPerfiles: (id) => ipcRenderer.invoke('color:open-perfiles', id),
     perfilesInfo: () => ipcRenderer.invoke('color:perfiles-info'),
+    // Cartas de prueba para imprimir desde afuera (PNG + PDF a tamaño real).
+    writeCartas: (sessionId, files) => ipcRenderer.invoke('color:write-cartas', { sessionId, files }),
+    openDir: (dir) => ipcRenderer.invoke('color:open-dir', dir),
   },
 });
