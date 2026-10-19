@@ -532,10 +532,12 @@ function buildA2B_XYZ(lut, grid) {
  * @param {number} [opts.gridA2B=33] nodos por eje de A2B (mínimo 17). Más de 33
  *        NO mejora: el techo lo pone el doblez de la tabla (ver abajo).
  * @param {number} [opts.gridB2A=33] nodos por eje de B2A (sólo en modo Lab)
- * @param {number} [opts.xyzMatrixScale=1] escala de la matriz XYZ->RGB lineal.
- *        Hay dos convenciones dando vueltas según cómo el motor normalice el
- *        PCS XYZ (÷32768 = valor real, o ÷65535 = 0..1). Se verifica contra el
- *        motor de color de Windows y se deja fijo el que corresponde.
+ * @param {number} [opts.xyzMatrixScale=2] escala de la matriz XYZ->RGB lineal.
+ *        VERIFICADO contra el motor de color de Windows (mscms): normaliza el
+ *        PCS XYZ dividiendo por 65535, no por 32768, así que la matriz va por
+ *        2. Con 1 el color sale oscurísimo (medido: 136 de error sobre 255);
+ *        con 2, una tabla identidad vuelve EXACTA. No tocar sin re-verificar
+ *        con npm run test:color-icc-windows.
  * @param {Date} [opts.fecha]
  * @returns {Uint8Array} bytes del perfil
  */
@@ -545,7 +547,7 @@ export function buildIccProfile(cal, {
   pcs = 'XYZ',
   gridA2B = 33,
   gridB2A = 33,
-  xyzMatrixScale = 1,
+  xyzMatrixScale = 2,
   fecha = null,
 } = {}) {
   const S = cal?.lutSize || Math.round(Math.cbrt((cal?.lut?.length || 0) / 3));

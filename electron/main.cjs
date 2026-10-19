@@ -1906,8 +1906,9 @@ ipcMain.handle('color:save', async (_evt, cal) => {
 });
 
 ipcMain.handle('color:delete', async (_evt, id) => {
-  try { return colorStore.remove(id); }
-  catch (err) { return { ok: false, error: err.message }; }
+  // El perfil ICC exportado se va junto con la calibración: si no, quedaría un
+  // .icc huérfano en la carpeta (y peor: puesto en una cola de Windows).
+  try { borrarPerfilDe(id); return colorStore.remove(id); } catch (err) { return { ok: false, error: err.message }; }
 });
 
 ipcMain.handle('color:set-active', async (_evt, payload) => {
@@ -1970,8 +1971,116 @@ ipcMain.handle('color:delete-shared', async (_evt, id) => {
     if (!colorSync.hasToken()) return { ok: false, error: 'Sin permiso para borrar compartidas (falta token).' };
     const r = await colorSync.remove(id);
     colorStore.remove(id);
+    borrarPerfilDe(id);
     return r;
   } catch (err) { return { ok: false, error: err.message }; }
+});
+
+// ── Perfiles ICC exportados ────────────────────────────────────────────────
+// Los bytes del perfil los arma el RENDERER (el motor es ESM y vive en src/,
+// que no se copia al build del main; ver src/lib/colorCalibration/iccExport.js).
+// Acá sólo se escriben y se administran los archivos.
+// `index.json` ata cada calibración con su archivo, para poder borrar el perfil
+// cuando se borra la calibración (el nombre del .icc es "lindo", no lleva el id).
+function perfilesDir() {
+  return path.join(app.getPath('userData'), 'color-calibrations', 'perfiles');
+}
+function perfilesIndexPath() {
+  return path.join(perfilesDir(), 'index.json');
+}
+function leerPerfilesIndex() {
+  try { return JSON.parse(fs.readFileSync(perfilesIndexPath(), 'utf8')) || {}; } catch (_) { return {}; }
+}
+function escribirPerfilesIndex(idx) {
+  try {
+    fs.mkdirSync(perfilesDir(), { recursive: true });
+    fs.writeFileSync(perfilesIndexPath(), JSON.stringify(idx, null, 2));
+  } catch (_) { /* best-effort */ }
+}
+// Borra el perfil (y su .txt) de una calibración. Se llama al borrarla.
+function borrarPerfilDe(id) {
+  try {
+    const idx = leerPerfilesIndex();
+    const e = idx[id];
+    if (!e) return;
+    for (const f of [e.icc, e.txt]) {
+      if (!f) continue;
+      try { fs.unlinkSync(path.join(perfilesDir(), f)); } catch (_) { /* ya no estaba */ }
+    }
+    delete idx[id];
+    escribirPerfilesIndex(idx);
+  } catch (_) { /* best-effort */ }
+}
+
+ipcMain.handle('color:write-icc', (_evt, payload) => {
+  const {
+    id, fileName, bytes, txtName, txt,
+  } = payload || {};
+  if (!id || !fileName || !bytes) return { ok: false, error: 'Faltan datos del perfil.' };
+  try {
+    const dir = perfilesDir();
+    fs.mkdirSync(dir, { recursive: true });
+    const idx = leerPerfilesIndex();
+    // Si el nombre cambió (ej. cambió el papel), sacamos el anterior.
+    const prev = idx[id];
+    if (prev && prev.icc && prev.icc !== fileName) {
+      for (const f of [prev.icc, prev.txt]) {
+        if (f) { try { fs.unlinkSync(path.join(dir, f)); } catch (_) { /* nada */ } }
+      }
+    }
+    const buf = Buffer.from(bytes);
+    const iccPath = path.join(dir, fileName);
+    fs.writeFileSync(iccPath, buf);
+    let txtPath = null;
+    if (txtName && txt) {
+      txtPath = path.join(dir, txtName);
+      fs.writeFileSync(txtPath, txt, 'utf8');
+    }
+    const hash = crypto.createHash('sha256').update(buf).digest('hex');
+    idx[id] = {
+      icc: fileName, txt: txtName || null, hash, bytes: buf.length, at: new Date().toISOString(),
+    };
+    escribirPerfilesIndex(idx);
+    appendDebugLog(`[color] perfil ICC escrito: ${fileName} (${buf.length}b, sha256 ${hash.slice(0, 12)}…)`);
+    return {
+      ok: true, path: iccPath, txtPath, dir, hash, bytes: buf.length,
+    };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+
+ipcMain.handle('color:save-icc-as', async (evt, payload) => {
+  const { defaultName, bytes } = payload || {};
+  const win = BrowserWindow.fromWebContents(evt.sender);
+  const result = await dialog.showSaveDialog(win, {
+    title: 'Guardar perfil de color',
+    defaultPath: defaultName || 'perfil.icc',
+    filters: [{ name: 'Perfil de color', extensions: ['icc', 'icm'] }],
+  });
+  if (result.canceled || !result.filePath) return { canceled: true };
+  try {
+    fs.mkdirSync(path.dirname(result.filePath), { recursive: true });
+    fs.writeFileSync(result.filePath, Buffer.from(bytes));
+    return { canceled: false, path: result.filePath };
+  } catch (err) { return { canceled: false, error: err.message }; }
+});
+
+ipcMain.handle('color:open-perfiles', (_evt, id) => {
+  try {
+    const dir = perfilesDir();
+    fs.mkdirSync(dir, { recursive: true });
+    const e = id ? leerPerfilesIndex()[id] : null;
+    // Si sabemos cuál es el archivo, lo dejamos seleccionado en el explorador.
+    if (e && e.icc && fs.existsSync(path.join(dir, e.icc))) {
+      shell.showItemInFolder(path.join(dir, e.icc));
+    } else {
+      shell.openPath(dir);
+    }
+    return { ok: true, dir };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+
+ipcMain.handle('color:perfiles-info', () => {
+  try { return { ok: true, dir: perfilesDir(), index: leerPerfilesIndex() }; } catch (err) { return { ok: false, error: err.message }; }
 });
 
 // Baja las calibraciones compartidas. Gana la más nueva (updatedAt) por impresora; la
@@ -1983,6 +2092,8 @@ ipcMain.handle('color:sync-pull', async () => {
     const local = colorStore.list();
     const localById = new Map(local.map((c) => [c.id, c]));
     let added = 0, updated = 0, removed = 0;
+    // ids que entraron o cambiaron: el renderer les regenera el .icc.
+    const idsTocados = [];
     for (const entry of remote) {
       const loc = localById.get(entry.id);
       if (loc && loc.sharedHash === entry.hash) continue; // sin cambios
@@ -2008,6 +2119,7 @@ ipcMain.handle('color:sync-pull', async () => {
         sharedHash: entry.hash,
       });
       if (loc) updated++; else added++;
+      idsTocados.push(full.id);
     }
     // Propagar borrados: local compartida cuyo id ya no está en el manifest. SOLO si el
     // manifest EXISTE (aunque esté vacío). Si no existe (404) o hubo error de red (que
@@ -2015,12 +2127,14 @@ ipcMain.handle('color:sync-pull', async () => {
     if (rm.exists) {
       const remoteIds = new Set(remote.map((e) => e.id));
       for (const c of colorStore.list()) {
-        if (c.sharedAt && !remoteIds.has(c.id)) { colorStore.addBackup(c); colorStore.remove(c.id); removed++; }
+        if (c.sharedAt && !remoteIds.has(c.id)) {
+          colorStore.addBackup(c); colorStore.remove(c.id); borrarPerfilDe(c.id); removed++;
+        }
       }
     }
     if (added || updated || removed) appendDebugLog(`[color] sync-pull: ${added} nuevas, ${updated} actualizadas, ${removed} borradas`);
-    return { ok: true, added, updated, removed };
-  } catch (err) { return { ok: false, error: err.message, added: 0, updated: 0, removed: 0 }; }
+    return { ok: true, added, updated, removed, idsTocados };
+  } catch (err) { return { ok: false, error: err.message, added: 0, updated: 0, removed: 0, idsTocados: [] }; }
 });
 
 // Abre Preferencias de la impresora y DEVUELVE el DEVMODE elegido (base64) SIN guardarlo

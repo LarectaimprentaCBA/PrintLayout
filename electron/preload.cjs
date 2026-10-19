@@ -248,5 +248,10 @@ contextBridge.exposeInMainWorld('printlayout', {
     deleteShared: (id) => ipcRenderer.invoke('color:delete-shared', id),
     syncPull: () => ipcRenderer.invoke('color:sync-pull'),
     configurePaper: (deviceName, baseDevmodeB64) => ipcRenderer.invoke('color:configure-paper', { deviceName, baseDevmodeB64 }),
+    // Perfil ICC exportado: los bytes los arma el renderer, el main los escribe.
+    writeIcc: (payload) => ipcRenderer.invoke('color:write-icc', payload),
+    saveIccAs: (defaultName, bytes) => ipcRenderer.invoke('color:save-icc-as', { defaultName, bytes }),
+    openPerfiles: (id) => ipcRenderer.invoke('color:open-perfiles', id),
+    perfilesInfo: () => ipcRenderer.invoke('color:perfiles-info'),
   },
 });

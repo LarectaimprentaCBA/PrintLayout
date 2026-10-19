@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { newSessionId } from '../lib/colorCalibration/code.js';
 import { renderCalibrationCharts } from '../lib/colorCalibration/chart.js';
 import { analyzePair, parseCube, parseInformePrevisto, parseInformeReal } from '../lib/colorCalibration/analyze.js';
+import { construirPerfil } from '../lib/colorCalibration/iccExport.js';
 
 // Asistente de calibración de color por impresora. Corrige una impresora "pálida" para
 // que imprima como una de referencia. La identidad de la impresora es su IP (el nombre de
@@ -18,6 +19,7 @@ export default function ColorCalModal({ open, onClose }) {
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState('');
   const [feedback, setFeedback] = useState(null); // {kind,text}
+  const [perfil, setPerfil] = useState(null); // {id, path, dir, hash, bytes, fileName, iccBytes}
 
   const [view, setView] = useState('list'); // 'list' | 'wizard'
   // Wizard
@@ -106,10 +108,56 @@ export default function ColorCalModal({ open, onClose }) {
     await reload();
     setBusy('');
   };
+  // Genera el .icc de una calibración y lo deja en la carpeta de perfiles.
+  // `silencioso` = lo usa el pull automático (no muestra nada ni abre nada).
+  const generarPerfil = async (cal, { silencioso = false } = {}) => {
+    try {
+      const { bytes, fileName, txtName, txt } = construirPerfil(cal);
+      const r = await api().writeIcc({
+        id: cal.id, fileName, bytes, txtName, txt,
+      });
+      if (!r?.ok) {
+        if (!silencioso) notify('error', r?.error || 'No se pudo guardar el perfil.');
+        return null;
+      }
+      if (!silencioso) {
+        setPerfil({ ...r, id: cal.id, fileName, iccBytes: bytes });
+        notify('ok', `Perfil guardado: ${fileName}`);
+      }
+      return r;
+    } catch (err) {
+      if (!silencioso) notify('error', `No se pudo armar el perfil: ${err.message}`);
+      return null;
+    }
+  };
+
+  const exportarPerfil = async (cal) => {
+    setBusy('icc');
+    await generarPerfil(cal);
+    setBusy('');
+  };
+
+  const guardarPerfilComo = async () => {
+    if (!perfil?.iccBytes) return;
+    const r = await api().saveIccAs(perfil.fileName, perfil.iccBytes);
+    if (r?.error) notify('error', r.error);
+    else if (!r?.canceled) notify('ok', `Guardado en ${r.path}`);
+  };
+
   const pull = async () => {
     setBusy('pull');
     const r = await api().syncPull();
     notify(r.ok ? 'ok' : 'error', r.ok ? `Actualizado (${r.added} nuevas, ${r.updated} actualizadas, ${r.removed} borradas).` : (r.error || 'No se pudo actualizar.'));
+    // Las que entraron o cambiaron por el sync se quedan SIN perfil en esta PC.
+    // Se los generamos acá mismo, así en cada máquina el .icc aparece solo.
+    if (r?.ok && Array.isArray(r.idsTocados) && r.idsTocados.length) {
+      const lista = (await api().list())?.calibrations || [];
+      for (const id of r.idsTocados) {
+        const cal = lista.find((c) => c.id === id);
+        // eslint-disable-next-line no-await-in-loop
+        if (cal) await generarPerfil(cal, { silencioso: true });
+      }
+    }
     await reload();
     setBusy('');
   };
@@ -298,6 +346,9 @@ export default function ColorCalModal({ open, onClose }) {
               nameForIp={nameForIp} printersWithoutIp={printersWithoutIp}
               onCalibrate={startWizard} onImport={startImport} onToggle={toggleActive} onDelete={del} onShare={share}
               onDeleteShared={deleteShared} onPull={pull} onSetManual={setManual} fmtDate={fmtDate}
+              onExportIcc={exportarPerfil}
+              perfil={perfil} onCerrarPerfil={() => setPerfil(null)}
+              onGuardarComo={guardarPerfilComo} onAbrirCarpeta={(id) => api().openPerfiles(id)}
             />
           ) : view === 'import' ? (
             <ImportView
@@ -327,12 +378,60 @@ export default function ColorCalModal({ open, onClose }) {
   );
 }
 
-function ListView({ cals, printers, manualIp, canShare, busy, nameForIp, printersWithoutIp, onCalibrate, onImport, onToggle, onDelete, onShare, onDeleteShared, onPull, onSetManual, fmtDate }) {
+function ListView({ cals, printers, manualIp, canShare, busy, nameForIp, printersWithoutIp, onCalibrate, onImport, onToggle, onDelete, onShare, onDeleteShared, onPull, onSetManual, fmtDate, onExportIcc, perfil, onCerrarPerfil, onGuardarComo, onAbrirCarpeta }) {
   const manualRef = useRef(null);
   const localHasIp = (ip) => !!ip && (printers.some((p) => p.ip === ip) || Object.values(manualIp || {}).includes(ip));
   const scrollToManual = () => manualRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   return (
     <>
+      {perfil && (
+        <div className="mb-3 rounded border border-sky-800 bg-sky-950/30 p-3">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <div className="text-xs font-semibold text-sky-200">Perfil guardado</div>
+              <div className="mt-0.5 break-all font-mono text-[10px] text-ink-300">{perfil.fileName}</div>
+            </div>
+            <button onClick={onCerrarPerfil} className="shrink-0 rounded px-1.5 text-xs text-ink-400 hover:bg-ink-800" title="Cerrar">✕</button>
+          </div>
+
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button onClick={onGuardarComo} className="rounded border border-ink-700 px-2 py-1 text-xs text-ink-200 hover:bg-ink-800">Guardar como…</button>
+            <button onClick={() => onAbrirCarpeta(perfil.id)} className="rounded border border-ink-700 px-2 py-1 text-xs text-ink-200 hover:bg-ink-800">Abrir carpeta</button>
+          </div>
+
+          <div className="mt-3 space-y-2 text-[11px] leading-snug text-ink-300">
+            <p className="text-ink-400">
+              Al lado del perfil quedó un <b>.txt con estos mismos pasos</b>, por si lo necesitás en otra PC.
+            </p>
+            <div>
+              <div className="font-semibold text-ink-200">Para usarlo desde Corel</div>
+              <ol className="ml-4 list-decimal space-y-0.5">
+                <li>Herramientas → Administración de color → cargar este perfil.</li>
+                <li>Al imprimir, solapa <b>Color</b>: que convierta <b>Corel</b>, perfil de salida = este, intención <b>colorimétrico relativo</b>.</li>
+                <li>En el driver: gestión de color <b>apagada</b> y los ajustes de color en 0.</li>
+              </ol>
+            </div>
+            <div>
+              <div className="font-semibold text-ink-200">Para usarlo en cualquier programa (y en el plóter Epson)</div>
+              <ol className="ml-4 list-decimal space-y-0.5">
+                <li>Panel de control → Administración de color → Dispositivos.</li>
+                <li>Elegí la impresora → “Usar mi configuración para este dispositivo” → Agregar → este perfil, como predeterminado.</li>
+                <li>En el driver: gestión de color en <b>ICM</b> (en el Epson, que lo maneje el driver).</li>
+                <li>Acá <b>Corel no tiene que convertir</b>.</li>
+              </ol>
+            </div>
+            <p className="rounded border border-amber-800/60 bg-amber-950/30 p-1.5 text-amber-200">
+              <b>Elegí uno de los dos caminos, no los dos.</b> Si Corel convierte y además el perfil está
+              puesto en la cola de Windows, el color se corrige dos veces y sale pasado de rosca.
+              Imprimiendo <b>desde PrintLayout</b> no cambia nada: la app sigue corrigiendo por su cuenta.
+            </p>
+            <p className="text-ink-400">
+              El perfil vale para el <b>papel y la calidad</b> con los que se calibró.
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <button onClick={onCalibrate} className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500">Calibrar una impresora</button>
         <button onClick={onImport} className="rounded border border-ink-600 px-3 py-1.5 text-sm text-ink-100 hover:bg-ink-800">Importar calibración (.cube)</button>
@@ -373,6 +472,9 @@ function ListView({ cals, printers, manualIp, canShare, busy, nameForIp, printer
                 {canShare && !c.sharedAt && <button onClick={() => onShare(c)} disabled={busy === 'share'} className="rounded border border-ink-700 px-2 py-1 text-xs text-ink-200 hover:bg-ink-800">Compartir</button>}
                 {canShare && c.sharedAt && <button onClick={() => onShare(c)} disabled={busy === 'share'} className="rounded border border-ink-700 px-2 py-1 text-xs text-ink-200 hover:bg-ink-800">Subir cambios</button>}
                 {canShare && c.sharedAt && <button onClick={() => onDeleteShared(c)} disabled={busy === 'share'} className="rounded border border-red-800 px-2 py-1 text-xs text-red-300 hover:bg-red-950/40">Borrar de todas</button>}
+                <button onClick={() => onExportIcc(c)} disabled={busy === 'icc'} title="Guarda la corrección como perfil de color, para usarla desde Corel o desde cualquier programa" className="rounded border border-sky-800 px-2 py-1 text-xs text-sky-300 hover:bg-sky-950/40">
+                  {busy === 'icc' ? 'Generando…' : 'Exportar perfil (.icc)'}
+                </button>
                 <button onClick={() => onDelete(c)} disabled={busy === 'del'} className="rounded border border-ink-700 px-2 py-1 text-xs text-ink-400 hover:bg-ink-800">Borrar acá</button>
               </div>
             </div>

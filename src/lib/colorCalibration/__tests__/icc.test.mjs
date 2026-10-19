@@ -167,8 +167,13 @@ check(`A2B es ${A2B.grid}³ de 3->3`, A2B.inCh === 3 && A2B.outCh === 3);
 // Desde el PCS ya codificado (lo que recibe B2A) hasta el dispositivo.
 function b2aDesdePcs(p0, p1, p2) {
   if (PCS === 'XYZ') {
-    // u1Fixed15: valor real = codificado / 32768
-    const xyz = [p0 / 32768, p1 / 32768, p2 / 32768];
+    // CONVENCIÓN VERIFICADA contra el motor de color de Windows (mscms): para
+    // la matriz, el PCS de 16 bits se normaliza dividiendo por 65535 (no por
+    // 32768, que sería el valor XYZ real del u1Fixed15). Por eso la matriz del
+    // perfil va multiplicada por 2. Con la otra convención el color sale
+    // oscurísimo: medido, 136 de error sobre 255.
+    // Ver src/lib/colorCalibration/__tests__/iccWindows.test.mjs
+    const xyz = [p0 / 65535, p1 / 65535, p2 / 65535];
     const M = B2A.matrix;
     const lin = [
       M[0] * xyz[0] + M[1] * xyz[1] + M[2] * xyz[2],
