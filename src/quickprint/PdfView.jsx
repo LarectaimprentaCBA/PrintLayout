@@ -1,23 +1,7 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { calcTamano, recortes, filtrarSubset, parseRange } from './pdfLayout.js';
 
 const PREVIEW_DPI = 96;
-
-// Parsea "1-3,5" a lista de páginas (1-based), acotada a [1,count].
-function parseRange(str, count) {
-  const out = new Set();
-  for (const part of String(str || '').split(',')) {
-    const m = part.trim().match(/^(\d+)\s*-\s*(\d+)$/);
-    if (m) {
-      let a = parseInt(m[1], 10), b = parseInt(m[2], 10);
-      if (a > b) [a, b] = [b, a];
-      for (let i = a; i <= b; i++) if (i >= 1 && (!count || i <= count)) out.add(i);
-    } else {
-      const n = parseInt(part.trim(), 10);
-      if (Number.isFinite(n) && n >= 1 && (!count || n <= count)) out.add(n);
-    }
-  }
-  return [...out].sort((a, b) => a - b);
-}
 
 const SIZE_MODES = [
   { key: 'fit', label: 'Ajustar' },
@@ -30,6 +14,13 @@ const ORIENTS = [
   { key: 'vertical', label: 'Vertical' },
   { key: 'horizontal', label: 'Horizontal' },
 ];
+const SUBSETS = [
+  { key: 'all', label: 'Todas' },
+  { key: 'odd', label: 'Solo impares' },
+  { key: 'even', label: 'Solo pares' },
+];
+
+const mm1 = (n) => (Math.round(n * 10) / 10).toString().replace('.', ',');
 
 export default function PdfView({ files, deviceName, pageInfo, busy, setBusy, onDone }) {
   const [idx, setIdx] = useState(0);
@@ -40,6 +31,8 @@ export default function PdfView({ files, deviceName, pageInfo, busy, setBusy, on
   const [copies, setCopies] = useState(1);
   const [pagesMode, setPagesMode] = useState('all'); // all|current|range
   const [rangeStr, setRangeStr] = useState('');
+  const [subset, setSubset] = useState('all'); // all|odd|even
+  const [sent, setSent] = useState(null); // aviso verde: se envió y la ventana sigue abierta
   const [sizeMode, setSizeMode] = useState('fit');
   const [scalePct, setScalePct] = useState(100);
   const [orientation, setOrientation] = useState('auto');
@@ -56,7 +49,8 @@ export default function PdfView({ files, deviceName, pageInfo, busy, setBusy, on
   // Al cambiar de PDF: reset + contar páginas.
   useEffect(() => {
     setPageCount(0); setPreviewPage(1); setPreviewInfo(null); setPreviewErr('');
-    setPagesMode('all'); setRangeStr(''); previewCache.current = new Map();
+    setPagesMode('all'); setRangeStr(''); setSubset('all'); setSent(null);
+    previewCache.current = new Map();
     if (!current) return;
     let dead = false;
     window.printlayout.quickprint.pdfInfo(current.path).then((r) => {
@@ -65,6 +59,38 @@ export default function PdfView({ files, deviceName, pageInfo, busy, setBusy, on
     });
     return () => { dead = true; };
   }, [current]);
+
+  // Páginas que se van a imprimir, con el filtro de impares/pares aplicado.
+  // La vista previa recorre SOLO estas, así se ve exactamente lo que va a salir.
+  const paginasElegidas = useMemo(() => {
+    if (!pageCount) return [];
+    let base;
+    if (pagesMode === 'current') base = [previewPage];
+    else if (pagesMode === 'range') base = parseRange(rangeStr, pageCount);
+    else base = Array.from({ length: pageCount }, (_, i) => i + 1);
+    return filtrarSubset(base, subset);
+  }, [pagesMode, rangeStr, subset, pageCount, previewPage]);
+
+  // En modo "página actual" hay que poder recorrer TODAS para elegir cuál.
+  const paginasVista = useMemo(() => {
+    if (pagesMode === 'current' || !paginasElegidas.length) {
+      return pageCount ? Array.from({ length: pageCount }, (_, i) => i + 1) : [];
+    }
+    return paginasElegidas;
+  }, [pagesMode, paginasElegidas, pageCount]);
+
+  // Si la página que se está mirando ya no está en la selección, saltar a la primera.
+  useEffect(() => {
+    if (!paginasVista.length) return;
+    if (!paginasVista.includes(previewPage)) setPreviewPage(paginasVista[0]);
+  }, [paginasVista, previewPage]);
+
+  const posVista = paginasVista.indexOf(previewPage);
+  const irVista = (d) => {
+    if (posVista < 0) return;
+    const n = paginasVista[posVista + d];
+    if (n) setPreviewPage(n);
+  };
 
   // Render del preview de la página actual (con Ghostscript, baja resolución).
   const rotFor = useCallback((wMm, hMm) => {
@@ -116,22 +142,15 @@ export default function PdfView({ files, deviceName, pageInfo, busy, setBusy, on
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, sheetWpx, sheetHpx);
 
-    // Área imprimible (línea de puntos, tenue).
+    // Esquina del área imprimible (el margen que la impresora no alcanza).
     const mL = (pageInfo?.marginLmm || 0) * pxPerMm;
     const mT = (pageInfo?.marginTmm || 0) * pxPerMm;
-    ctx.strokeStyle = 'rgba(0,0,0,.15)'; ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
-    ctx.strokeRect(mL, mT, printW * pxPerMm, printH * pxPerMm);
-    ctx.setLineDash([]);
 
     // Tamaño de dibujo del diseño según el modo (misma fórmula que la impresión).
     const rot = rotFor(pageImg.wMm, pageImg.hMm);
-    let ew = pageImg.wMm, eh = pageImg.hMm;
-    if (rot) { ew = pageImg.hMm; eh = pageImg.wMm; }
-    let twMm, thMm;
-    if (sizeMode === 'actual') { twMm = ew; thMm = eh; }
-    else if (sizeMode === 'custom') { const s = (Number(scalePct) || 100) / 100; twMm = ew * s; thMm = eh * s; }
-    else if (sizeMode === 'fitlarge') { const f = Math.min(printW / ew, printH / eh, 1); twMm = ew * f; thMm = eh * f; }
-    else { const f = Math.min(printW / ew, printH / eh); twMm = ew * f; thMm = eh * f; } // fit
+    const { twMm, thMm } = calcTamano({
+      wMm: pageImg.wMm, hMm: pageImg.hMm, rot, printW, printH, sizeMode, scalePct,
+    });
     const targetWpx = twMm * pxPerMm, targetHpx = thMm * pxPerMm;
 
     ctx.save();
@@ -142,36 +161,54 @@ export default function PdfView({ files, deviceName, pageInfo, busy, setBusy, on
     ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(pageImg.img, -boxW / 2, -boxH / 2, boxW, boxH);
     ctx.restore();
+
+    // Lo que queda FUERA del área imprimible no sale: lo tapamos en rojo tenue
+    // para que se entienda de una que lo corta la impresora, no la app.
+    ctx.save();
+    ctx.fillStyle = 'rgba(220,38,38,.28)';
+    ctx.beginPath();
+    ctx.rect(0, 0, sheetWpx, sheetHpx);
+    ctx.rect(mL, mT, printW * pxPerMm, printH * pxPerMm);
+    ctx.fill('evenodd');
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+    ctx.strokeRect(mL, mT, printW * pxPerMm, printH * pxPerMm);
+    ctx.setLineDash([]);
   }, [pageImg, sizeMode, scalePct, orientation, pageInfo, rotFor]);
 
-  // Escala que se aplicará (para el texto "Escala: N%").
-  const scaleShownPct = (() => {
+  // Escala que se aplicará (para el texto "Escala: N%") y cuánto se corta.
+  const medidas = useMemo(() => {
     if (!previewInfo || !(printWmm > 0)) return null;
     const rot = rotFor(previewInfo.wMm, previewInfo.hMm);
-    let ew = previewInfo.wMm, eh = previewInfo.hMm;
-    if (rot) { ew = previewInfo.hMm; eh = previewInfo.wMm; }
-    if (sizeMode === 'actual') return 100;
-    if (sizeMode === 'custom') return Math.round(scalePct);
-    if (sizeMode === 'fitlarge') return Math.round(Math.min(printWmm / ew, printHmm / eh, 1) * 100);
-    return Math.round(Math.min(printWmm / ew, printHmm / eh) * 100); // fit
-  })();
-
-  const wantedPages = () => {
-    if (pagesMode === 'current') return [previewPage];
-    if (pagesMode === 'range') return parseRange(rangeStr, pageCount);
-    return null; // todas
-  };
+    const { ew, eh, twMm, thMm, factor } = calcTamano({
+      wMm: previewInfo.wMm, hMm: previewInfo.hMm, rot,
+      printW: printWmm, printH: printHmm, sizeMode, scalePct,
+    });
+    const cortes = recortes({
+      twMm, thMm,
+      paperW: pageInfo?.paperWmm || twMm, paperH: pageInfo?.paperHmm || thMm,
+      printW: printWmm, printH: printHmm,
+      marginL: pageInfo?.marginLmm || 0, marginT: pageInfo?.marginTmm || 0,
+    });
+    return { rot, ew, eh, twMm, thMm, pct: Math.round(factor * 100), cortes };
+  }, [previewInfo, printWmm, printHmm, sizeMode, scalePct, pageInfo, rotFor]);
+  const scaleShownPct = medidas ? medidas.pct : null;
 
   const nextPdf = () => {
-    if (idx + 1 < files.length) { setIdx(idx + 1); setToast(null); }
+    if (idx + 1 < files.length) { setIdx(idx + 1); setToast(null); setSent(null); }
     else onDone();
   };
 
   const doPrint = async () => {
     if (!current || !deviceName) return;
-    const pages = wantedPages();
-    if (pagesMode === 'range' && (!pages || !pages.length)) { setToast('El rango de páginas no es válido.'); return; }
-    setBusy(true); setToast(null);
+    const pages = paginasElegidas;
+    if (!pages.length) {
+      setToast(pagesMode === 'range'
+        ? 'El rango de páginas no es válido.'
+        : 'Con ese filtro no queda ninguna página.');
+      return;
+    }
+    setBusy(true); setToast(null); setSent(null);
     try {
       const res = await window.printlayout.quickprint.printPdf({
         path: current.path,
@@ -181,7 +218,9 @@ export default function PdfView({ files, deviceName, pageInfo, busy, setBusy, on
         docName: `PDF: ${current.name}`,
       });
       setBusy(false);
-      if (res?.ok) nextPdf();
+      // La ventana NO se cierra: queda lista para mandar otra tanda (típico
+      // del doble faz a mano: primero las impares, después las pares).
+      if (res?.ok) setSent(`Enviado: ${pages.length} ${pages.length === 1 ? 'página' : 'páginas'}${copies > 1 ? ` × ${copies} copias` : ''}.`);
       else if (res?.canceled) { /* nada */ }
       else setToast(`No se pudo imprimir: ${res?.error || 'error'}`);
     } catch (err) {
@@ -207,17 +246,46 @@ export default function PdfView({ files, deviceName, pageInfo, busy, setBusy, on
               ? <div style={{ color: '#9ca3af', fontSize: 13 }}>Generando vista previa…</div>
               : <canvas ref={previewRef} style={{ maxWidth: '100%', maxHeight: '48vh', background: '#fff', boxShadow: '0 2px 10px rgba(0,0,0,.5)' }} />}
         </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>
-          {pageCount > 1 && (
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'center', fontSize: 12, flexWrap: 'wrap' }}>
+          {paginasVista.length > 1 && (
             <>
-              <button style={navBtn} disabled={previewPage <= 1} onClick={() => setPreviewPage((p) => Math.max(1, p - 1))}>◀</button>
-              <span>Página {previewPage}{pageCount ? ` de ${pageCount}` : ''}</span>
-              <button style={navBtn} disabled={pageCount && previewPage >= pageCount} onClick={() => setPreviewPage((p) => (pageCount ? Math.min(pageCount, p + 1) : p + 1))}>▶</button>
+              <button style={navBtn} disabled={posVista <= 0} onClick={() => irVista(-1)}>◀</button>
+              <span>
+                Página {previewPage}{pageCount ? ` de ${pageCount}` : ''}
+                {pagesMode !== 'current' && paginasVista.length < pageCount && (
+                  <span style={{ opacity: 0.7 }}> · {posVista + 1}ª de {paginasVista.length} a imprimir</span>
+                )}
+              </span>
+              <button style={navBtn} disabled={posVista < 0 || posVista >= paginasVista.length - 1} onClick={() => irVista(1)}>▶</button>
             </>
           )}
           {previewInfo && <span style={{ opacity: 0.7 }}>Hoja del PDF: {Math.round(previewInfo.wMm)}×{Math.round(previewInfo.hMm)} mm</span>}
           {scaleShownPct != null && <span style={{ opacity: 0.7 }}>Escala: {scaleShownPct}%</span>}
         </div>
+
+        {medidas?.cortes.hay && (
+          <div style={cutBox}>
+            <b>La impresora no llega al borde de la hoja.</b> A esta hoja no le entra
+            todo el diseño: lo rojo de la vista previa no se imprime.
+            <div style={{ marginTop: 4 }}>
+              Diseño {mm1(medidas.twMm)}×{mm1(medidas.thMm)} mm · entra{' '}
+              {mm1(printWmm)}×{mm1(printHmm)} mm · se corta{' '}
+              {[
+                medidas.cortes.izq > 0.05 ? `${mm1(medidas.cortes.izq)} izq` : null,
+                medidas.cortes.der > 0.05 ? `${mm1(medidas.cortes.der)} der` : null,
+                medidas.cortes.arr > 0.05 ? `${mm1(medidas.cortes.arr)} arriba` : null,
+                medidas.cortes.aba > 0.05 ? `${mm1(medidas.cortes.aba)} abajo` : null,
+              ].filter(Boolean).join(' · ')} mm.
+            </div>
+            {sizeMode !== 'fit' && (
+              <div style={{ marginTop: 4 }}>
+                Para que entre todo, elegí <b>Ajustar</b> (sale al {medidas.ew > 0
+                  ? Math.round(Math.min(printWmm / medidas.ew, printHmm / medidas.eh) * 100) : 100}%)
+                o usá una hoja más grande.
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Controles */}
@@ -230,6 +298,18 @@ export default function PdfView({ files, deviceName, pageInfo, busy, setBusy, on
           {pagesMode === 'range' && (
             <input value={rangeStr} onChange={(e) => setRangeStr(e.target.value)} placeholder="ej. 1-3,5" disabled={busy} style={{ ...numInput, width: '100%', marginTop: 4 }} />
           )}
+          {pagesMode !== 'current' && (
+            <select value={subset} onChange={(e) => setSubset(e.target.value)} disabled={busy}
+              title="Para hacer doble faz a mano: primero las impares, después las pares."
+              style={{ ...numInput, width: '100%', marginTop: 6 }}>
+              {SUBSETS.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+            </select>
+          )}
+          <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>
+            {paginasElegidas.length
+              ? `Se imprimen ${paginasElegidas.length} ${paginasElegidas.length === 1 ? 'página' : 'páginas'}.`
+              : 'No queda ninguna página con esta selección.'}
+          </div>
         </div>
 
         <div>
@@ -267,12 +347,17 @@ export default function PdfView({ files, deviceName, pageInfo, busy, setBusy, on
 
         <div style={{ flex: 1 }} />
         {toast && <div style={{ fontSize: 12, color: '#fca5a5' }}>{toast}</div>}
-        <button style={printBtn} onClick={doPrint} disabled={busy || !deviceName}>
+        {sent && (
+          <div style={{ fontSize: 12, color: '#86efac' }}>
+            ✓ {sent} La ventana queda abierta para mandar otra tanda.
+          </div>
+        )}
+        <button style={printBtn} onClick={doPrint} disabled={busy || !deviceName || !paginasElegidas.length}>
           {busy ? 'Imprimiendo…' : 'Imprimir'}
         </button>
         <div style={{ display: 'flex', gap: 8 }}>
-          {files.length > 1 && <button style={cancelBtn} onClick={nextPdf} disabled={busy}>Saltear</button>}
-          <button style={cancelBtn} onClick={onDone} disabled={busy}>{files.length > 1 ? 'Cancelar todo' : 'Cancelar'}</button>
+          {idx + 1 < files.length && <button style={cancelBtn} onClick={nextPdf} disabled={busy}>Siguiente PDF ▶</button>}
+          <button style={cancelBtn} onClick={onDone} disabled={busy}>Cerrar</button>
         </div>
       </div>
     </div>
@@ -282,6 +367,10 @@ export default function PdfView({ files, deviceName, pageInfo, busy, setBusy, on
 const previewBox = {
   flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
   background: '#15181d', borderRadius: 8, padding: 10,
+};
+const cutBox = {
+  background: '#3b1a1a', color: '#fecaca', border: '1px solid #7f1d1d',
+  borderRadius: 6, padding: '8px 10px', fontSize: 12, lineHeight: 1.4,
 };
 const label = { fontSize: 12, opacity: 0.7, marginBottom: 4 };
 const radio = { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, padding: '2px 0' };

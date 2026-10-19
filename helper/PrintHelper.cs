@@ -1049,8 +1049,16 @@ namespace PrintLayoutHelper {
                 float hMm = PageH[_pageIdx] > 0 ? PageH[_pageIdx] : _heightMm;
                 float targetW = wMm / 25.4f * 100f;
                 float targetH = hMm / 25.4f * 100f;
-                float drawX = e.PageBounds.Left + (e.PageBounds.Width - targetW) / 2f;
-                float drawY = e.PageBounds.Top + (e.PageBounds.Height - targetH) / 2f;
+                // Con OriginAtMargins=false el origen del Graphics esta en la
+                // esquina del AREA IMPRIMIBLE, no en la de la hoja. Si no
+                // restamos el margen duro, el diseno queda corrido hacia
+                // abajo-derecha y lo que no entra se corta TODO de un lado.
+                // Restandolo queda centrado en la hoja FISICA, igual que la
+                // vista previa y que el camino CreateDC.
+                float hardX = e.PageSettings.HardMarginX;
+                float hardY = e.PageSettings.HardMarginY;
+                float drawX = e.PageBounds.Left + (e.PageBounds.Width - targetW) / 2f - hardX;
+                float drawY = e.PageBounds.Top + (e.PageBounds.Height - targetH) / 2f - hardY;
                 e.Graphics.DrawImage(img, drawX, drawY, targetW, targetH);
             }
             _pageIdx++;
