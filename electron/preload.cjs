@@ -114,8 +114,6 @@ contextBridge.exposeInMainWorld('printlayout', {
       ipcRenderer.invoke('print:has-printer-config', { deviceName }),
     printerConfigInfo: (deviceName) =>
       ipcRenderer.invoke('print:printer-config-info', { deviceName }),
-    applyPrinterConfigToWindows: (deviceName) =>
-      ipcRenderer.invoke('print:apply-config-to-windows', { deviceName }),
     extractImages: (bytes) => ipcRenderer.invoke('pdf:extract-images', { bytes }),
     renderRegions: (bytes, dpi) => ipcRenderer.invoke('pdf:render-regions', { bytes, dpi }),
     readExtractedImage: (filePath) =>

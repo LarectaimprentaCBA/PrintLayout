@@ -89,8 +89,6 @@ export default function PrintModal({
   // y la de Windows (la que agarran Corel y los demás).
   const [cfgInfo, setCfgInfo] = useState(null); // {app, windows, difiere, tieneApp} | null
   const [cfgTick, setCfgTick] = useState(0);
-  const [alsoWindows, setAlsoWindows] = useState(false);
-  const [applyMsg, setApplyMsg] = useState(null); // {kind, text}
 
   // Al abrir, bajar cambios de calibración en segundo plano (no bloquea: usa lo que ya
   // hay y actualiza el cartel para la próxima). Si la red falla, no pasa nada.
@@ -187,7 +185,7 @@ export default function PrintModal({
     if (!open || !deviceName || !warnDriverColor) { setCfgInfo(null); return undefined; }
     let cancelled = false;
     setCfgInfo(null);
-    setApplyMsg(null);
+
     (async () => {
       try {
         const r = await window.printlayout.pdf.printerConfigInfo?.(deviceName);
@@ -199,7 +197,6 @@ export default function PrintModal({
     return () => { cancelled = true; };
   }, [open, deviceName, cfgTick, warnDriverColor]);
 
-  useEffect(() => { if (open) { setAlsoWindows(false); setApplyMsg(null); } }, [open]);
 
   // Indices 0-based de las paginas que se van a imprimir, segun el modo.
   // null = error de parseo del rango.
@@ -242,37 +239,6 @@ export default function PrintModal({
     });
   };
 
-  // Escribe la configuración de PrintLayout como predeterminada de Windows, así
-  // Corel y los demás imprimen con lo mismo. Si Windows no deja, lo dice claro
-  // y no rompe nada.
-  const applyToWindows = async () => {
-    if (!deviceName) return false;
-    try {
-      const r = await window.printlayout.pdf.applyPrinterConfigToWindows?.(deviceName);
-      if (r?.ok) {
-        setApplyMsg({ kind: 'ok', text: 'Aplicada también a Windows (Corel y los demás programas).' });
-        setCfgTick((t) => t + 1);
-        return true;
-      }
-      setApplyMsg({ kind: 'error', text: r?.error || 'No se pudo aplicar a Windows.' });
-      return false;
-    } catch (err) {
-      setApplyMsg({ kind: 'error', text: err.message });
-      return false;
-    }
-  };
-
-  const handleAlsoWindows = async (checked) => {
-    setAlsoWindows(checked);
-    setApplyMsg(null);
-    if (!checked) return;
-    if (!hasCustomPrefs) {
-      setApplyMsg({ kind: 'info', text: 'Tocá “Configurar impresora”: lo que elijas se va a aplicar también a Windows.' });
-      return;
-    }
-    await applyToWindows();
-  };
-
   const handleOpenConfig = async () => {
     if (!deviceName || openingConfig) return;
     setOpeningConfig(true);
@@ -282,7 +248,7 @@ export default function PrintModal({
       if (r?.configured) {
         setHasCustomPrefs(true);
         setCfgTick((t) => t + 1);
-        if (alsoWindows) await applyToWindows();
+
       } else if (r?.canceled) {
         // Cancelo el dialog — no hacemos nada.
       } else if (!r?.ok) {
@@ -299,7 +265,7 @@ export default function PrintModal({
     if (!deviceName) return;
     try {
       const r = await window.printlayout.pdf.resetPrinterConfig(deviceName);
-      if (r?.ok) { setHasCustomPrefs(false); setAlsoWindows(false); setCfgTick((t) => t + 1); }
+      if (r?.ok) { setHasCustomPrefs(false); setCfgTick((t) => t + 1); }
     } catch (err) {
       setError(err.message);
     }
@@ -373,30 +339,6 @@ export default function PrintModal({
                 >
                   Resetear
                 </button>
-              </div>
-            )}
-            <label className="mt-1.5 flex cursor-pointer items-start gap-2 rounded border border-ink-700 bg-ink-950/40 px-2 py-1.5">
-              <input
-                type="checkbox"
-                checked={alsoWindows}
-                onChange={(e) => handleAlsoWindows(e.target.checked)}
-                disabled={!deviceName}
-                className="mt-0.5 accent-accent-600"
-              />
-              <span>
-                <span className="block text-ink-200">Usar también en los demás programas (Corel, PDF…)</span>
-                <span className="block text-[10px] leading-snug text-ink-500">
-                  Deja esta configuración como la predeterminada de Windows para
-                  esta impresora. Sin esto, Corel imprime con lo que tenga Windows.
-                </span>
-              </span>
-            </label>
-            {applyMsg && (
-              <div className={'mt-1.5 rounded border px-2 py-1 text-[11px] ' + (
-                applyMsg.kind === 'error' ? 'border-red-800 bg-red-950/40 text-red-300'
-                  : applyMsg.kind === 'ok' ? 'border-green-700/40 bg-green-950/30 text-green-300'
-                    : 'border-ink-700 bg-ink-950/40 text-ink-300')}>
-                {applyMsg.text}
               </div>
             )}
 

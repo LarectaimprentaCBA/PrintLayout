@@ -1915,24 +1915,6 @@ ipcMain.handle('print:printer-config-info', async (_evt, payload) => {
   } catch (err) { return { ok: false, error: err.message }; }
 });
 
-// Aplica la configuración que PrintLayout tiene guardada para esa impresora como
-// PREDETERMINADA de Windows, para que valga también en Corel y los demás programas.
-// Sin esto, la carta de calibración y el trabajo real pueden salir con papel y
-// calidad distintos, y entonces el perfil no corresponde.
-ipcMain.handle('print:apply-config-to-windows', async (_evt, payload) => {
-  const { deviceName } = payload ?? {};
-  if (!deviceName) return { ok: false, error: 'Falta el nombre de la impresora.' };
-  const dmFile = devmodeFilePath(deviceName);
-  if (!dmFile || !fs.existsSync(dmFile)) {
-    return { ok: false, error: 'Todavía no configuraste esta impresora en PrintLayout. Tocá “Configurar impresora” primero.' };
-  }
-  const r = await runHelperKV(['MODE=setdefault', `DEVICE=${deviceName}`, `DEVMODE_FILE=${dmFile}`]);
-  if (!r.ok) {
-    return { ok: false, error: `No se pudo aplicar a Windows: pedí que lo haga un usuario administrador. (${r.error})` };
-  }
-  return { ok: true, level: Number(r.kv.LEVEL) || 9 };
-});
-
 ipcMain.handle('print:pdf', async (_evt, payload) => {
   const {
     images,
