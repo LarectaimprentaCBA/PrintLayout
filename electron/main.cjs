@@ -155,7 +155,11 @@ ipcMain.on('app:dirty-count', (_evt, n) => {
 // la primera que muestre/enfoque su ventana (no abre una segunda).
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
-  app.quit();
+  // Salimos YA, sin eventos. app.quit() no alcanza: es asincrónico, y como esta
+  // app sobrevive a window-all-closed (vive en la bandeja), la copia de más
+  // llegaba igual a correr su whenReady. El argv ya viajó a la primera
+  // instancia adentro de requestSingleInstanceLock(), así que no se pierde nada.
+  app.exit(0);
 } else {
   // Segunda instancia (doble clic en un .pljob mientras la app ya corre): Windows
   // arranca una copia nueva con el archivo en argv; esa copia no obtiene el lock y
@@ -167,6 +171,9 @@ if (!gotSingleInstanceLock) {
     if (toPrint.length) { quickPrint.enqueue(toPrint); return; }
     showMainWindow();
     const p = pljobPathFromArgv(argv);
+    // Queda anotado: si alguna vez el doble clic "no hace nada", acá se ve si
+    // llegó el aviso y con qué ruta.
+    appendDebugLog(`[open] segunda instancia: ${p ? `.pljob="${p}"` : 'sin .pljob'} argv=${JSON.stringify(argv)}`);
     if (p) openJobFileInRenderer(p);
   });
 }

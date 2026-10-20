@@ -1301,8 +1301,21 @@ export default function App() {
   // main reenvía). Mismo armado que handleOpenJobFromFile pero sin file picker.
   const openJobFromPath = async (filePath) => {
     if (!filePath) return;
+    dbg(`[open] doble clic en .pljob path="${filePath}" | tabsAbiertas=${tabs.length} activa=${activeTabId}`);
+    // Si ese MISMO archivo ya está abierto, no armamos una pestaña repetida: te
+    // llevamos a la que ya tenías. Dos pestañas apuntando al mismo .pljob es un
+    // problema real — al guardar en una se pisa lo que hiciste en la otra.
+    const mismaRuta = (a, b) => String(a || '').toLowerCase() === String(b || '').toLowerCase();
+    const yaAbierta = tabs.find((t) => mismaRuta(t.jobPath, filePath));
+    if (yaAbierta) {
+      dbg(`[open] ya estaba abierto → voy a la pestaña ${yaAbierta.id}`);
+      switchTab(yaAbierta.id);
+      setToast({ kind: 'info', text: `“${yaAbierta.name || 'Ese trabajo'}” ya estaba abierto.` });
+      return;
+    }
     const r = await window.printlayout.jobs.loadFromPath(filePath);
     if (!r?.ok || !r.job?.template) {
+      dbg(`[open] FALLO al leer el .pljob: ${r?.error ?? 'archivo inválido'}`);
       setToast({ kind: 'error', text: `No se pudo abrir: ${r?.error ?? 'archivo inválido'}` });
       return;
     }
