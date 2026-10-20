@@ -21,11 +21,20 @@ const qrcutConfig = require('../qrcut/config-store.cjs');
 const PHOTO_EXTS = ['.jpg', '.jpeg', '.png', '.heic', '.heif'];
 
 let deps = null;         // { resolvePrintHelper, devmodeFilePath, ghostscriptBin, GHOSTSCRIPT_DIR, appendDebugLog, isDev }
-let win = null;          // BrowserWindow de la ventana de impresión
+// Una ventana POR PEDIDO: si mandás a imprimir otro archivo mientras ya tenés
+// uno abierto, se abre otra ventana y podés trabajar con las dos. Antes había
+// una sola y el archivo nuevo quedaba en una fila detrás del viejo.
+const wins = new Set();          // ventanas de impresión abiertas (en orden)
+const payloadPorWin = new WeakMap(); // ventana → { photos, pdfs, unsupported }
+const MAX_VENTANAS = 8;          // tope: más que esto es llenar la pantalla
 let coalesceBuffer = []; // archivos acumulados mientras Explorer los va soltando
 let coalesceTimer = null;
-let deliveredPayload = null; // { photos, pdfs, unsupported } listo para el renderer
 const allowedPaths = new Set(); // rutas que el renderer puede leer (seguridad)
+
+function ventanasVivas() {
+  for (const w of [...wins]) if (!w || w.isDestroyed()) wins.delete(w);
+  return [...wins];
+}
 
 // ── argv ────────────────────────────────────────────────────────────────────
 // Extrae las rutas de archivos existentes que siguen a `--imprimir`. Si no está
@@ -66,24 +75,49 @@ function boundsFile() {
 function loadBounds() {
   try { return JSON.parse(fs.readFileSync(boundsFile(), 'utf-8')); } catch (_) { return null; }
 }
-function saveBounds() {
+function saveBounds(w) {
   try {
-    if (!win || win.isDestroyed()) return;
-    const b = win.getBounds();
-    fs.writeFileSync(boundsFile(), JSON.stringify(b), 'utf-8');
+    if (!w || w.isDestroyed()) return;
+    fs.writeFileSync(boundsFile(), JSON.stringify(w.getBounds()), 'utf-8');
   } catch (_) { /* best-effort */ }
 }
 
-function createWindow() {
+// Título con el archivo adentro: con varias ventanas abiertas hay que poder
+// distinguirlas en la barra de tareas.
+function tituloDe(payload) {
+  const p = payload || {};
+  const pdfs = p.pdfs || [], fotos = p.photos || [];
+  if (pdfs.length === 1 && !fotos.length) return `Imprimir — ${pdfs[0].name}`;
+  if (fotos.length === 1 && !pdfs.length) return `Imprimir — ${fotos[0].name}`;
+  const partes = [];
+  if (fotos.length) partes.push(`${fotos.length} fotos`);
+  if (pdfs.length) partes.push(`${pdfs.length} PDF`);
+  return partes.length ? `Imprimir — ${partes.join(' + ')}` : 'Imprimir con PrintLayout';
+}
+
+function createWindow(payload) {
   const saved = loadBounds();
-  win = new BrowserWindow({
+  // Cascada: si ya hay una ventana abierta, corremos la nueva respecto de ESA
+  // (no del tamaño guardado, que la primera vez no existe) para que no queden
+  // una justo encima de la otra.
+  const vivas = ventanasVivas();
+  let x = saved?.x;
+  let y = saved?.y;
+  if (vivas.length) {
+    try {
+      const b = vivas[vivas.length - 1].getBounds();
+      x = b.x + 28;
+      y = b.y + 28;
+    } catch (_) { /* si no se puede leer, que la centre Windows */ }
+  }
+  const win = new BrowserWindow({
     width: saved?.width || 760,
     height: saved?.height || 820,
-    x: saved?.x, y: saved?.y,
+    x, y,
     minWidth: 560,
     minHeight: 620,
     backgroundColor: '#0b0d10',
-    title: 'Imprimir con PrintLayout',
+    title: tituloDe(payload),
     icon: deps.appIconImage ? deps.appIconImage() : undefined,
     show: false,
     // Ventana INDEPENDIENTE: sin parent, así no arrastra ni bloquea la principal.
@@ -101,9 +135,15 @@ function createWindow() {
     win.loadFile(path.join(__dirname, '..', '..', 'dist', 'quickprint.html'));
   }
 
+  // El <title> de la página pisaría el nuestro: lo dejamos como está para que
+  // cada ventana siga mostrando su archivo.
+  win.on('page-title-updated', (e) => e.preventDefault());
+  payloadPorWin.set(win, payload);
+  wins.add(win);
   win.once('ready-to-show', () => { win.show(); win.focus(); });
-  win.on('close', saveBounds);
-  win.on('closed', () => { win = null; });
+  win.on('close', () => saveBounds(win));
+  win.on('closed', () => { wins.delete(win); });
+  return win;
 }
 
 // Abre la ventana (o la actualiza si ya está abierta) con la selección coalescida.
@@ -115,19 +155,28 @@ function flushCoalesce() {
   for (const f of files) allowedPaths.add(f);
 
   const payload = classify(files);
-  if (!win || win.isDestroyed()) {
-    deliveredPayload = payload;
-    createWindow();
-  } else {
-    // Ya hay una ventana: le sumamos los archivos y la traemos al frente.
-    deliveredPayload = payload; // por si el renderer aún no pidió get-files
+  const vivas = ventanasVivas();
+
+  // Pasado el tope, en vez de tapar la pantalla de ventanas le sumamos los
+  // archivos a la última y la traemos al frente (lo que hacía siempre).
+  if (vivas.length >= MAX_VENTANAS) {
+    const w = vivas[vivas.length - 1];
+    const prev = payloadPorWin.get(w) || { photos: [], pdfs: [], unsupported: [] };
+    payloadPorWin.set(w, {
+      photos: [...prev.photos, ...payload.photos],
+      pdfs: [...prev.pdfs, ...payload.pdfs],
+      unsupported: [...prev.unsupported, ...payload.unsupported],
+    });
     try {
-      if (win.isMinimized()) win.restore();
-      win.show();
-      win.focus();
-      win.webContents.send('quickprint:files-added', payload);
+      if (w.isMinimized()) w.restore();
+      w.show();
+      w.focus();
+      w.webContents.send('quickprint:files-added', payload);
     } catch (_) { /* noop */ }
+    return;
   }
+
+  createWindow(payload);
 }
 
 function enqueue(files) {
@@ -421,9 +470,10 @@ async function renderPdfPage(pdfPath, pageIndex, dpi) {
 
 // ── IPC ───────────────────────────────────────────────────────────────────
 function registerIpc() {
-  ipcMain.handle('quickprint:get-files', () => {
-    const p = deliveredPayload || { photos: [], pdfs: [], unsupported: [] };
-    return p;
+  // Cada ventana pide LO SUYO: se resuelve por quién manda el mensaje.
+  ipcMain.handle('quickprint:get-files', (evt) => {
+    const w = BrowserWindow.fromWebContents(evt.sender);
+    return (w && payloadPorWin.get(w)) || { photos: [], pdfs: [], unsupported: [] };
   });
   ipcMain.handle('quickprint:read-file', (_evt, filePath) => {
     try {
@@ -444,7 +494,13 @@ function registerIpc() {
   ipcMain.handle('quickprint:photos-print', (_evt, { id, ...opts }) => photosPrint(id, opts));
   ipcMain.handle('quickprint:photos-cancel', (_evt, { id }) => photosCancel(id));
   ipcMain.handle('quickprint:print-pdf', (_evt, payload) => printPdf(payload));
-  ipcMain.handle('quickprint:close', () => { try { if (win && !win.isDestroyed()) win.close(); } catch (_) {} });
+  // Cerrar = cerrar LA ventana que lo pidió, no "la" ventana.
+  ipcMain.handle('quickprint:close', (evt) => {
+    try {
+      const w = BrowserWindow.fromWebContents(evt.sender);
+      if (w && !w.isDestroyed()) w.close();
+    } catch (_) { /* noop */ }
+  });
 }
 
 function init(d) {
