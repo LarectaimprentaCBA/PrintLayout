@@ -381,6 +381,26 @@ export default function ColorCalModal({ open, onClose }) {
     setBusy('');
   };
 
+  // Abre Preferencias del driver para esa impresora, desde el asistente mismo.
+  // Lo que se elija queda guardado para PrintLayout y es con lo que sale la carta.
+  const configurarImpresora = async (which) => {
+    const dev = which === 'ref' ? refDev : correctDev;
+    if (!dev) return;
+    setBusy(which === 'ref' ? 'cfg-ref' : 'cfg-correct');
+    try {
+      const r = await window.printlayout.pdf.openPrinterConfig(dev);
+      if (r?.configured) {
+        await leerConfig(which, dev);
+        notify('ok', 'Configuración guardada para ' + dev + '.');
+      } else if (!r?.canceled && !r?.ok) {
+        notify('error', r?.error || 'No se pudo abrir la configuración.');
+      }
+    } catch (err) {
+      notify('error', err.message);
+    }
+    setBusy('');
+  };
+
   // Lee del driver qué papel/calidad/gestión de color tiene hoy esa impresora.
   const leerConfig = async (which, dev) => {
     try {
@@ -519,7 +539,8 @@ export default function ColorCalModal({ open, onClose }) {
               step={step} setStep={setStep} printers={printers} busy={busy}
               correctDev={correctDev} setCorrectDev={setCorrectDev} refDev={refDev} setRefDev={setRefDev}
               paperName={paperName} setPaperName={setPaperName}
-              onImprimirCarta={abrirImpresionCarta} printedRef={printedRef} printedCor={printedCor}
+              onImprimirCarta={abrirImpresionCarta} onConfigurar={configurarImpresora}
+              printedRef={printedRef} printedCor={printedCor}
               cfgRef={cfgRef} cfgCorrect={cfgCorrect}
               scanA={scanA} scanB={scanB} onFiles={onFiles} fileRef={fileRef}
               runAnalyze={runAnalyze} analysis={analysis} activate={activate}
@@ -763,33 +784,28 @@ function ListView({ cals, printers, manualIp, canShare, busy, nameForIp, printer
   );
 }
 
-// Un botón por carta, con la impresora a la que va y la configuración que tiene
-// hoy. Si el driver va a "mejorar" el color, la medición queda mal: por eso el
-// aviso en ámbar antes de imprimir y no después.
-function CartaBoton({ etiqueta, dev, hecho, cfg, disabled, onClick }) {
-  const dato = (v) => (v && String(v).trim() ? v : '—');
+// Un botón por carta, con la impresora a la que va y un atajo para cambiar cómo
+// se imprime. El único dato que mostramos es el aviso en ámbar, y solo cuando
+// hay un problema real: si el driver "mejora" el color, la medición queda mal.
+function CartaBoton({ etiqueta, dev, hecho, cfg, disabled, onClick, onConfigurar, configurando }) {
   return (
     <div className="rounded border border-ink-700 bg-ink-950/40 p-2">
       <div className="flex flex-wrap items-center gap-2">
         <button onClick={onClick} disabled={disabled} className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-500 disabled:opacity-50">
           {etiqueta}
         </button>
-        <span className="truncate text-[11px] text-ink-400" title={dev}>{dev || '—'}</span>
+        <span className="min-w-0 flex-1 truncate text-[11px] text-ink-400" title={dev}>{dev || '—'}</span>
         {hecho && <span className="text-[11px] text-green-300">✓ enviada</span>}
+        <button onClick={onConfigurar} disabled={disabled || configurando || !dev}
+          title="Papel, calidad, bandeja y gestión de color de esta impresora"
+          className="shrink-0 rounded border border-ink-700 px-2 py-1 text-[11px] text-ink-200 hover:bg-ink-800 disabled:opacity-50">
+          {configurando ? 'Abriendo…' : 'Configurar impresora'}
+        </button>
       </div>
-      {cfg && (
-        <div className="mt-1 text-[11px] text-ink-400">
-          Papel <b className="text-ink-200">{dato(cfg.paper)}</b>
-          {' · '}Tipo <b className="text-ink-200">{dato(cfg.media)}</b>
-          {' · '}Calidad <b className="text-ink-200">{dato(cfg.quality)}</b>
-          {' · '}Color <b className={cfg.icmOn === true ? 'text-amber-300' : 'text-ink-200'}>{dato(cfg.icm)}</b>
-        </div>
-      )}
       {cfg && cfg.icmOn === true && (
         <div className="mt-1 rounded border border-amber-700/60 bg-amber-950/30 px-2 py-1 text-[11px] text-amber-200">
-          Esta impresora tiene la <b>gestión de color del driver encendida</b>. La carta
-          tiene que salir <b>sin</b> gestión de color o la medición queda mal: apagala
-          desde “Configurar impresora”, en el modal que se abre con el botón de arriba.
+          Tiene la <b>gestión de color del driver encendida</b>: la carta tiene que salir
+          <b> sin</b> gestión de color o la medición queda mal. Apagala en “Configurar impresora”.
         </div>
       )}
     </div>
@@ -799,7 +815,7 @@ function CartaBoton({ etiqueta, dev, hecho, cfg, disabled, onClick }) {
 function WizardView(props) {
   const {
     step, setStep, printers, busy, correctDev, setCorrectDev, refDev, setRefDev,
-    paperName, setPaperName, onImprimirCarta, printedRef, printedCor, cfgRef, cfgCorrect,
+    paperName, setPaperName, onImprimirCarta, onConfigurar, printedRef, printedCor, cfgRef, cfgCorrect,
     scanA, scanB, onFiles, fileRef, runAnalyze, analysis, activate, onCancel, ipOf,
   } = props;
   const realPrinters = printers.filter((p) => !/XPS|PDF|OneNote|Fax/i.test(p.name));
@@ -868,10 +884,12 @@ function WizardView(props) {
           <CartaBoton
             etiqueta="Imprimir carta de referencia" dev={refDev} hecho={printedRef}
             cfg={cfgRef} disabled={busy === 'print'} onClick={() => onImprimirCarta('ref')}
+            onConfigurar={() => onConfigurar('ref')} configurando={busy === 'cfg-ref'}
           />
           <CartaBoton
             etiqueta="Imprimir carta a corregir" dev={correctDev} hecho={printedCor}
             cfg={cfgCorrect} disabled={busy === 'print'} onClick={() => onImprimirCarta('correct')}
+            onConfigurar={() => onConfigurar('correct')} configurando={busy === 'cfg-correct'}
           />
 
           <div className="flex justify-between">

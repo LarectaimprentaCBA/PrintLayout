@@ -40,37 +40,6 @@ function parseRange(text, totalPages) {
   return [...result].sort((a, b) => a - b);
 }
 
-// Muestra la configuración que está activa HOY para la impresora, leída del
-// driver. "—" = el driver no lo declara en el DEVMODE estándar (muchos lo
-// guardan en su parte privada): preferimos decir que no lo sabemos antes que
-// inventar un valor.
-function PrinterConfigPanel({ info }) {
-  if (!info) return null;
-  const { app: cfgApp, windows, difiere, tieneApp } = info;
-  const activa = tieneApp && cfgApp ? cfgApp : windows;
-  if (!activa) return null;
-  const dato = (v) => (v && String(v).trim() ? v : '—');
-  return (
-    <div className="mt-1.5 rounded border border-ink-700 bg-ink-950/40 px-2 py-1.5 text-[11px] text-ink-300">
-      <div className="text-ink-400">
-        {tieneApp && cfgApp ? 'Configuración que usa PrintLayout' : 'Configuración de Windows'}:
-      </div>
-      <div className="mt-0.5">
-        Papel <b className="text-ink-200">{dato(activa.paper)}</b>
-        {' · '}Tipo <b className="text-ink-200">{dato(activa.media)}</b>
-        {' · '}Calidad <b className="text-ink-200">{dato(activa.quality)}</b>
-        {' · '}Color <b className={activa.icmOn === true ? 'text-amber-300' : 'text-ink-200'}>{dato(activa.icm)}</b>
-      </div>
-      {difiere && windows && (
-        <div className="mt-1 rounded border border-amber-700/50 bg-amber-950/20 px-1.5 py-1 text-amber-200">
-          Windows tiene otra: papel {dato(windows.paper)} · tipo {dato(windows.media)} ·
-          calidad {dato(windows.quality)} · color {dato(windows.icm)}. Corel va a
-          imprimir con <b>esa</b>, no con la de PrintLayout.
-        </div>
-      )}
-    </div>
-  );
-}
 
 export default function PrintModal({
   open,
@@ -211,11 +180,11 @@ export default function PrintModal({
     return () => { cancelled = true; };
   }, [open, deviceName]);
 
-  // Configuración real del driver (papel, calidad, gestión de color), para
-  // PrintLayout y para Windows. Tarda un poco: abre la impresora, así que va en
-  // su propio efecto y no bloquea nada.
+  // Gestión de color del driver. Solo se lee cuando hace falta avisar (la
+  // calibración): en una impresión normal no mostramos nada de esto, así que
+  // tampoco gastamos el tiempo de abrir la impresora para preguntárselo.
   useEffect(() => {
-    if (!open || !deviceName) { setCfgInfo(null); return undefined; }
+    if (!open || !deviceName || !warnDriverColor) { setCfgInfo(null); return undefined; }
     let cancelled = false;
     setCfgInfo(null);
     setApplyMsg(null);
@@ -228,7 +197,7 @@ export default function PrintModal({
       }
     })();
     return () => { cancelled = true; };
-  }, [open, deviceName, cfgTick]);
+  }, [open, deviceName, cfgTick, warnDriverColor]);
 
   useEffect(() => { if (open) { setAlsoWindows(false); setApplyMsg(null); } }, [open]);
 
@@ -430,8 +399,6 @@ export default function PrintModal({
                 {applyMsg.text}
               </div>
             )}
-
-            <PrinterConfigPanel info={cfgInfo} />
 
             {warnDriverColor && cfgInfo?.app?.icmOn === true && (
               <div className="mt-1.5 rounded border border-amber-700/60 bg-amber-950/30 px-2 py-1 text-[11px] text-amber-200">
