@@ -234,7 +234,7 @@ export default function PdfView({ files, deviceName, pageInfo, busy, setBusy, on
   return (
     <div style={{ display: 'flex', gap: 16, flex: 1, minHeight: 0 }}>
       {/* Preview */}
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div style={{ fontSize: 13 }}>
           {files.length > 1 ? `PDF ${idx + 1} de ${files.length} — ` : ''}
           <strong>{current.name}</strong>
@@ -244,7 +244,7 @@ export default function PdfView({ files, deviceName, pageInfo, busy, setBusy, on
             ? <div style={{ color: '#fca5a5', fontSize: 13, textAlign: 'center', padding: 20 }}>{previewErr}</div>
             : !pageImg
               ? <div style={{ color: '#9ca3af', fontSize: 13 }}>Generando vista previa…</div>
-              : <canvas ref={previewRef} style={{ maxWidth: '100%', maxHeight: '48vh', background: '#fff', boxShadow: '0 2px 10px rgba(0,0,0,.5)' }} />}
+              : <canvas ref={previewRef} style={{ maxWidth: '100%', maxHeight: '100%', background: '#fff', boxShadow: '0 2px 10px rgba(0,0,0,.5)' }} />}
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'center', fontSize: 12, flexWrap: 'wrap' }}>
           {paginasVista.length > 1 && (

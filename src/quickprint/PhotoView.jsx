@@ -131,7 +131,7 @@ export default function PhotoView({ files, deviceName, pageInfo, busy, setBusy, 
   return (
     <div style={{ display: 'flex', gap: 16, flex: 1, minHeight: 0 }}>
       {/* Preview */}
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
         {loading ? (
           <div style={{ opacity: 0.8 }}>Preparando fotos… {progress.done}/{progress.total}</div>
         ) : (
@@ -143,7 +143,7 @@ export default function PhotoView({ files, deviceName, pageInfo, busy, setBusy, 
         <div style={previewBox}>
           <canvas
             ref={previewRef}
-            style={{ maxWidth: '100%', maxHeight: '52vh', aspectRatio: String(previewAspect), background: '#fff', boxShadow: '0 2px 10px rgba(0,0,0,.5)' }}
+            style={{ maxWidth: '100%', maxHeight: '100%', aspectRatio: String(previewAspect), background: '#fff', boxShadow: '0 2px 10px rgba(0,0,0,.5)' }}
           />
         </div>
         {sheets.length > 1 && (

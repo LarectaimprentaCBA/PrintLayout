@@ -135,8 +135,10 @@ export default function QuickPrintApp() {
 }
 
 const wrap = {
+  // height (no minHeight): la vista previa crece hasta llenar la ventana, y
+  // para eso su alto tiene que estar definido desde arriba de todo.
   display: 'flex', flexDirection: 'column', gap: 12,
-  padding: 16, minHeight: '100vh', boxSizing: 'border-box',
+  padding: 16, height: '100vh', boxSizing: 'border-box',
   background: '#0b0d10', color: '#e5e7eb',
   fontFamily: 'system-ui, Segoe UI, sans-serif',
 };
