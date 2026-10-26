@@ -384,7 +384,34 @@ function photosCancel(id) {
 }
 
 // sizeMode: 'fit' | 'actual' | 'fitlarge' | 'custom'. orientation: 'auto'|'vertical'|'horizontal'.
-async function printPdf({ path: pdfPath, pages, dpi, sizeMode, scalePct, orientation, deviceName, copies, docName }) {
+// collate (intercalar): true = juegos completos (1,2 · 1,2 · …), que es lo de
+// siempre y lo resuelve el driver con COPIES. false = todas las copias de cada
+// hoja juntas (1,1,1… y después 2,2,2…); eso lo armamos NOSOTROS repitiendo las
+// hojas y mandando COPIES=1, porque cada driver intercala a su manera y así sale
+// igual en todas las máquinas.
+/**
+ * Decide en qué orden salen las hojas y cuántas copias le pedimos al driver.
+ *
+ * Intercalado (lo de siempre): el driver repite el documento entero, así que le
+ * mandamos las hojas una vez y COPIES=N.
+ * Sin intercalar: repetimos cada hoja N veces y le pedimos UNA copia. Lo
+ * armamos nosotros porque cada driver intercala a su manera; así sale igual en
+ * todas las máquinas. Las hojas repetidas apuntan al MISMO PNG, de modo que no
+ * se rasteriza ni se corrige el color de más (ver `corregidas` en print-core).
+ *
+ * @returns {{paginas:number[], copias:number}}
+ */
+function ordenarCopias(paginas, copies, collate) {
+  const n = Math.max(1, Math.floor(Number(copies) || 1));
+  if (collate === false && n > 1) {
+    const out = [];
+    for (const p of paginas) for (let i = 0; i < n; i++) out.push(p);
+    return { paginas: out, copias: 1 };
+  }
+  return { paginas: paginas.slice(), copias: n };
+}
+
+async function printPdf({ path: pdfPath, pages, dpi, sizeMode, scalePct, orientation, deviceName, copies, docName, collate }) {
   if (!pdfPath || !allowedPaths.has(pdfPath)) return { ok: false, error: 'Archivo no permitido.' };
   const info = await getPageInfo(deviceName);
   if (!info.ok) return info;
@@ -393,6 +420,10 @@ async function printPdf({ path: pdfPath, pages, dpi, sizeMode, scalePct, orienta
     ? pages.filter((p) => p >= 1 && (!count || p <= count))
     : (count ? Array.from({ length: count }, (_, i) => i + 1) : null);
   if (!wanted || !wanted.length) return { ok: false, error: 'No se pudo determinar las páginas del PDF.' };
+
+  const orden = ordenarCopias(wanted, copies, collate);
+  wanted = orden.paginas;
+  const copiasAlDriver = orden.copias;
 
   const first = Math.min(...wanted), last = Math.max(...wanted);
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'printlayout-gs-'));
@@ -436,7 +467,7 @@ async function printPdf({ path: pdfPath, pages, dpi, sizeMode, scalePct, orienta
     return await printCore.runPrintJob({
       pages: jobPages,
       pageWidthMm: info.paperWmm, pageHeightMm: info.paperHmm,
-      deviceName, copies, showDialog: false, docName: withMachine(docName),
+      deviceName, copies: copiasAlDriver, showDialog: false, docName: withMachine(docName),
       helperExe: deps.resolvePrintHelper(),
       savedDevmodePath: deviceName ? deps.devmodeFilePath(deviceName) : null,
       appendDebugLog: deps.appendDebugLog,
@@ -508,4 +539,4 @@ function init(d) {
   registerIpc();
 }
 
-module.exports = { init, filesFromArgv, enqueue };
+module.exports = { init, filesFromArgv, enqueue, ordenarCopias };

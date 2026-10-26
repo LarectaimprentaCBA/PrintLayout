@@ -32,6 +32,9 @@ export default function PdfView({ files, deviceName, pageInfo, busy, setBusy, on
   const [pagesMode, setPagesMode] = useState('all'); // all|current|range
   const [rangeStr, setRangeStr] = useState('');
   const [subset, setSubset] = useState('all'); // all|odd|even
+  // Intercalar copias: true = juegos completos (1,2 · 1,2 · …), como siempre.
+  // false = todas las copias de cada hoja juntas (1,1,1… y después 2,2,2…).
+  const [collate, setCollate] = useState(true);
   const [sent, setSent] = useState(null); // aviso verde: se envió y la ventana sigue abierta
   const [sizeMode, setSizeMode] = useState('fit');
   const [scalePct, setScalePct] = useState(100);
@@ -49,7 +52,7 @@ export default function PdfView({ files, deviceName, pageInfo, busy, setBusy, on
   // Al cambiar de PDF: reset + contar páginas.
   useEffect(() => {
     setPageCount(0); setPreviewPage(1); setPreviewInfo(null); setPreviewErr('');
-    setPagesMode('all'); setRangeStr(''); setSubset('all'); setSent(null);
+    setPagesMode('all'); setRangeStr(''); setSubset('all'); setSent(null); setCollate(true);
     previewCache.current = new Map();
     if (!current) return;
     let dead = false;
@@ -214,7 +217,7 @@ export default function PdfView({ files, deviceName, pageInfo, busy, setBusy, on
         path: current.path,
         pages, dpi: 240,
         sizeMode, scalePct, orientation,
-        deviceName, copies,
+        deviceName, copies, collate,
         docName: `PDF: ${current.name}`,
       });
       setBusy(false);
@@ -343,6 +346,32 @@ export default function PdfView({ files, deviceName, pageInfo, busy, setBusy, on
             onChange={(e) => setCopies(Math.max(1, Math.min(99, parseInt(e.target.value || '1', 10))))}
             style={{ ...numInput, width: 56 }} />
         </label>
+
+        {/* Intercalar o no. Solo tiene sentido con varias hojas y más de una copia. */}
+        {copies > 1 && paginasElegidas.length > 1 && (
+          <div>
+            <div style={label}>Orden de las copias</div>
+            <label style={radio}>
+              <input type="radio" checked={collate} onChange={() => setCollate(true)} disabled={busy} />
+              <span>
+                Juegos completos
+                <span style={{ display: 'block', fontSize: 11, opacity: 0.6 }}>
+                  {paginasElegidas.slice(0, 3).join(', ')}… y otra vez, {copies} veces
+                </span>
+              </span>
+            </label>
+            <label style={radio}>
+              <input type="radio" checked={!collate} onChange={() => setCollate(false)} disabled={busy} />
+              <span>
+                Hoja por hoja
+                <span style={{ display: 'block', fontSize: 11, opacity: 0.6 }}>
+                  {copies} veces la hoja {paginasElegidas[0]}, después {copies} veces la {paginasElegidas[1]}…
+                </span>
+              </span>
+            </label>
+          </div>
+        )}
+
         {pageInfo?.duplex && <div style={{ fontSize: 11, opacity: 0.6 }}>Doble faz: sí (según “Configurar impresora”).</div>}
 
         <div style={{ flex: 1 }} />

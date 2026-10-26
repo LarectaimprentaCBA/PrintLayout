@@ -97,6 +97,32 @@ app.whenReady().then(async () => {
   const nueva = trasLote.find((w) => w.getTitle().includes('+') || w.getTitle().includes('PDF'));
   check('el título resume el lote', !!nueva && /2 PDF/.test(nueva.getTitle()), nueva && nueva.getTitle());
 
+  console.log('\n6) Orden de las copias (intercalar / sin intercalar)');
+  {
+    const { ordenarCopias } = quickPrint;
+    // Intercalado: el driver repite el documento entero.
+    const a = ordenarCopias([1, 2], 99, true);
+    check('intercalado manda las hojas una vez', a.paginas.join() === '1,2', a.paginas.join());
+    check('y le pide 99 copias al driver', a.copias === 99, String(a.copias));
+
+    // Sin intercalar: 99 veces la 1 y después 99 veces la 2, en UN envío.
+    const b = ordenarCopias([1, 2], 99, false);
+    check('sin intercalar manda 198 hojas', b.paginas.length === 198, String(b.paginas.length));
+    check('y le pide 1 sola copia', b.copias === 1, String(b.copias));
+    check('primero las 99 de la hoja 1', b.paginas.slice(0, 99).every((p) => p === 1));
+    check('después las 99 de la hoja 2', b.paginas.slice(99).every((p) => p === 2));
+    check('salen las mismas hojas que intercalado',
+      b.paginas.filter((p) => p === 1).length === 99 && b.paginas.filter((p) => p === 2).length === 99);
+
+    // Con una sola copia da igual: no hay nada que ordenar.
+    const c = ordenarCopias([1, 2], 1, false);
+    check('con 1 copia no cambia nada', c.paginas.join() === '1,2' && c.copias === 1);
+
+    // Respeta la selección de páginas (rango / impares).
+    const d = ordenarCopias([3, 5, 7], 2, false);
+    check('respeta las páginas elegidas', d.paginas.join() === '3,3,5,5,7,7', d.paginas.join());
+  }
+
   for (const w of BrowserWindow.getAllWindows()) { try { w.destroy(); } catch (_) {} }
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {}
   console.log(`\nRESULTADO: ${pass} OK, ${fail} FALLAS`);

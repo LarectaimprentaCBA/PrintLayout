@@ -108,14 +108,22 @@ async function runPrintJob({
     throw new Error('página sin datos');
   };
 
+  // Hoja de origen ya corregida → su archivo corregido. Hace falta para imprimir
+  // sin intercalar: ahí la MISMA hoja se repite N veces y corregirla 99 veces
+  // tardaría minutos en vez de un segundo.
+  const corregidas = new Map();
+
   try {
     for (let i = 0; i < pages.length; i++) {
       const pg = pages[i];
       pageMeta.push({ wMm: Number(pg.wMm) || 0, hMm: Number(pg.hMm) || 0, rot: Number(pg.rot) || 0 });
       if (applier) {
+        const yaHecha = pg.path ? corregidas.get(pg.path) : null;
+        if (yaHecha) { pagePaths.push(yaHecha); msPerPage.push(0); continue; }
         const r = await applier.applyPng(toBuf(pg));
         const outP = path.join(tmpDir, `page-${String(i).padStart(3, '0')}.png`);
         fs.writeFileSync(outP, r.buffer);
+        if (pg.path) corregidas.set(pg.path, outP);
         pagePaths.push(outP);
         msPerPage.push(r.ms);
         if (!r.ok && colorStatus.state !== 'fallo') colorStatus = { state: 'fallo', reason: r.reason, page: i + 1 };
