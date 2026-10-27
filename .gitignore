@@ -31,3 +31,7 @@ electron/templates-config.json
 # Logs temporales de arranque (verificacion de boot durante dev)
 .intake-boot.err
 .intake-boot.out
+
+# Copia de repuesto del PrintHelper dentro del paquete (la hace scripts/copy-helper.cjs
+# en cada build, a partir de helper/PrintHelper.exe)
+electron/bin/

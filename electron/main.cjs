@@ -27,6 +27,7 @@ const colorPrinters = require('./color/printers.cjs');
 const colorSync = require('./color/sync.cjs');
 const { ColorApplier } = require('./color/apply.cjs');
 const printCore = require('./print-core.cjs');
+const { buscarPrintHelper, MSG_SIN_HELPER } = require('./helper-path.cjs');
 const qrcutConfig = require('./qrcut/config-store.cjs');
 const quickPrint = require('./quickprint/service.cjs');
 
@@ -1696,15 +1697,18 @@ ipcMain.handle('pdf-to-image:save-batch', async (evt, payload) => {
 // El binario se compila desde helper/PrintHelper.cs con helper/build-helper.ps1
 // y se commitea firmado al repo. En dev vive en helper/PrintHelper.exe; en
 // packaged va como extraResource a resources/PrintHelper.exe.
+// Ruta del PrintHelper. La búsqueda (y el reponerlo si el antivirus se lo
+// llevó) vive en helper-path.cjs, que se puede probar aparte.
+let helperCache = null;
 function resolvePrintHelper() {
-  const candidates = [
-    path.join(__dirname, '..', 'helper', 'PrintHelper.exe'),
-    path.join(process.resourcesPath || '', 'PrintHelper.exe'),
-  ];
-  for (const c of candidates) {
-    if (c && fs.existsSync(c)) return c;
-  }
-  return null;
+  if (helperCache && fs.existsSync(helperCache)) return helperCache;
+  helperCache = buscarPrintHelper({
+    appDir: __dirname,
+    resourcesPath: process.resourcesPath || '',
+    userDataDir: app.getPath('userData'),
+    log: appendDebugLog,
+  });
+  return helperCache;
 }
 
 // Decodifica una dataURL `data:image/png;base64,xxx...` a Buffer.
@@ -1787,7 +1791,7 @@ ipcMain.handle('print:open-printer-config', async (_evt, payload) => {
   }
   const helperExe = resolvePrintHelper();
   if (!helperExe) {
-    return { ok: false, error: 'No se encontro PrintHelper.exe.' };
+    return { ok: false, error: MSG_SIN_HELPER };
   }
   const dmFile = devmodeFilePath(deviceName);
 
@@ -1873,7 +1877,7 @@ ipcMain.handle('print:has-printer-config', async (_evt, payload) => {
 function runHelperKV(lines, { windowsHide = true, timeoutMs = 15000 } = {}) {
   return new Promise((resolve) => {
     const helperExe = resolvePrintHelper();
-    if (!helperExe) return resolve({ ok: false, error: 'No se encontro PrintHelper.exe.' });
+    if (!helperExe) return resolve({ ok: false, error: MSG_SIN_HELPER });
     let out = '', err = '', settled = false;
     const settle = (r) => { if (settled) return; settled = true; resolve(r); };
     let proc;
@@ -2585,6 +2589,13 @@ app.whenReady().then(() => {
 
   // Reparar el verbo del clic derecho si falta (diferido: no retrasa la ventana).
   setTimeout(repairContextMenuVerb, 3000);
+
+  // Chequear el PrintHelper al arrancar: si el antivirus se lo llevó, lo
+  // reponemos ACÁ y no cuando el operario ya está por imprimir.
+  setTimeout(() => {
+    const h = resolvePrintHelper();
+    appendDebugLog(h ? `[helper] ok en ${h}` : '[helper] NO HAY PrintHelper y no se pudo reponer');
+  }, 1500);
 
   setupAutoUpdate(mainWindow);
   intakeService.start(mainWindow);

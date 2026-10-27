@@ -91,7 +91,7 @@ async function runPrintJob({
   const log = typeof appendDebugLog === 'function' ? appendDebugLog : () => {};
   if (!Array.isArray(pages) || pages.length === 0) return { ok: false, error: 'No hay paginas para imprimir.' };
   if (!pageWidthMm || !pageHeightMm) return { ok: false, error: 'Tamano de hoja no definido.' };
-  if (!helperExe) return { ok: false, error: 'No se encontro PrintHelper.exe.' };
+  if (!helperExe) return { ok: false, error: 'Falta un archivo de PrintLayout (PrintHelper.exe), que es el que manda las hojas a la impresora. Casi siempre lo borra el antivirus: agregá una exclusión para la carpeta de PrintLayout y volvé a instalarlo.' };
 
   let { applier, colorCal, colorIp, colorVia, colorStatus, colorResolveMs } =
     await resolveColorApplier({ deviceName, showDialog, noColorCorrection });

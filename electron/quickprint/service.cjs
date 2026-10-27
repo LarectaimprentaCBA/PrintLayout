@@ -193,7 +193,7 @@ function enqueue(files) {
 function getPageInfo(deviceName) {
   return new Promise((resolve) => {
     const helperExe = deps.resolvePrintHelper();
-    if (!helperExe) return resolve({ ok: false, error: 'No se encontró PrintHelper.exe.' });
+    if (!helperExe) return resolve({ ok: false, error: 'Falta un archivo de PrintLayout (PrintHelper.exe), que es el que manda las hojas a la impresora. Casi siempre lo borra el antivirus: agregá una exclusión para la carpeta de PrintLayout y volvé a instalarlo.' });
     if (!deviceName) return resolve({ ok: false, error: 'Falta la impresora.' });
     const dm = deps.devmodeFilePath(deviceName);
     const lines = ['MODE=pageinfo', `DEVICE=${deviceName}`];
