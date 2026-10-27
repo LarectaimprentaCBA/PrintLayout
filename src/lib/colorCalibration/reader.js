@@ -201,9 +201,28 @@ function buscarMarca(px, k, dpi) {
   return [sx / sn, sy / sn];
 }
 
+// Una A4 escaneada a 100 dpi (lo mínimo que aceptamos) da unos 827 px de lado corto.
+// Por debajo de esto no hay nada que medir, y conviene decirlo así en vez de echarle
+// la culpa a las marcas de registro.
+const MIN_LADO = 600;
+
+function revisarImagen(px, nombre) {
+  const W = px && px.W, H = px && px.H;
+  if (!px || !px.data || !(W > 0) || !(H > 0)) {
+    throw new Error(nombre + ': no pude abrir la imagen (quedó vacía). ¿El archivo está completo? Probá volver a guardarlo como JPEG.');
+  }
+  if (px.data.length < W * H * 4) {
+    throw new Error(nombre + ': la imagen llegó cortada (' + W + 'x' + H + '). Probá volver a guardarla como JPEG.');
+  }
+  if (W < MIN_LADO || H < MIN_LADO) {
+    throw new Error(nombre + ': el escaneo es demasiado chico (' + W + 'x' + H + ' píxeles). Escaneá la hoja entera a 300 dpi.');
+  }
+}
+
 // Mide el escaneo. Devuelve { rgb:Float64Array(Count*3), desvio, dpiEstimado, rotacionGrados, log, code }.
 // opts.leerCodigo=true → lee el código legible por máquina de la banda inferior (code).
 export function medir(px, nombre, dpiMeta, opts = {}) {
+  revisarImagen(px, nombre);
   const log = [];
   const dpi = (dpiMeta >= 100 && dpiMeta <= 1200)
     ? dpiMeta

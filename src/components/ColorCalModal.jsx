@@ -423,7 +423,8 @@ export default function ColorCalModal({ open, onClose }) {
     setBusy('analyze');
     setAnalysis(null);
     try {
-      const res = await analyzePair(scanA, scanB);
+      // Los nombres reales de las colas van al informe (antes decia siempre "RICOH .198/.127").
+      const res = await analyzePair(scanA, scanB, { buena: refDev || 'referencia', palida: correctDev || 'impresora a corregir' });
       setAnalysis(res);
       setStep(5);
       notify('ok', 'Análisis listo. Revisá el informe y activá o descartá.');

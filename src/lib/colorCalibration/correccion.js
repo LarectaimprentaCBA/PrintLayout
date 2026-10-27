@@ -27,7 +27,11 @@ function promedio(v) {
 }
 
 // buena/palida = objetos Medicion { rgb: Float64Array(Count*3), log }
-export function calcular(buena, palida, size, labels = { buena: '.127', palida: '.198' }) {
+// Nombres que aparecen en el informe. Por defecto son genéricos: la app pasa los
+// nombres reales de las dos impresoras elegidas en el asistente.
+const ETIQUETAS_POR_DEFECTO = { buena: 'referencia', palida: 'impresora a corregir' };
+
+export function calcular(buena, palida, size, labels = ETIQUETAS_POR_DEFECTO) {
   const G = GrillaMedida.desdeMedicion(buena);
   const B = GrillaMedida.desdeMedicion(palida);
   const lut = new Lut3(size);
@@ -213,7 +217,7 @@ function armarInforme(buena, palida, G, B, lut, labels) {
 
   const L = [];
   const lb = labels.buena, lp = labels.palida;
-  L.push('CORRECCIÓN DE COLOR — RICOH ' + lp + ' (pálida) para que se parezca a la ' + lb + ' (buena)');
+  L.push('CORRECCIÓN DE COLOR — ' + lp + ' (pálida) para que se parezca a la ' + lb + ' (buena)');
   L.push('=================================================================================');
   L.push('');
   L.push('CÓMO LEER LOS NÚMEROS (diferencia de color medida con el escáner):');
@@ -224,7 +228,7 @@ function armarInforme(buena, palida, G, B, lut, labels) {
   const lumBuena = sumaLBuena / Count, lumPalida = sumaLPalida / Count;
   if (lumPalida < lumBuena - 0.5) {
     L.push('!!!!! ATENCIÓN: la hoja marcada como ' + lp + ' salió MÁS OSCURA que la ' + lb + '.');
-    L.push('      ¿Están cambiados los nombres de los escaneos? Cada hoja dice arriba en qué Ricoh se imprimió.');
+    L.push('      ¿Están cambiados los nombres de los escaneos? Cada hoja dice arriba en qué impresora se imprimió.');
     L.push('      Si están cambiados, NO uses esta corrección: arreglá los nombres y volvé a analizar.');
     L.push('');
   }
@@ -275,7 +279,7 @@ function armarInforme(buena, palida, G, B, lut, labels) {
 }
 
 // Paso 4: compara la carta CORREGIDA impresa en la pálida contra la buena, parche a parche.
-export function informeCorregida(buena, corregida, palidaSinCorregir, labels = { buena: '.127', palida: '.198' }) {
+export function informeCorregida(buena, corregida, palidaSinCorregir, labels = ETIQUETAS_POR_DEFECTO) {
   const antes = [], despues = [];
   const labG = new Float64Array(3), labC = new Float64Array(3), labB = new Float64Array(3);
   const fuerteA = [], fuerteD = [], suaveA = [], suaveD = [];

@@ -8,18 +8,23 @@ import { LUT_SIZE } from './index.js';
 import { Lut3 } from './colorMath.js';
 
 // File/Blob → { px:{W,H,data(RGBA)}, dpi|null }
+// OJO: bitmap.close() deja width y height en 0 (así lo manda el estándar). Hay que
+// guardarse el tamaño ANTES de cerrarlo, o el escaneo sale de acá como una imagen
+// de 0x0 y el lector termina culpando a las marcas de registro.
 export async function fileToPixels(file) {
   const buf = new Uint8Array(await file.arrayBuffer());
   const dpi = parseDpi(buf);
   const bitmap = await createImageBitmap(new Blob([buf]), { colorSpaceConversion: 'default' });
+  const W = bitmap.width;
+  const H = bitmap.height;
   const canvas = document.createElement('canvas');
-  canvas.width = bitmap.width;
-  canvas.height = bitmap.height;
+  canvas.width = W;
+  canvas.height = H;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   ctx.drawImage(bitmap, 0, 0);
-  const img = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+  const img = ctx.getImageData(0, 0, W, H);
   bitmap.close && bitmap.close();
-  return { px: { W: bitmap.width, H: bitmap.height, data: img.data }, dpi };
+  return { px: { W, H, data: img.data }, dpi };
 }
 
 export async function measureScan(file, nombre, leerCodigo = true) {
@@ -31,7 +36,7 @@ export async function measureScan(file, nombre, leerCodigo = true) {
 
 // Analiza dos escaneos y calcula la corrección. Empareja por el CÓDIGO (no por el nombre
 // del archivo). Lanza con mensaje claro si falta el código o no son de la misma sesión.
-export async function analyzePair(fileA, fileB) {
+export async function analyzePair(fileA, fileB, labels) {
   const a = await measureScan(fileA, 'escaneo A');
   const b = await measureScan(fileB, 'escaneo B');
   if (!a.code || !b.code) {
@@ -45,7 +50,7 @@ export async function analyzePair(fileA, fileB) {
     if (e.message === 'CODE_ROLE_DUP') throw new Error('Cargaste dos veces la misma carta (las dos son de la misma impresora). Necesito la de referencia y la de la impresora a corregir.');
     throw e;
   }
-  const res = calcular(pair.buena, pair.palida, LUT_SIZE);
+  const res = calcular(pair.buena, pair.palida, LUT_SIZE, labels || undefined);
   return {
     sessionId: a.code.sessionId,
     lut: Array.from(res.lut.V),
