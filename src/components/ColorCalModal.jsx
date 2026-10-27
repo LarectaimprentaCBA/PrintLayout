@@ -616,16 +616,21 @@ function ListView({ cals, printers, manualIp, canShare, busy, nameForIp, printer
       {perfil && (
         <div className="mb-3 rounded border border-sky-800 bg-sky-950/30 p-3">
           <div className="flex items-start justify-between gap-2">
-            <div>
+            <div className="min-w-0">
               <div className="text-xs font-semibold text-sky-200">Perfil guardado</div>
               <div className="mt-0.5 break-all font-mono text-[10px] text-ink-300">{perfil.fileName}</div>
+              {perfil.dir && (
+                <div className="mt-0.5 break-all font-mono text-[10px] text-ink-500">
+                  en {perfil.dir}
+                </div>
+              )}
             </div>
             <button onClick={onCerrarPerfil} className="shrink-0 rounded px-1.5 text-xs text-ink-400 hover:bg-ink-800" title="Cerrar">✕</button>
           </div>
 
           <div className="mt-2 flex flex-wrap gap-2">
-            <button onClick={onGuardarComo} className="rounded border border-ink-700 px-2 py-1 text-xs text-ink-200 hover:bg-ink-800">Guardar como…</button>
-            <button onClick={() => onAbrirCarpeta(perfil.id)} className="rounded border border-ink-700 px-2 py-1 text-xs text-ink-200 hover:bg-ink-800">Abrir carpeta</button>
+            <button onClick={onGuardarComo} title="Guardar una copia del perfil donde vos quieras (escritorio, pendrive, carpeta de red)" className="rounded border border-ink-700 px-2 py-1 text-xs text-ink-200 hover:bg-ink-800">Guardar una copia en…</button>
+            <button onClick={() => onAbrirCarpeta(perfil.id)} title="Abre el Explorador en esa carpeta, con el perfil ya seleccionado" className="rounded border border-ink-700 px-2 py-1 text-xs text-ink-200 hover:bg-ink-800">Abrir la carpeta</button>
           </div>
 
           <div className="mt-3 space-y-2 text-[11px] leading-snug text-ink-300">

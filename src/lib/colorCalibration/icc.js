@@ -642,7 +642,10 @@ export function nombreArchivoPerfil(cal, fecha = null) {
   const papel = cal?.paperName ? ` ${cal.paperName}` : '';
   const d = fecha || new Date();
   const f = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  return `Ricoh .${ultimo} corregida (PrintLayout)${papel} ${f}.icc`
+  // El nombre sale SOLO de datos que viajan con la calibración (IP, papel, fecha):
+  // así todas las PC que bajan la misma calibración compartida escriben el mismo
+  // archivo. Por eso NO se usa el nombre de la cola, que es propio de cada PC.
+  return `Impresora .${ultimo} corregida (PrintLayout)${papel} ${f}.icc`
     .replace(/[\\/:*?"<>|]/g, '-');
 }
 
