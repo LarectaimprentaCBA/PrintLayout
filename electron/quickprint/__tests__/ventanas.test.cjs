@@ -123,6 +123,41 @@ app.whenReady().then(async () => {
     check('respeta las páginas elegidas', d.paginas.join() === '3,3,5,5,7,7', d.paginas.join());
   }
 
+  console.log('\n7) Fotos repetidas: no se arma ni se manda la misma hoja mil veces');
+  {
+    const { ordenarHojas } = quickPrint;
+    const A = 'C:/t/a.png', B = 'C:/t/b.png';
+
+    // 1 foto × 50 copias, 1 por hoja: UNA hoja y que la impresora la repita.
+    const sola = ordenarHojas([A], new Array(50).fill(0), 1);
+    check('una sola hoja distinta → se manda una vez', sola.paths.length === 1, String(sola.paths.length));
+    check('y la impresora saca las 50', sola.copias === 50, String(sola.copias));
+
+    // 2 fotos × 50 copias, 2 por hoja: 2 hojas distintas, 50 en total.
+    const orden = [...new Array(25).fill(0), ...new Array(25).fill(1)];
+    const dos = ordenarHojas([A, B], orden, 1);
+    check('dos hojas distintas → salen las 50 hojas', dos.paths.length === 50, String(dos.paths.length));
+    check('primero las 25 de la hoja A', dos.paths.slice(0, 25).every((p) => p === A));
+    check('después las 25 de la hoja B', dos.paths.slice(25).every((p) => p === B));
+    check('y no infla las copias', dos.copias === 1, String(dos.copias));
+    check('las repetidas apuntan al MISMO archivo (una sola corrección de color)',
+      new Set(dos.paths).size === 2, String(new Set(dos.paths).size));
+
+    // Sin orden se comporta como siempre.
+    const viejo = ordenarHojas([A, B], null, 3);
+    check('sin orden manda las hojas tal cual', viejo.paths.join() === [A, B].join(), viejo.paths.join());
+    check('y respeta las copias pedidas', viejo.copias === 3, String(viejo.copias));
+
+    // Una hoja sola, una copia: nada raro.
+    const simple = ordenarHojas([A], [0], 1);
+    check('una hoja y una copia', simple.paths.length === 1 && simple.copias === 1);
+
+    // Índices basura no rompen: se ignoran y quedan 2 hojas iguales → 2 copias.
+    const sucio = ordenarHojas([A], [0, 7, 0], 1);
+    check('ignora índices que no existen', sucio.paths.length === 1 && sucio.copias === 2,
+      `${sucio.paths.length}/${sucio.copias}`);
+  }
+
   for (const w of BrowserWindow.getAllWindows()) { try { w.destroy(); } catch (_) {} }
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {}
   console.log(`\nRESULTADO: ${pass} OK, ${fail} FALLAS`);

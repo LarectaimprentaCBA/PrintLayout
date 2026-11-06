@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { PHOTO_SIZES, computeLayout } from './photoLayout.js';
 import { loadPhoto } from './loadPhoto.js';
-import { renderSheetToCanvas, canvasToPngArrayBuffer, paginate } from './sheetRender.js';
+import { renderSheetToCanvas, canvasToPngArrayBuffer, planSheets } from './sheetRender.js';
 
 const PREVIEW_DPI = 110;
 const PRINT_DPI = 240;
@@ -50,27 +50,43 @@ export default function PhotoView({ files, deviceName, pageInfo, busy, setBusy, 
     [sizeKey, printWmm, printHmm],
   );
 
-  // Fotos expandidas por copias.
-  const expanded = useMemo(() => {
-    const n = Math.max(1, Math.min(99, copies | 0));
-    const arr = [];
-    for (const p of photos) for (let k = 0; k < n; k++) arr.push(p);
-    return arr;
-  }, [photos, copies]);
+  // Plan de hojas: cuáles son DISTINTAS y en qué orden van. Con copias, casi
+  // todas se repiten, y armar cada una por separado es lo que hacía que 50
+  // copias tardaran una eternidad.
+  const plan = useMemo(
+    () => (layout ? planSheets(photos.length, copies, layout.perSheet) : { distintas: [], orden: [] }),
+    [photos.length, copies, layout],
+  );
+  const totalFotos = Math.max(1, Math.min(99, copies | 0)) * photos.length;
 
+  // Las hojas, para mirarlas una por una (comparten las fotos, no se copia nada).
   const sheets = useMemo(
-    () => (layout ? paginate(expanded, layout.perSheet) : []),
-    [expanded, layout],
+    () => plan.orden.map((i) => plan.distintas[i].map((j) => photos[j])),
+    [plan, photos],
   );
 
   useEffect(() => { if (sheetIdx >= sheets.length) setSheetIdx(0); }, [sheets.length, sheetIdx]);
+
+  // La vista previa dibuja la HOJA ENTERA con el margen que la impresora no
+  // alcanza y el recuadro de cada lugar (también los vacíos), para ver cómo va
+  // a quedar. Eso es solo de la pantalla: lo que se imprime no lleva guías.
+  const guias = useMemo(() => (
+    pageInfo && pageInfo.paperWmm > 0
+      ? {
+        paperWmm: pageInfo.paperWmm,
+        paperHmm: pageInfo.paperHmm,
+        marginLmm: pageInfo.marginLmm || 0,
+        marginTmm: pageInfo.marginTmm || 0,
+      }
+      : null
+  ), [pageInfo]);
 
   // Redibujar el preview de la hoja actual.
   useEffect(() => {
     if (!previewRef.current || !layout || !sheets.length) return;
     const sheet = sheets[sheetIdx] || [];
-    renderSheetToCanvas(previewRef.current, sheet, layout, printWmm, printHmm, PREVIEW_DPI, framed);
-  }, [previewRef, layout, sheets, sheetIdx, framed, printWmm, printHmm]);
+    renderSheetToCanvas(previewRef.current, sheet, layout, printWmm, printHmm, PREVIEW_DPI, framed, guias);
+  }, [previewRef, layout, sheets, sheetIdx, framed, printWmm, printHmm, guias]);
 
   const perSheetFor = useCallback((key) => {
     if (!(printWmm > 0)) return null;
@@ -89,10 +105,14 @@ export default function PhotoView({ files, deviceName, pageInfo, busy, setBusy, 
       sessionId = begin.id;
       const canvas = document.createElement('canvas');
       let firstMs = null;
-      // Armamos y ENVIAMOS cada hoja apenas está lista (memoria plana, no congela).
-      for (let i = 0; i < sheets.length; i++) {
-        setPrepMsg(`Preparando hoja ${i + 1} de ${sheets.length}…`);
-        renderSheetToCanvas(canvas, sheets[i], layout, printWmm, printHmm, PRINT_DPI, framed);
+      // Armamos y ENVIAMOS solo las hojas DISTINTAS, apenas están listas (memoria
+      // plana, no congela). Las repetidas no se vuelven a armar: el `orden` de
+      // abajo dice cuál va en cada lugar.
+      const nDistintas = plan.distintas.length;
+      for (let i = 0; i < nDistintas; i++) {
+        setPrepMsg(nDistintas > 1 ? `Preparando hoja ${i + 1} de ${nDistintas}…` : 'Preparando la hoja…');
+        renderSheetToCanvas(canvas, plan.distintas[i].map((j) => photos[j]),
+          layout, printWmm, printHmm, PRINT_DPI, framed);
         const ab = await canvasToPngArrayBuffer(canvas);
         await window.printlayout.quickprint.photosAdd(sessionId, ab);
         if (firstMs === null) firstMs = performance.now() - t0;
@@ -104,11 +124,12 @@ export default function PhotoView({ files, deviceName, pageInfo, busy, setBusy, 
         pageHeightMm: printHmm,
         deviceName,
         copies: 1,
-        docName: `Fotos (${expanded.length})`,
+        order: plan.orden,
+        docName: `Fotos (${totalFotos})`,
       });
       sessionId = null; // photosPrint ya limpió la sesión
       const totalMs = Math.round(performance.now() - t0);
-      console.log(`[quickprint] fotos=${expanded.length} hojas=${sheets.length} 1raHoja=${Math.round(firstMs)}ms total=${totalMs}ms`);
+      console.log(`[quickprint] fotos=${totalFotos} hojas=${sheets.length} distintas=${nDistintas} 1raHoja=${Math.round(firstMs)}ms total=${totalMs}ms`);
       setPrepMsg('');
       if (res?.ok) {
         onDone();
@@ -126,7 +147,15 @@ export default function PhotoView({ files, deviceName, pageInfo, busy, setBusy, 
     }
   };
 
-  const previewAspect = printHmm > 0 ? printWmm / printHmm : 0.7;
+  // La previa muestra la hoja entera, así que la proporción es la de la hoja.
+  const previewAspect = guias && guias.paperHmm > 0
+    ? guias.paperWmm / guias.paperHmm
+    : (printHmm > 0 ? printWmm / printHmm : 0.7);
+
+  // Medidas en cm, para saber de una cómo va a salir.
+  const cm = (mm) => (Math.round(mm / 10 * 10) / 10).toString().replace('.', ',');
+  const medidaHoja = guias ? `${cm(guias.paperWmm)} × ${cm(guias.paperHmm)} cm` : null;
+  const medidaFoto = layout ? `${cm(layout.cellW)} × ${cm(layout.cellH)} cm` : null;
 
   return (
     <div style={{ display: 'flex', gap: 16, flex: 1, minHeight: 0 }}>
@@ -138,6 +167,8 @@ export default function PhotoView({ files, deviceName, pageInfo, busy, setBusy, 
           <div style={{ fontSize: 12, opacity: 0.75 }}>
             {photos.length} foto{photos.length === 1 ? '' : 's'}
             {copies > 1 ? ` × ${copies} copias` : ''} · {sheets.length} hoja{sheets.length === 1 ? '' : 's'}
+            {medidaHoja && <> · hoja {medidaHoja}</>}
+            {medidaFoto && <> · cada foto {medidaFoto}</>}
           </div>
         )}
         <div style={previewBox}>

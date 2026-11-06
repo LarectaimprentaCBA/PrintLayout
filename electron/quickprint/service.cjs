@@ -356,18 +356,42 @@ function photosAdd(id, buffer) {
   const p = path.join(s.dir, `sheet-${String(s.paths.length).padStart(3, '0')}.png`);
   fs.writeFileSync(p, Buffer.from(buffer));
   s.paths.push(p);
-  return { ok: true };
+  return { ok: true, index: s.paths.length - 1 };
 }
-async function photosPrint(id, { pageWidthMm, pageHeightMm, deviceName, copies, docName }) {
+
+/**
+ * En qué orden salen las hojas y cuántas copias le pedimos al driver.
+ *
+ * `orden` dice qué hoja de las agregadas va en cada lugar: así una hoja que se
+ * repite se arma UNA vez. Y si la tanda entera es la MISMA hoja, no le mandamos
+ * N hojas iguales: le mandamos una y COPIES=N, que es lo que la impresora hace
+ * rápido (y de paso se corrige el color una sola vez).
+ *
+ * @returns {{paths:string[], copias:number}}
+ */
+function ordenarHojas(paths, orden, copies) {
+  const n = Math.max(1, Math.floor(Number(copies) || 1));
+  const lista = (Array.isArray(orden) && orden.length)
+    ? orden.map((i) => paths[i]).filter(Boolean)
+    : paths.slice();
+  if (!lista.length) return { paths: [], copias: n };
+  const todasIguales = lista.every((p) => p === lista[0]);
+  if (todasIguales && lista.length > 1) return { paths: [lista[0]], copias: n * lista.length };
+  return { paths: lista, copias: n };
+}
+
+async function photosPrint(id, { pageWidthMm, pageHeightMm, deviceName, copies, docName, order }) {
   const s = photoSessions.get(id);
   if (!s || !s.paths.length) return { ok: false, error: 'no hay hojas para imprimir' };
   const scale = getPrintScale();
+  const plan = ordenarHojas(s.paths, order, copies);
+  if (!plan.paths.length) return { ok: false, error: 'no hay hojas para imprimir' };
   try {
     return await printCore.runPrintJob({
-      pages: s.paths.map((p) => ({ path: p })),
+      pages: plan.paths.map((p) => ({ path: p })),
       pageWidthMm: pageWidthMm * scale,
       pageHeightMm: pageHeightMm * scale,
-      deviceName, copies, showDialog: false, docName: withMachine(docName),
+      deviceName, copies: plan.copias, showDialog: false, docName: withMachine(docName),
       helperExe: deps.resolvePrintHelper(),
       savedDevmodePath: deviceName ? deps.devmodeFilePath(deviceName) : null,
       appendDebugLog: deps.appendDebugLog,
@@ -539,4 +563,4 @@ function init(d) {
   registerIpc();
 }
 
-module.exports = { init, filesFromArgv, enqueue, ordenarCopias };
+module.exports = { init, filesFromArgv, enqueue, ordenarCopias, ordenarHojas };
