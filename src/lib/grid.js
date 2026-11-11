@@ -269,11 +269,18 @@ export function cellsToCircleCuts(cells, { cutMarginMm = 0, segments = 64 } = {}
 //
 // Si una fila no cumple (hay separación, o los círculos no son todos iguales),
 // esa fila cae al corte de siempre: círculos cerrados uno por uno.
-export function cellsToSerpentineCircleCuts(cells, { segments = 64, overcutDeg = 2 } = {}) {
+// DEMASÍA (`cutMarginMm`): el corte se mete esos mm hacia adentro de la celda,
+// así el diseño sobra por fuera del corte y un desfase del plotter no deja un
+// filo blanco. Lo que tiene que tocarse NO son las celdas sino los CÍRCULOS de
+// corte: el modal consigue eso haciendo que las celdas se solapen `2*margen`
+// (separación horizontal negativa), y acá se verifica sobre el círculo.
+export function cellsToSerpentineCircleCuts(cells, { cutMarginMm = 0, segments = 64, overcutDeg = 2 } = {}) {
   if (!Array.isArray(cells) || cells.length === 0) return [];
   const EPS = 0.05; // mm
   const half = Math.max(4, Math.round(segments / 2));
   const d = (overcutDeg * Math.PI) / 180;
+  const m = Math.max(0, Number(cutMarginMm) || 0);
+  const radio = (c) => Math.min(c.w, c.h) / 2 - m;
 
   // Punto del círculo en el ángulo a. Coordenadas mm top-left (y crece hacia
   // abajo), así que a=90° cae ABAJO en la hoja y a=270° arriba.
@@ -307,20 +314,23 @@ export function cellsToSerpentineCircleCuts(cells, { segments = 64, overcutDeg =
     while (i < fila.length) {
       let j = i;
       while (j + 1 < fila.length
-        && Math.abs(fila[j + 1].x - (fila[j].x + fila[j].w)) < EPS
         && Math.abs(fila[j + 1].w - fila[j].w) < EPS
-        && Math.abs(fila[j + 1].h - fila[j].h) < EPS) j++;
+        && Math.abs(fila[j + 1].h - fila[j].h) < EPS
+        // Lo que tiene que tocarse es el CÍRCULO: la distancia entre
+        // centros tiene que ser exactamente un diámetro de corte.
+        && radio(fila[j]) > 0
+        && Math.abs((fila[j + 1].x - fila[j].x) - 2 * radio(fila[j])) < EPS) j++;
       const tramo = fila.slice(i, j + 1);
       if (tramo.length < 2) {
         // Uno solo: no hay con quién encadenar, va como siempre.
-        cuts.push(...cellsToCircleCuts(tramo, { cutMarginMm: 0, segments }));
+        cuts.push(...cellsToCircleCuts(tramo, { cutMarginMm: m, segments }));
       } else {
         for (const esB of [false, true]) {
           const onda = [];
           tramo.forEach((c, n) => {
             const cx = c.x + c.w / 2;
             const cy = c.y + c.h / 2;
-            const r = Math.min(c.w, c.h) / 2;
+            const r = radio(c);
             const abajo = (n % 2 === 0) !== esB;
             // Las PUNTAS de la onda se pasan unos grados hacia la otra mitad,
             // para que las dos pasadas se crucen y la pieza no quede colgando
@@ -350,7 +360,7 @@ export function cutsForGridMode(cells, {
   cutShape = 'rect', cutMarginMm = 0, linearCut = false, serpentineCut = false, overcutMm = 1,
 } = {}) {
   if (linearCut) return cellsToLinearCuts(cells, { overcutMm });
-  if (serpentineCut && cutShape === 'circle') return cellsToSerpentineCircleCuts(cells);
+  if (serpentineCut && cutShape === 'circle') return cellsToSerpentineCircleCuts(cells, { cutMarginMm });
   return generateCuts(cells, { cutShape, cutMarginMm });
 }
 

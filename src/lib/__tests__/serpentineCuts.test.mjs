@@ -157,7 +157,40 @@ console.log('\n8) Con una grilla hecha por la app (computeGrid)');
   }
 }
 
-console.log('\n9) Separación ENTRE FILAS: la onda no se entera');
+console.log('\n9) DEMASÍA: el corte se mete adentro y los círculos SIGUEN pegados');
+{
+  // Mariano, cortando en papel: "el corte da justo al borde y no tiene nada de
+  // demasía, entonces el plotter como desfasa un poquito quedan bordes blancos".
+  // La celda es lo IMPRESO y el corte va adentro: con margen `m` el diseño sobra
+  // `m` por fuera del corte. Para que la onda siga andando, los CÍRCULOS tienen
+  // que tocarse, así que las celdas se solapan 2*m (el modal lo hace solo).
+  const m = 0.4, D = 40;
+  const paso = D - 2 * m; // distancia entre centros = diámetro de corte
+  const cells = Array.from({ length: 4 }, (_, i) => ({ x: 10 + i * paso, y: 10, w: D, h: D }));
+  const cuts = cellsToSerpentineCircleCuts(cells, { cutMarginMm: m });
+  check('con demasía sigue encadenando: 2 ondas', cuts.length === 2, String(cuts.length));
+
+  const r = D / 2 - m;
+  // El corte es más chico que el diseño: queda la demasía.
+  const todos = cuts.flat();
+  const c0 = cells[0];
+  const sobre = todos.filter((p) => Math.abs(dist(p, [c0.x + D / 2, c0.y + D / 2]) - r) < 0.01);
+  check(`el corte tiene radio ${r} (${m} mm adentro del diseño)`, sobre.length > 0, String(sobre.length));
+  check('y el círculo sigue entero',
+    new Set(sobre.map((p) => Math.floor(angDe(p, c0.x + D / 2, c0.y + D / 2) / 10))).size === 36);
+  // Continuo igual que sin demasía.
+  let maxSalto = 0;
+  for (let i = 1; i < cuts[0].length; i++) maxSalto = Math.max(maxSalto, dist(cuts[0][i - 1], cuts[0][i]));
+  check(`sin saltos (máx ${maxSalto.toFixed(2)} mm)`, maxSalto < 4, maxSalto.toFixed(2));
+
+  // Y si las celdas NO se solapan, los círculos quedan separados: no encadena.
+  const malas = Array.from({ length: 4 }, (_, i) => ({ x: 10 + i * D, y: 10, w: D, h: D }));
+  check('celdas pegadas + demasía → círculos separados → no encadena',
+    cellsToSerpentineCircleCuts(malas, { cutMarginMm: m }).length === 4,
+    String(cellsToSerpentineCircleCuts(malas, { cutMarginMm: m }).length));
+}
+
+console.log('\n10) Separación ENTRE FILAS: la onda no se entera');
 {
   // Mariano, después de cortar en papel: levantan el descarte para revisar el
   // corte, y con todo pegado por los 4 lados el descarte queda en pedacitos
@@ -182,7 +215,7 @@ console.log('\n9) Separación ENTRE FILAS: la onda no se entera');
   check('todos los círculos siguen enteros', enteros);
 }
 
-console.log('\n10) Las ondas son ABIERTAS: no son el contorno de una pieza');
+console.log('\n11) Las ondas son ABIERTAS: no son el contorno de una pieza');
 {
   // Esto no es un detalle: la "zona segura" del preview achicaba cada recorrido
   // como si fuera un polígono cerrado, y con las ondas dibujaba un engendro

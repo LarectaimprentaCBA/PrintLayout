@@ -205,7 +205,7 @@ export default function LayoutCanvas({
     // con una recta a lo ancho de la hoja). Ahí las piezas son los círculos de
     // las celdas, así que los armamos de nuevo.
     const cortes = template.serpentineCut === true
-      ? cellsToCircleCuts(cellsForPage(template, currentPage ?? 0, face), { cutMarginMm: 0 })
+      ? cellsToCircleCuts(cellsForPage(template, currentPage ?? 0, face), { cutMarginMm: Number(template.cutMarginMm) || 0 })
       : cutsForPage(template, currentPage ?? 0);
     if (cortes.length === 0) return null;
     const s = safetyMm(template);

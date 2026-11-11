@@ -1456,7 +1456,7 @@ export default function App() {
             dxMm: next.troquel.dxMm,
           })).filter(Boolean)
           : [];
-        next.cortes = [...agujeros, ...cellsToSerpentineCircleCuts(celdas)];
+        next.cortes = [...agujeros, ...cellsToSerpentineCircleCuts(celdas, { cutMarginMm: cutM })];
       } else if (linearOn) {
         // Corte lineal (guillotina): líneas completas de lado a lado, piezas
         // pegadas, perímetro corrido hacia afuera. Solo para grillas regulares

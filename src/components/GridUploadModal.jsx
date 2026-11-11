@@ -143,6 +143,9 @@ export default function GridUploadModal({
   // se dibuja SOLO abajo; la franja de arriba es espacio simétrico para centrar.
   const topReserveMm = bottomReserveMm;
 
+  // Con corte continuo esto es la DEMASÍA: cuánto se mete el corte hacia
+  // adentro del diseño. Se declara acá arriba porque `params` la usa.
+  const cutMarginMm = Math.max(0, parseNum(cutMargin) || 0);
   const params = useMemo(() => {
     const d = parseNum(diameter);
     const isCircle = cutShape === 'circle';
@@ -156,12 +159,16 @@ export default function GridUploadModal({
       marginY: parseNum(margin) || 0,
       // Corte lineal: piezas PEGADAS (separación 0) para que una sola línea corte
       // el borde compartido de dos piezas vecinas.
-      spacingX: (linearCut || serpentineCut) ? 0 : (parseNum(spacingX) || 0),
+      // Corte continuo: lo que tiene que tocarse es el CÍRCULO, no la celda.
+      // Si el corte se mete `margen` hacia adentro, las celdas se solapan
+      // 2*margen para que los círculos sigan pegados. Con margen 0 da 0,
+      // que es lo de antes.
+      spacingX: linearCut ? 0 : (serpentineCut ? -2 * cutMarginMm : (parseNum(spacingX) || 0)),
       spacingY: linearCut ? 0 : (parseNum(spacingY) || 0),
       bottomReserveMm,
       topReserveMm,
     };
-  }, [paperW, paperH, cellW, cellH, diameter, cutShape, margin, spacingX, spacingY, linearCut, serpentineCut, bottomReserveMm, topReserveMm]);
+  }, [paperW, paperH, cellW, cellH, diameter, cutShape, margin, spacingX, spacingY, linearCut, serpentineCut, cutMarginMm, bottomReserveMm, topReserveMm]);
 
   const valid = (
     params.paperW > 0 && params.paperH > 0
@@ -182,9 +189,6 @@ export default function GridUploadModal({
 
   if (!open) return null;
 
-  // Corte continuo: el círculo tiene que tocar el borde de su casillero para
-  // engancharse con el vecino. Cualquier margen los separa y la onda se corta.
-  const cutMarginMm = serpentineCut ? 0 : Math.max(0, parseNum(cutMargin) || 0);
   const markMarginMm = Math.max(0, parseNum(markMargin) || 0);
   const willCut = result?.cells?.length > 0 && markMarginMm > 0;
 
@@ -470,10 +474,14 @@ export default function GridUploadModal({
             <label className={(linearCut || serpentineCut) ? 'opacity-40' : ''}>
               <span className="block mb-1">Sep. horiz. (mm)</span>
               <input
-                value={(linearCut || serpentineCut) ? '0' : spacingX}
+                value={linearCut ? '0' : (serpentineCut ? (-2 * cutMarginMm).toFixed(2).replace(/.?0+$/, '') : spacingX)}
                 disabled={linearCut || serpentineCut}
                 onChange={(e) => setSpacingX(e.target.value)}
-                title={(linearCut || serpentineCut) ? 'Las piezas van pegadas (separación 0).' : undefined}
+                title={linearCut
+                  ? 'Corte lineal: las piezas van pegadas (separación 0).'
+                  : (serpentineCut
+                    ? 'Corte continuo: se calcula sola para que los círculos se toquen (el doble de la demasía, en negativo).'
+                    : undefined)}
                 className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500 disabled:cursor-not-allowed"
               />
             </label>
@@ -499,11 +507,12 @@ export default function GridUploadModal({
             </p>
             <div className="grid grid-cols-2 gap-2 text-xs text-ink-300">
               <label title="Cuanto se mete la cuchilla hacia adentro de la celda. 0 = corta justo en el borde.">
-                <span className="block mb-1">Margen de corte (mm)</span>
+                <span className="block mb-1">{serpentineCut ? 'Demasía / margen de corte (mm)' : 'Margen de corte (mm)'}</span>
                 <input
-                  value={serpentineCut ? '0' : cutMargin}
-                  disabled={serpentineCut}
-                  title={serpentineCut ? 'Corte continuo: el círculo tiene que tocar el borde del casillero.' : undefined}
+                  value={cutMargin}
+                  title={serpentineCut
+                    ? 'Con corte continuo esta es la DEMASÍA: el corte se mete esto hacia adentro del diseño, así un desfase del plotter no deja filo blanco.'
+                    : undefined}
                   onChange={(e) => setCutMargin(e.target.value)}
                   className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
                 />
@@ -533,10 +542,13 @@ export default function GridUploadModal({
                     solo trazo: mitad de abajo de uno, mitad de arriba del siguiente, y
                     una segunda onda completa los c&iacute;rculos. La cuchilla baja{' '}
                     <b>2 veces por fila</b> en lugar de una por pieza, y no frena en
-                    ninguna uni&oacute;n. Pegados van solo <b>a lo ancho</b> (sep. horizontal y
-                    margen de corte en 0); la <b>separaci&oacute;n vertical la elig&iacute;s vos</b>:
-                    con unos mil&iacute;metros entre filas, el descarte queda de una sola
-                    pieza y lo levant&aacute;s entero para revisar el corte.
+                    ninguna uni&oacute;n. Pon&eacute; <b>demas&iacute;a</b> ac&aacute; arriba (0,3&nbsp;a&nbsp;0,5&nbsp;mm)
+                    para que el corte caiga adentro del dise&ntilde;o y un desfase del
+                    pl&oacute;ter no deje filo blanco: la separaci&oacute;n horizontal se ajusta
+                    sola para que los c&iacute;rculos se sigan tocando. La{' '}
+                    <b>separaci&oacute;n vertical la elig&iacute;s vos</b>: con unos mil&iacute;metros entre
+                    filas, el descarte queda de una sola pieza y lo levant&aacute;s entero
+                    para revisar el corte.
                   </span>
                 </span>
               </label>
