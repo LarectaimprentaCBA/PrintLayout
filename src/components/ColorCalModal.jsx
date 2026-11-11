@@ -796,6 +796,8 @@ function ListView({ cals, printers, manualIp, canShare, busy, nameForIp, printer
           <p className="text-[11px] text-ink-500">
             Algunas colas (WSD, EpsonNet) no le dicen a Windows en qué IP están, así que la app
             no puede saber sola qué máquina son. Se hace <b>una vez por PC</b> y queda guardado.
+            Cuando el driver tiene una IP anotada te la ofrece acá abajo: <b>confirmala vos</b>,
+            porque a veces quedó vieja.
           </p>
           {ipsFaltantes.length > 0 && (
             <p className="mt-1 text-[11px] text-amber-300">
@@ -812,10 +814,29 @@ function ListView({ cals, printers, manualIp, canShare, busy, nameForIp, printer
                 <AsignarIp valor="" onGuardar={(v) => onSetManual(p.name, v)} />
               </div>
               {p.port && <div className="mt-0.5 font-mono text-[10px] text-ink-500">puerto: {p.port}</div>}
-              {ipsFaltantes.length > 0 && (
+              {/* El monitor de EpsonNet anota la última IP que le conoció. No la
+                  usamos sola (puede estar vieja), pero casi siempre es la buena. */}
+              {p.ipAnotada && (
+                <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
+                  <span className="text-ink-400">Windows la tiene anotada en</span>
+                  <button
+                    onClick={() => onSetManual(p.name, p.ipAnotada)}
+                    className={'rounded border px-1.5 py-0.5 font-mono text-[11px] '
+                      + (ipsFaltantes.includes(p.ipAnotada)
+                        ? 'border-green-700 bg-green-950/40 text-green-300 hover:bg-green-900/40'
+                        : 'border-ink-700 text-ink-300 hover:bg-ink-800')}
+                  >
+                    {p.ipAnotada}
+                  </button>
+                  {ipsFaltantes.includes(p.ipAnotada)
+                    ? <span className="text-green-400">← justo la que falta</span>
+                    : <span className="text-ink-500">(puede estar vieja)</span>}
+                </div>
+              )}
+              {ipsFaltantes.filter((ip) => ip !== p.ipAnotada).length > 0 && (
                 <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-ink-400">
-                  <span>¿Es esta?</span>
-                  {ipsFaltantes.map((ip) => (
+                  <span>¿O es esta?</span>
+                  {ipsFaltantes.filter((ip) => ip !== p.ipAnotada).map((ip) => (
                     <button
                       key={ip}
                       onClick={() => onSetManual(p.name, ip)}

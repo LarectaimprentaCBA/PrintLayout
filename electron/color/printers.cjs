@@ -5,15 +5,28 @@
 'use strict';
 const { spawn } = require('child_process');
 
+// `IP` = la IP de verdad, la que Windows expone en el puerto. `IPAnotada` = la
+// que el monitor de EpsonNet se guardó en el registro: esas colas NO le dicen a
+// Windows en qué IP están (PrinterHostAddress viene vacío), pero el monitor sí
+// anota la última que conoció. Sirve para SUGERIR, no para corregir sola:
+// verificado en el taller que puede quedar vieja (el plóter estaba en .106 y el
+// registro decía .98). La sugerencia la confirma una persona, una vez por PC.
 const PS = `
 $ErrorActionPreference='SilentlyContinue'
 $def = (Get-CimInstance Win32_Printer | Where-Object { $_.Default }).Name
 $ports = @{}
 Get-PrinterPort | ForEach-Object { if ($_.PrinterHostAddress) { $ports[$_.Name] = $_.PrinterHostAddress } }
+$epson = @{}
+Get-ChildItem 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Print\\Monitors\\EpsonNet Print Port\\Ports' | ForEach-Object {
+  $v = (Get-ItemProperty -Path $_.PSPath).IpAddress
+  if ($v) { $epson[$_.PSChildName] = $v }
+}
 Get-CimInstance Win32_Printer | ForEach-Object {
   $ip = $ports[$_.PortName]
   if (-not $ip -and $_.PortName -match '(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3})') { $ip = $matches[1] }
-  [pscustomobject]@{ Name = $_.Name; IsDefault = ($_.Name -eq $def); Port = $_.PortName; IP = $ip }
+  $anotada = $null
+  if (-not $ip) { $anotada = $epson[$_.PortName] }
+  [pscustomobject]@{ Name = $_.Name; IsDefault = ($_.Name -eq $def); Port = $_.PortName; IP = $ip; IPAnotada = $anotada }
 } | ConvertTo-Json -Compress
 `;
 
@@ -37,6 +50,8 @@ function runPs() {
         const printers = arr.map((x) => ({
           name: x.Name, displayName: x.Name, isDefault: !!x.IsDefault,
           port: x.Port || '', ip: x.IP || null,
+          // Solo una pista para la pantalla: nunca se usa para corregir.
+          ipAnotada: x.IPAnotada || null,
         }));
         resolve({ ok: true, printers });
       } catch (e) {
