@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react'
 import { PHOTO_SIZES, computeLayout } from './photoLayout.js';
 import { loadPhoto } from './loadPhoto.js';
 import { renderSheetToCanvas, canvasToPngArrayBuffer, planSheets } from './sheetRender.js';
+import CorreccionColor, { useCorreccionColor } from './ColorCorreccion.jsx';
 
 const PREVIEW_DPI = 110;
 const PRINT_DPI = 240;
@@ -17,6 +18,7 @@ export default function PhotoView({ files, deviceName, pageInfo, busy, setBusy, 
   const [prepMsg, setPrepMsg] = useState('');
   const [toast, setToast] = useState(null);
   const previewRef = useRef(null);
+  const color = useCorreccionColor(deviceName);
 
   // Cargar todas las fotos, cediendo el hilo entre cada una (no congela) y
   // mostrando progreso. Detecta caras (para el recorte con foco).
@@ -125,6 +127,7 @@ export default function PhotoView({ files, deviceName, pageInfo, busy, setBusy, 
         deviceName,
         copies: 1,
         order: plan.orden,
+        ...color.args,
         docName: `Fotos (${totalFotos})`,
       });
       sessionId = null; // photosPrint ya limpió la sesión
@@ -132,7 +135,14 @@ export default function PhotoView({ files, deviceName, pageInfo, busy, setBusy, 
       console.log(`[quickprint] fotos=${totalFotos} hojas=${sheets.length} distintas=${nDistintas} 1raHoja=${Math.round(firstMs)}ms total=${totalMs}ms`);
       setPrepMsg('');
       if (res?.ok) {
-        onDone();
+        // Si se pidió corrección y no se pudo aplicar, NO cerramos: salieron
+        // las hojas sin corregir y eso hay que verlo, no enterarse después.
+        if (res.color && res.color.state === 'fallo') {
+          setToast(`⚠️ Se imprimió SIN corrección de color: ${res.color.reason || 'error desconocido'}.`);
+          setBusy(false);
+        } else {
+          onDone();
+        }
       } else if (res?.canceled) {
         setBusy(false);
       } else {
@@ -225,6 +235,8 @@ export default function PhotoView({ files, deviceName, pageInfo, busy, setBusy, 
             style={numInput}
           />
         </label>
+
+        <CorreccionColor estado={color} disabled={busy} label={label} select={numInput} />
 
         <div style={{ flex: 1 }} />
         {prepMsg && <div style={{ fontSize: 12, opacity: 0.8 }}>{prepMsg}</div>}

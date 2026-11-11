@@ -380,7 +380,7 @@ function ordenarHojas(paths, orden, copies) {
   return { paths: lista, copias: n };
 }
 
-async function photosPrint(id, { pageWidthMm, pageHeightMm, deviceName, copies, docName, order }) {
+async function photosPrint(id, { pageWidthMm, pageHeightMm, deviceName, copies, docName, order, colorCalId, noColorCorrection }) {
   const s = photoSessions.get(id);
   if (!s || !s.paths.length) return { ok: false, error: 'no hay hojas para imprimir' };
   const scale = getPrintScale();
@@ -392,6 +392,7 @@ async function photosPrint(id, { pageWidthMm, pageHeightMm, deviceName, copies, 
       pageWidthMm: pageWidthMm * scale,
       pageHeightMm: pageHeightMm * scale,
       deviceName, copies: plan.copias, showDialog: false, docName: withMachine(docName),
+      colorCalId, noColorCorrection,
       helperExe: deps.resolvePrintHelper(),
       savedDevmodePath: deviceName ? deps.devmodeFilePath(deviceName) : null,
       appendDebugLog: deps.appendDebugLog,

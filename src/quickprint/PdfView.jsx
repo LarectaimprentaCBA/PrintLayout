@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { calcTamano, recortes, filtrarSubset, parseRange } from './pdfLayout.js';
+import CorreccionColor, { useCorreccionColor } from './ColorCorreccion.jsx';
 
 const PREVIEW_DPI = 96;
 
@@ -22,16 +23,6 @@ const SUBSETS = [
 
 const mm1 = (n) => (Math.round(n * 10) / 10).toString().replace('.', ',');
 
-// Nombre corto de una calibración para el desplegable. El nombre de la cola es
-// lo más reconocible, pero es propio de cada PC y no viaja en las compartidas:
-// si no está, va el final de la IP.
-function nombreCal(c) {
-  const p = (c && c.correctPrinter) || {};
-  const base = (p.queue && p.queue.trim())
-    || (p.ip ? `impresora .${String(p.ip).split('.').pop()}` : 'impresora');
-  return c && c.paperName ? `${base} · ${c.paperName}` : base;
-}
-
 export default function PdfView({ files, deviceName, pageInfo, busy, setBusy, onDone }) {
   const [idx, setIdx] = useState(0);
   const [pageCount, setPageCount] = useState(0);
@@ -51,10 +42,7 @@ export default function PdfView({ files, deviceName, pageInfo, busy, setBusy, on
   const [orientation, setOrientation] = useState('auto');
   const [toast, setToast] = useState(null);
   const [pageImg, setPageImg] = useState(null); // { img, wMm, hMm } de la página actual
-  // Corrección de color: 'auto' (la que le toca a la impresora) | 'ninguna' | id.
-  const [cals, setCals] = useState([]);
-  const [colorSel, setColorSel] = useState('auto');
-  const [autoId, setAutoId] = useState(null); // cuál aplicaría la automática
+  const color = useCorreccionColor(deviceName);
   const previewRef = useRef(null);
   const previewCache = useRef(new Map()); // pageIndex -> {dataUrl,wMm,hMm}
 
@@ -76,27 +64,6 @@ export default function PdfView({ files, deviceName, pageInfo, busy, setBusy, on
     });
     return () => { dead = true; };
   }, [current]);
-
-  // Las calibraciones guardadas en esta PC, para poder elegir cuál aplicar.
-  useEffect(() => {
-    let dead = false;
-    window.printlayout.color?.list?.().then((r) => {
-      if (!dead) setCals((r && r.ok && Array.isArray(r.calibrations)) ? r.calibrations : []);
-    }).catch(() => {});
-    return () => { dead = true; };
-  }, []);
-
-  // Cuál aplicaría la opción "Automática" con la impresora elegida ahora.
-  useEffect(() => {
-    let dead = false;
-    if (!deviceName) { setAutoId(null); return undefined; }
-    window.printlayout.color?.forDevice?.(deviceName).then((r) => {
-      if (!dead) setAutoId(r && r.ok ? r.id : null);
-    }).catch(() => { if (!dead) setAutoId(null); });
-    return () => { dead = true; };
-  }, [deviceName]);
-
-  const autoCal = useMemo(() => cals.find((c) => c.id === autoId) || null, [cals, autoId]);
 
   // Páginas que se van a imprimir, con el filtro de impares/pares aplicado.
   // La vista previa recorre SOLO estas, así se ve exactamente lo que va a salir.
@@ -253,8 +220,7 @@ export default function PdfView({ files, deviceName, pageInfo, busy, setBusy, on
         pages, dpi: 240,
         sizeMode, scalePct, orientation,
         deviceName, copies, collate,
-        colorCalId: (colorSel === 'auto' || colorSel === 'ninguna') ? null : colorSel,
-        noColorCorrection: colorSel === 'ninguna',
+        ...color.args,
         docName: `PDF: ${current.name}`,
       });
       setBusy(false);
@@ -418,28 +384,7 @@ export default function PdfView({ files, deviceName, pageInfo, busy, setBusy, on
 
         {pageInfo?.duplex && <div style={{ fontSize: 11, opacity: 0.6 }}>Doble faz: sí (según “Configurar impresora”).</div>}
 
-        {/* Qué corrección de color se aplica. Por defecto la de la impresora
-            (lo de siempre); acá se puede usar otra o imprimir sin ninguna. */}
-        {cals.length > 0 && (
-          <div>
-            <div style={label}>Corrección de color</div>
-            <select value={colorSel} onChange={(e) => setColorSel(e.target.value)} disabled={busy}
-              style={{ ...numInput, width: '100%' }}>
-              <option value="auto">
-                Automática{autoCal ? ` — ${nombreCal(autoCal)}` : ' — ninguna para esta impresora'}
-              </option>
-              <option value="ninguna">Sin corrección (tal cual el archivo)</option>
-              {cals.map((c) => (
-                <option key={c.id} value={c.id}>Usar: {nombreCal(c)}</option>
-              ))}
-            </select>
-            {colorSel !== 'auto' && (
-              <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>
-                Vale solo para este envío. La impresora sigue con la suya.
-              </div>
-            )}
-          </div>
-        )}
+        <CorreccionColor estado={color} disabled={busy} label={label} select={numInput} />
 
         <div style={{ flex: 1 }} />
         {toast && <div style={{ fontSize: 12, color: '#fca5a5' }}>{toast}</div>}
