@@ -157,7 +157,32 @@ console.log('\n8) Con una grilla hecha por la app (computeGrid)');
   }
 }
 
-console.log('\n9) Las ondas son ABIERTAS: no son el contorno de una pieza');
+console.log('\n9) Separación ENTRE FILAS: la onda no se entera');
+{
+  // Mariano, después de cortar en papel: levantan el descarte para revisar el
+  // corte, y con todo pegado por los 4 lados el descarte queda en pedacitos
+  // sueltos. Con una calle entre filas queda de una pieza y se levanta entero.
+  // La onda va a lo ancho de la fila, así que la separación vertical no la toca.
+  const D = 40, sep = 3;
+  const cells = [...fila(3, D, 10, 10), ...fila(3, D, 10, 10 + D + sep)];
+  const cuts = cellsToSerpentineCircleCuts(cells);
+  check('2 filas separadas → siguen siendo 2 ondas por fila', cuts.length === 4, String(cuts.length));
+  check('contra 6 círculos sueltos', cellsToCircleCuts(cells).length === 6);
+  // Y los círculos no se tocan entre filas: queda la calle.
+  const c1 = cells[0], c2 = cells[3];
+  const entre = (c2.y + D / 2) - (c1.y + D / 2) - D;
+  check(`queda la calle de ${sep} mm entre filas`, Math.abs(entre - sep) < 0.01, entre.toFixed(2));
+  // Cada círculo, igual de entero que antes.
+  const todos = cuts.flat();
+  const enteros = cells.every((c) => {
+    const cx = c.x + c.w / 2, cy = c.y + c.h / 2, r = Math.min(c.w, c.h) / 2;
+    const sobre = todos.filter((p) => Math.abs(dist(p, [cx, cy]) - r) < 0.01);
+    return new Set(sobre.map((p) => Math.floor(angDe(p, cx, cy) / 10))).size === 36;
+  });
+  check('todos los círculos siguen enteros', enteros);
+}
+
+console.log('\n10) Las ondas son ABIERTAS: no son el contorno de una pieza');
 {
   // Esto no es un detalle: la "zona segura" del preview achicaba cada recorrido
   // como si fuera un polígono cerrado, y con las ondas dibujaba un engendro

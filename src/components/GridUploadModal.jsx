@@ -157,7 +157,7 @@ export default function GridUploadModal({
       // Corte lineal: piezas PEGADAS (separación 0) para que una sola línea corte
       // el borde compartido de dos piezas vecinas.
       spacingX: (linearCut || serpentineCut) ? 0 : (parseNum(spacingX) || 0),
-      spacingY: (linearCut || serpentineCut) ? 0 : (parseNum(spacingY) || 0),
+      spacingY: linearCut ? 0 : (parseNum(spacingY) || 0),
       bottomReserveMm,
       topReserveMm,
     };
@@ -477,13 +477,17 @@ export default function GridUploadModal({
                 className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500 disabled:cursor-not-allowed"
               />
             </label>
-            <label className={(linearCut || serpentineCut) ? 'opacity-40' : ''}>
+            <label className={linearCut ? 'opacity-40' : ''}>
               <span className="block mb-1">Sep. vert. (mm)</span>
               <input
-                value={(linearCut || serpentineCut) ? '0' : spacingY}
-                disabled={linearCut || serpentineCut}
+                value={linearCut ? '0' : spacingY}
+                disabled={linearCut}
                 onChange={(e) => setSpacingY(e.target.value)}
-                title={(linearCut || serpentineCut) ? 'Las piezas van pegadas (separación 0).' : undefined}
+                title={linearCut
+                  ? 'Corte lineal: las piezas van pegadas (separación 0).'
+                  : (serpentineCut
+                    ? 'Con corte continuo esta separación SÍ se puede usar: deja una calle entre filas para poder levantar el descarte de una tirada.'
+                    : undefined)}
                 className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500 disabled:cursor-not-allowed"
               />
             </label>
@@ -529,10 +533,10 @@ export default function GridUploadModal({
                     solo trazo: mitad de abajo de uno, mitad de arriba del siguiente, y
                     una segunda onda completa los c&iacute;rculos. La cuchilla baja{' '}
                     <b>2 veces por fila</b> en lugar de una por pieza, y no frena en
-                    ninguna uni&oacute;n. Los c&iacute;rculos quedan <b>PEGADOS</b> (separaci&oacute;n y
-                    margen de corte en 0). Se tocan en un punto, no en una l&iacute;nea: la
-                    demas&iacute;a del dise&ntilde;o se mantiene en todo el borde salvo en esos
-                    puntos. <b>Probalo en papel antes de una tirada grande.</b>
+                    ninguna uni&oacute;n. Pegados van solo <b>a lo ancho</b> (sep. horizontal y
+                    margen de corte en 0); la <b>separaci&oacute;n vertical la elig&iacute;s vos</b>:
+                    con unos mil&iacute;metros entre filas, el descarte queda de una sola
+                    pieza y lo levant&aacute;s entero para revisar el corte.
                   </span>
                 </span>
               </label>
