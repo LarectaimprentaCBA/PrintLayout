@@ -593,6 +593,18 @@ function ListView({ cals, printers, manualIp, canShare, busy, nameForIp, printer
   const [editando, setEditando] = useState(null); // cola que se está reasignando
   const localHasIp = (ip) => !!ip && (printers.some((p) => p.ip === ip) || Object.values(manualIp || {}).includes(ip));
   const scrollToManual = () => manualRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  // Las IPs que alguna calibración está esperando y esta PC todavía no sabe
+  // cuál de sus impresoras es. Sirven de botón: en vez de averiguar y tipear la
+  // IP, se elige de las que faltan.
+  const ipsFaltantes = useMemo(() => {
+    const s = new Set();
+    for (const c of cals) {
+      const ip = c.correctPrinter && c.correctPrinter.ip;
+      if (ip && !localHasIp(ip)) s.add(ip);
+    }
+    return [...s];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cals, printers, manualIp]);
   return (
     <>
       {cartas && (
@@ -712,8 +724,12 @@ function ListView({ cals, printers, manualIp, canShare, busy, nameForIp, printer
               {c.origen === 'importada' && <div className="text-[10px] text-ink-500">importada{c.archivoOrigen?.name ? ' de ' + c.archivoOrigen.name : ''}</div>}
               {!localHasIp(c.correctPrinter?.ip) && (
                 <div className="mt-1 flex items-start gap-2 rounded border border-amber-700/50 bg-amber-950/30 px-2 py-1 text-[11px] text-amber-300">
-                  <span>Esta PC no tiene ninguna impresora con IP {c.correctPrinter?.ip || '(sin IP)'}: asignala en “Impresoras sin IP visible” o la corrección no se va a aplicar.</span>
-                  <button onClick={scrollToManual} className="shrink-0 rounded border border-amber-700 px-1.5 py-0.5 text-[10px] hover:bg-amber-900/40">Asignar IP</button>
+                  <span>
+                    Esta PC todavía no sabe cuál de sus impresoras es la{' '}
+                    <b className="font-mono">{c.correctPrinter?.ip || '(sin IP)'}</b>, así que esta
+                    corrección no se le va a aplicar a nada. Decíselo abajo (una vez por PC).
+                  </span>
+                  <button onClick={scrollToManual} className="shrink-0 rounded border border-amber-700 px-1.5 py-0.5 text-[10px] hover:bg-amber-900/40">Decirle cuál es</button>
                 </div>
               )}
               <div className="mt-2 flex flex-wrap gap-2">
@@ -777,11 +793,39 @@ function ListView({ cals, printers, manualIp, canShare, busy, nameForIp, printer
       {printersWithoutIp.length > 0 && (
         <div ref={manualRef} className="mt-4 rounded border border-ink-700 bg-ink-950/40 p-3">
           <p className="text-xs font-medium text-ink-200">Impresoras sin IP visible (asignalas a mano)</p>
-          <p className="mb-2 text-[11px] text-ink-500">Algunas colas (WSD, EpsonNet) no muestran la IP. Escribí la IP de la máquina para que la corrección la reconozca; queda guardada contra esta cola.</p>
+          <p className="text-[11px] text-ink-500">
+            Algunas colas (WSD, EpsonNet) no le dicen a Windows en qué IP están, así que la app
+            no puede saber sola qué máquina son. Se hace <b>una vez por PC</b> y queda guardado.
+          </p>
+          {ipsFaltantes.length > 0 && (
+            <p className="mt-1 text-[11px] text-amber-300">
+              Falta decir cuál de estas es {ipsFaltantes.map((ip, i) => (
+                <span key={ip}>{i > 0 ? ' y ' : ''}<b className="font-mono">{ip}</b></span>
+              ))}. Si sabés cuál, tocá el botón verde; si no, mirá el <b>puerto</b>: la parte del
+              medio es el número de la máquina y es el mismo en todas las PC.
+            </p>
+          )}
           {printersWithoutIp.map((p) => (
-            <div key={p.name} className="mt-1 flex flex-wrap items-center gap-2">
-              <span className="flex-1 truncate text-xs text-ink-300" title={p.name}>{p.name}</span>
-              <AsignarIp valor="" onGuardar={(v) => onSetManual(p.name, v)} />
+            <div key={p.name} className="mt-2 border-t border-ink-800 pt-2 first:border-0 first:pt-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="flex-1 truncate text-xs text-ink-300" title={p.name}>{p.name}</span>
+                <AsignarIp valor="" onGuardar={(v) => onSetManual(p.name, v)} />
+              </div>
+              {p.port && <div className="mt-0.5 font-mono text-[10px] text-ink-500">puerto: {p.port}</div>}
+              {ipsFaltantes.length > 0 && (
+                <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-ink-400">
+                  <span>¿Es esta?</span>
+                  {ipsFaltantes.map((ip) => (
+                    <button
+                      key={ip}
+                      onClick={() => onSetManual(p.name, ip)}
+                      className="rounded border border-green-800 px-1.5 py-0.5 font-mono text-[11px] text-green-300 hover:bg-green-950/40"
+                    >
+                      {ip}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </div>
