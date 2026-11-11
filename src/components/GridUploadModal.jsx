@@ -62,6 +62,10 @@ export default function GridUploadModal({
   // por celda. Fuerza piezas PEGADAS (separación 0). Solo tiene sentido con corte
   // rectangular (no círculo). Default OFF.
   const [linearCut, setLinearCut] = useState(!!ini.linearCut);
+  // Corte continuo de círculos pegados ("en S"): dos ondas por fila en vez de
+  // un círculo cerrado por pieza. Exige círculos PEGADOS y margen de corte 0
+  // (si no, las mitades no empalman). Solo con corte circular. Default OFF.
+  const [serpentineCut, setSerpentineCut] = useState(!!ini.serpentineCut);
   const [cutShape, setCutShape] = useState(ini.cutShape || defaultCutShape || 'rect'); // 'rect' | 'circle'
   const [diameter, setDiameter] = useState(s(ini.diameter, '60'));
   const [rotateMode, setRotateMode] = useState(ini.rotateMode || 'auto'); // 'auto' | 'direct' | 'rotated'
@@ -152,12 +156,12 @@ export default function GridUploadModal({
       marginY: parseNum(margin) || 0,
       // Corte lineal: piezas PEGADAS (separación 0) para que una sola línea corte
       // el borde compartido de dos piezas vecinas.
-      spacingX: linearCut ? 0 : (parseNum(spacingX) || 0),
-      spacingY: linearCut ? 0 : (parseNum(spacingY) || 0),
+      spacingX: (linearCut || serpentineCut) ? 0 : (parseNum(spacingX) || 0),
+      spacingY: (linearCut || serpentineCut) ? 0 : (parseNum(spacingY) || 0),
       bottomReserveMm,
       topReserveMm,
     };
-  }, [paperW, paperH, cellW, cellH, diameter, cutShape, margin, spacingX, spacingY, linearCut, bottomReserveMm, topReserveMm]);
+  }, [paperW, paperH, cellW, cellH, diameter, cutShape, margin, spacingX, spacingY, linearCut, serpentineCut, bottomReserveMm, topReserveMm]);
 
   const valid = (
     params.paperW > 0 && params.paperH > 0
@@ -178,7 +182,9 @@ export default function GridUploadModal({
 
   if (!open) return null;
 
-  const cutMarginMm = Math.max(0, parseNum(cutMargin) || 0);
+  // Corte continuo: el círculo tiene que tocar el borde de su casillero para
+  // engancharse con el vecino. Cualquier margen los separa y la onda se corta.
+  const cutMarginMm = serpentineCut ? 0 : Math.max(0, parseNum(cutMargin) || 0);
   const markMarginMm = Math.max(0, parseNum(markMargin) || 0);
   const willCut = result?.cells?.length > 0 && markMarginMm > 0;
 
@@ -203,6 +209,8 @@ export default function GridUploadModal({
       markMarginMm,
       cutShape,
       doubleSided,
+      // Corte continuo de círculos pegados ("en S").
+      serpentineCut,
       // Corte lineal (guillotina): líneas completas + piezas pegadas.
       linearCut,
       // ¿Se dibuja el QR de corte en la hoja? Al crear "Con QR" además reservó
@@ -222,6 +230,7 @@ export default function GridUploadModal({
         markMargin: markMarginMm,
         cutShape,
         linearCut,
+        serpentineCut,
         diameter: parseNum(diameter) || 0,
         rotateMode,
       },
@@ -458,23 +467,23 @@ export default function GridUploadModal({
                 className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
               />
             </label>
-            <label className={linearCut ? 'opacity-40' : ''}>
+            <label className={(linearCut || serpentineCut) ? 'opacity-40' : ''}>
               <span className="block mb-1">Sep. horiz. (mm)</span>
               <input
-                value={linearCut ? '0' : spacingX}
-                disabled={linearCut}
+                value={(linearCut || serpentineCut) ? '0' : spacingX}
+                disabled={linearCut || serpentineCut}
                 onChange={(e) => setSpacingX(e.target.value)}
-                title={linearCut ? 'Corte lineal: las piezas van pegadas (separación 0).' : undefined}
+                title={(linearCut || serpentineCut) ? 'Las piezas van pegadas (separación 0).' : undefined}
                 className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500 disabled:cursor-not-allowed"
               />
             </label>
-            <label className={linearCut ? 'opacity-40' : ''}>
+            <label className={(linearCut || serpentineCut) ? 'opacity-40' : ''}>
               <span className="block mb-1">Sep. vert. (mm)</span>
               <input
-                value={linearCut ? '0' : spacingY}
-                disabled={linearCut}
+                value={(linearCut || serpentineCut) ? '0' : spacingY}
+                disabled={linearCut || serpentineCut}
                 onChange={(e) => setSpacingY(e.target.value)}
-                title={linearCut ? 'Corte lineal: las piezas van pegadas (separación 0).' : undefined}
+                title={(linearCut || serpentineCut) ? 'Las piezas van pegadas (separación 0).' : undefined}
                 className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500 disabled:cursor-not-allowed"
               />
             </label>
@@ -488,7 +497,9 @@ export default function GridUploadModal({
               <label title="Cuanto se mete la cuchilla hacia adentro de la celda. 0 = corta justo en el borde.">
                 <span className="block mb-1">Margen de corte (mm)</span>
                 <input
-                  value={cutMargin}
+                  value={serpentineCut ? '0' : cutMargin}
+                  disabled={serpentineCut}
+                  title={serpentineCut ? 'Corte continuo: el círculo tiene que tocar el borde del casillero.' : undefined}
                   onChange={(e) => setCutMargin(e.target.value)}
                   className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1.5 text-sm text-ink-100 outline-none focus:border-accent-500"
                 />
@@ -502,6 +513,30 @@ export default function GridUploadModal({
                 />
               </label>
             </div>
+
+            {cutShape === 'circle' && (
+              <label className="mt-2 flex cursor-pointer items-start gap-2">
+                <input
+                  type="checkbox"
+                  checked={serpentineCut}
+                  onChange={(e) => setSerpentineCut(e.target.checked)}
+                  className="mt-0.5 accent-accent-600"
+                />
+                <span className="text-xs">
+                  <span className="block text-ink-200">Corte continuo (en S)</span>
+                  <span className="block text-[10px] leading-snug text-ink-500">
+                    En vez de dar la vuelta a cada c&iacute;rculo, corta toda la fila de un
+                    solo trazo: mitad de abajo de uno, mitad de arriba del siguiente, y
+                    una segunda onda completa los c&iacute;rculos. La cuchilla baja{' '}
+                    <b>2 veces por fila</b> en lugar de una por pieza, y no frena en
+                    ninguna uni&oacute;n. Los c&iacute;rculos quedan <b>PEGADOS</b> (separaci&oacute;n y
+                    margen de corte en 0). Se tocan en un punto, no en una l&iacute;nea: la
+                    demas&iacute;a del dise&ntilde;o se mantiene en todo el borde salvo en esos
+                    puntos. <b>Probalo en papel antes de una tirada grande.</b>
+                  </span>
+                </span>
+              </label>
+            )}
 
             {cutShape === 'rect' && (
               <label className="mt-2 flex cursor-pointer items-start gap-2">

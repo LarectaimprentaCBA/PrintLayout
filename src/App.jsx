@@ -81,7 +81,7 @@ import {
   cutIdForPage,
   cutPageCount,
 } from './lib/templates.js';
-import { generateCuts, generateCutsPerCell, generateCutsWithTroquel, cellsToLinearCuts } from './lib/grid.js';
+import { generateCuts, generateCutsPerCell, generateCutsWithTroquel, cellsToLinearCuts, cellsToSerpentineCircleCuts, cutsForGridMode, troquelCutForCell } from './lib/grid.js';
 import { buildOrderJobs } from './intake/buildOrderJob.js';
 import { contourCutsByAssignments } from './lib/stickerContour.js';
 import {
@@ -1442,8 +1442,21 @@ export default function App() {
       const perCellShapes = celdas.some((c) => c.shape);
       const troquelOn = next.troquel && next.troquel.enabled && (Number(next.troquel.diameterMm) > 0);
       const linearOn = next.linearCut === true;
+      const serpentineOn = next.serpentineCut === true && shape === 'circle' && !perCellShapes;
       if (markM <= 0) {
         next.cortes = [];
+      } else if (serpentineOn) {
+        // Corte continuo de círculos pegados: dos ondas por fila. La pieza recién
+        // se suelta con la SEGUNDA onda, así que los agujeros del troquel van
+        // antes de las dos (si no, se cortarían con la pieza ya libre).
+        const agujeros = troquelOn
+          ? celdas.map((c) => troquelCutForCell(c, {
+            diameterMm: next.troquel.diameterMm,
+            fromTopMm: next.troquel.fromTopMm,
+            dxMm: next.troquel.dxMm,
+          })).filter(Boolean)
+          : [];
+        next.cortes = [...agujeros, ...cellsToSerpentineCircleCuts(celdas)];
       } else if (linearOn) {
         // Corte lineal (guillotina): líneas completas de lado a lado, piezas
         // pegadas, perímetro corrido hacia afuera. Solo para grillas regulares
@@ -1690,6 +1703,7 @@ export default function App() {
     doubleSided = false,
     conQr = true,
     linearCut = false,
+    serpentineCut = false,
     gridParams,
   }) => {
     // Solo generamos cortes si va a poder usarlos (necesita marcas L para
@@ -1698,7 +1712,7 @@ export default function App() {
     // cortes por celda. Piezas pegadas (el modal fuerza separación 0) + perímetro
     // 2mm hacia afuera. Solo para grillas regulares de fondo liso.
     const cortes = markMarginMm > 0
-      ? (linearCut ? cellsToLinearCuts(cells, { overcutMm: 1 }) : generateCuts(cells, { cutShape, cutMarginMm }))
+      ? cutsForGridMode(cells, { cutShape, cutMarginMm, linearCut, serpentineCut })
       : [];
     // Doble faz: NO horneamos las celdas del dorso. Se derivan al vuelo desde
     // `celdas` espejando segun backMirror (cellPositions/mirrorCellsForBack).
@@ -1722,6 +1736,9 @@ export default function App() {
       // Corte lineal (guillotina). Se persiste para que al re-editar propiedades
       // (handleUpdateTemporalTemplate) siga generando líneas completas.
       linearCut,
+      // Corte continuo de círculos pegados ("en S"): dos ondas por fila en vez
+      // de un círculo cerrado por pieza.
+      serpentineCut,
       // ¿Se dibuja el QR de corte en la hoja? Al crear "Con QR" ya reservó la
       // franja inferior (las celdas vienen subidas en `cells`).
       conQr,
@@ -3646,13 +3663,13 @@ export default function App() {
   const submitEditGeometry = async ({
     paperWidthMm, paperHeightMm, cells,
     cutMarginMm = 0, markMarginMm = 0, cutShape = 'rect', doubleSided = false,
-    conQr = true, linearCut = false, gridParams,
+    conQr = true, linearCut = false, serpentineCut = false, gridParams,
   }) => {
     const base = editGeometryTemplate;
     setEditGeometryTemplate(null);
     if (!base) return;
     const cortes = markMarginMm > 0
-      ? (linearCut ? cellsToLinearCuts(cells, { overcutMm: 1 }) : generateCuts(cells, { cutShape, cutMarginMm }))
+      ? cutsForGridMode(cells, { cutShape, cutMarginMm, linearCut, serpentineCut })
       : [];
     try {
       await update({
@@ -3669,6 +3686,7 @@ export default function App() {
         doubleSided,
         conQr,
         linearCut,
+        serpentineCut,
         backMirror: doubleSided ? (base.backMirror || 'x') : undefined,
         backRotate180: doubleSided ? !!base.backRotate180 : undefined,
         backFlip: undefined,
@@ -4969,6 +4987,7 @@ export default function App() {
               doubleSided: !!editGeometryTemplate.doubleSided,
               conQr: editGeometryTemplate.conQr !== false,
               linearCut: !!editGeometryTemplate.linearCut,
+              serpentineCut: !!editGeometryTemplate.serpentineCut,
             }}
             title={`Editar medidas — ${editGeometryTemplate.name}`}
             description="Cambiá medidas, márgenes, separación y cortes. Se guarda sobre la misma plantilla."

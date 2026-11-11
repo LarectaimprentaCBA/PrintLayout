@@ -247,6 +247,113 @@ export function cellsToCircleCuts(cells, { cutMarginMm = 0, segments = 64 } = {}
   return polylines;
 }
 
+// Corte CONTINUO de círculos pegados ("en S").
+//
+// Para qué: hoy cada círculo es un recorrido cerrado aparte. Una fila de 8 son 8
+// bajadas de cuchilla, 8 subidas, 8 viajes en el aire y 16 arranques/frenadas, y
+// ahí es donde el plotter pierde el tiempo (la curva en sí es rápida).
+//
+// La idea: con los círculos PEGADOS, el punto más a la derecha de uno es el más
+// a la izquierda del siguiente. Entonces se puede hacer la mitad de ABAJO del
+// primero, seguir con la mitad de ARRIBA del segundo, abajo del tercero… en un
+// solo trazo con forma de onda. Una segunda onda hace las mitades que faltan y
+// los círculos quedan completos. Una fila entera son DOS recorridos.
+//
+// Y en el punto de unión las dos mitades llegan con la MISMA tangente (vertical),
+// así que la onda no tiene esquina: la cuchilla no frena ni gira.
+//
+// OJO: los círculos se tocan en un PUNTO, no comparten una línea. Entre dos
+// vecinos sigue quedando el recorte con forma de triangulito, así que la demasía
+// del arte se conserva en todo el borde salvo en esos 4 puntos. Por eso esto NO
+// exige fondo liso (a diferencia de cellsToLinearCuts).
+//
+// Si una fila no cumple (hay separación, o los círculos no son todos iguales),
+// esa fila cae al corte de siempre: círculos cerrados uno por uno.
+export function cellsToSerpentineCircleCuts(cells, { segments = 64, overcutDeg = 2 } = {}) {
+  if (!Array.isArray(cells) || cells.length === 0) return [];
+  const EPS = 0.05; // mm
+  const half = Math.max(4, Math.round(segments / 2));
+  const d = (overcutDeg * Math.PI) / 180;
+
+  // Punto del círculo en el ángulo a. Coordenadas mm top-left (y crece hacia
+  // abajo), así que a=90° cae ABAJO en la hoja y a=270° arriba.
+  const pt = (cx, cy, r, a) => [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+
+  // Media circunferencia de izquierda a derecha, por abajo o por arriba.
+  // Abajo: a de 180° a 0°. Arriba: a de 180° a 360°. Las dos empiezan en el
+  // punto de más a la izquierda y terminan en el de más a la derecha.
+  const medio = (cx, cy, r, abajo, desdeA, hastaA) => {
+    const a0 = desdeA != null ? desdeA : Math.PI;
+    const a1 = hastaA != null ? hastaA : (abajo ? 0 : 2 * Math.PI);
+    const out = [];
+    for (let i = 0; i <= half; i++) out.push(pt(cx, cy, r, a0 + (a1 - a0) * (i / half)));
+    return out;
+  };
+
+  // Filas: celdas con la misma Y, ordenadas por X.
+  const filas = new Map();
+  for (const c of cells) {
+    const k = Math.round(c.y / EPS);
+    if (!filas.has(k)) filas.set(k, []);
+    filas.get(k).push(c);
+  }
+  const clavesOrdenadas = [...filas.keys()].sort((a, b) => a - b);
+
+  const cuts = [];
+  for (const k of clavesOrdenadas) {
+    const fila = filas.get(k).slice().sort((a, b) => a.x - b.x);
+    // Tramos de celdas IGUALES y PEGADAS: solo ahí se puede encadenar.
+    let i = 0;
+    while (i < fila.length) {
+      let j = i;
+      while (j + 1 < fila.length
+        && Math.abs(fila[j + 1].x - (fila[j].x + fila[j].w)) < EPS
+        && Math.abs(fila[j + 1].w - fila[j].w) < EPS
+        && Math.abs(fila[j + 1].h - fila[j].h) < EPS) j++;
+      const tramo = fila.slice(i, j + 1);
+      if (tramo.length < 2) {
+        // Uno solo: no hay con quién encadenar, va como siempre.
+        cuts.push(...cellsToCircleCuts(tramo, { cutMarginMm: 0, segments }));
+      } else {
+        for (const esB of [false, true]) {
+          const onda = [];
+          tramo.forEach((c, n) => {
+            const cx = c.x + c.w / 2;
+            const cy = c.y + c.h / 2;
+            const r = Math.min(c.w, c.h) / 2;
+            const abajo = (n % 2 === 0) !== esB;
+            // Las PUNTAS de la onda se pasan unos grados hacia la otra mitad,
+            // para que las dos pasadas se crucen y la pieza no quede colgando
+            // de un hilo si el plotter afloja un pelo.
+            const primera = n === 0;
+            const ultima = n === tramo.length - 1;
+            const a0 = Math.PI + (primera ? (abajo ? d : -d) : 0);
+            const a1 = (abajo ? 0 : 2 * Math.PI) + (ultima ? (abajo ? -d : d) : 0);
+            const pts = medio(cx, cy, r, abajo, a0, a1);
+            onda.push(...(n === 0 ? pts : pts.slice(1)));
+          });
+          // La segunda onda va al revés: arranca donde terminó la primera y la
+          // cuchilla no cruza la fila en el aire.
+          cuts.push(esB ? onda.reverse() : onda);
+        }
+      }
+      i = j + 1;
+    }
+  }
+  return cuts;
+}
+
+// Qué cortes le tocan a una grilla regular según el modo elegido. Los lugares
+// que arman una grilla (crearla y re-editar su geometría) tienen que decidir
+// igual, así que la regla vive acá y no copiada en cada uno.
+export function cutsForGridMode(cells, {
+  cutShape = 'rect', cutMarginMm = 0, linearCut = false, serpentineCut = false, overcutMm = 1,
+} = {}) {
+  if (linearCut) return cellsToLinearCuts(cells, { overcutMm });
+  if (serpentineCut && cutShape === 'circle') return cellsToSerpentineCircleCuts(cells);
+  return generateCuts(cells, { cutShape, cutMarginMm });
+}
+
 // Radio de esquina (mm) por tamaño de rótulo escolar. Única fuente de los radios
 // del CORTE redondeado (el PDF dibuja el arte a celda llena; el redondeo vive en
 // el .plt). Si cambian, hay que borrar el .plt fijo para que se regenere.
