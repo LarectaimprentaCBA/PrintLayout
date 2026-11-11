@@ -17,7 +17,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pl-colorstore-'));
 app.setPath('userData', tmp);
 
 const store = require('../store.cjs');
-const { resolveColorApplier } = require('../../print-core.cjs');
+const { resolveColorApplier, calibracionParaImpresora } = require('../../print-core.cjs');
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => {
@@ -129,6 +129,55 @@ store.setManualPrinter(COLA_PLOTTER, { ip: IP_REAL, queue: COLA_PLOTTER, port: P
   const r3 = await resolveColorApplier({ deviceName: COLA_PLOTTER, showDialog: false, noColorCorrection: true });
   check('la carta de calibración se manda SIN corregir', !r3.applier);
   if (r3.applier) r3.applier.dispose();
+
+  // ── 9) Elegir la corrección a mano en la ventana de imprimir ──────────────
+  console.log('\n9) Corrección elegida a mano (ventana de imprimir PDF)');
+  {
+    // Una desactivada, para probar que elegirla a mano igual la usa.
+    store.save({
+      id: 'cal-guardada', engineVersion: 1,
+      correctPrinter: { ip: '192.168.100.77', queue: 'Otra impresora' },
+      referencePrinter: { ip: '192.168.100.127', queue: 'RICOH MP C8003 PCL 6' },
+      paperName: '90gr', lutSize: 5, lut: lutTonta(5), active: false,
+    });
+
+    const e1 = await resolveColorApplier({
+      deviceName: 'Microsoft Print to PDF', showDialog: false, colorCalId: 'cal-guardada',
+    });
+    check('usa la elegida aunque la impresora no tenga ninguna', !!e1.applier, JSON.stringify(e1.colorStatus));
+    check('y es esa, no otra', e1.colorCal && e1.colorCal.id === 'cal-guardada', e1.colorCal && e1.colorCal.id);
+    check('queda anotado que la eligió el usuario', e1.colorVia === 'elegida', e1.colorVia);
+    if (e1.applier) e1.applier.dispose();
+
+    const e2 = await resolveColorApplier({
+      deviceName: COLA_PLOTTER, showDialog: false, colorCalId: 'cal-guardada',
+    });
+    check('la elegida le gana a la automática de esa impresora',
+      e2.colorCal && e2.colorCal.id === 'cal-guardada', e2.colorCal && e2.colorCal.id);
+    if (e2.applier) e2.applier.dispose();
+
+    const e3 = await resolveColorApplier({
+      deviceName: COLA_PLOTTER, showDialog: false, colorCalId: 'cal-que-no-existe',
+    });
+    check('si la elegida ya no está, no imprime como si nada', !e3.applier);
+    check('y lo dice', e3.colorStatus.state === 'fallo', JSON.stringify(e3.colorStatus));
+
+    const e4 = await resolveColorApplier({
+      deviceName: COLA_PLOTTER, showDialog: false, noColorCorrection: true, colorCalId: 'cal-guardada',
+    });
+    check('"sin corrección" manda sobre cualquier elegida', !e4.applier);
+
+    const e5 = await resolveColorApplier({ deviceName: COLA_PLOTTER, showDialog: false, colorCalId: null });
+    check('sin elegir nada sigue la automática de siempre',
+      e5.colorCal && e5.colorCal.id === 'cal-plotter', e5.colorCal && e5.colorCal.id);
+    if (e5.applier) e5.applier.dispose();
+
+    // Lo que la pantalla muestra en "Automática (cuál)".
+    const q1 = await calibracionParaImpresora(COLA_PLOTTER);
+    check('la pantalla puede decir cuál aplicaría', q1.cal && q1.cal.id === 'cal-plotter', q1.cal && q1.cal.id);
+    const q2 = await calibracionParaImpresora('Microsoft Print to PDF');
+    check('y que no hay ninguna cuando no la hay', q2.cal === null, q2.cal && q2.cal.id);
+  }
 
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* nada */ }
   console.log(`\nRESULTADO: ${pass} OK, ${fail} FALLAS`);

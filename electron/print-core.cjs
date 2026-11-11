@@ -28,31 +28,62 @@ function dataUrlToBuffer(dataUrl) {
 // siquiera miramos la IP: el nombre de cola no cambia, la IP sí), y si la cola no
 // está asignada, la IP como siempre.
 // Rendimiento: 0 ms si no hay ninguna activa; caché cola→IP si la hay.
-async function resolveColorApplier({ deviceName, showDialog, noColorCorrection }) {
+/**
+ * Qué calibración le toca a esta impresora, sin construir nada. Es la parte
+ * "¿cuál?" de resolveColorApplier, separada para que la pantalla pueda mostrar
+ * cuál se va a aplicar antes de imprimir (IPC color:for-device) sin repetir el
+ * criterio en dos lados.
+ * @returns {Promise<{cal:object|null, ip:string|null, via:string, timedOut:boolean}>}
+ */
+async function calibracionParaImpresora(deviceName) {
+  if (!deviceName || !colorStore.hasAnyActive()) return { cal: null, ip: null, via: '-', timedOut: false };
+  const manualRec = colorStore.getManualPrinter()[deviceName];
+  if (manualRec) {
+    return { cal: colorStore.getActiveForQueue(deviceName), ip: manualRec.ip || null, via: 'cola', timedOut: false };
+  }
+  const manual = colorStore.getManualIp();
+  let ip = colorPrinters.resolveFromCache(deviceName, manual); // ~0 ms
+  let timedOut = false;
+  if (!ip) {
+    const r = await colorPrinters.resolveOneQueue(deviceName, manual, 900);
+    ip = r.ip;
+    timedOut = r.timedOut;
+  }
+  return { cal: ip ? colorStore.getActiveForIp(ip, deviceName) : null, ip, via: 'ip', timedOut };
+}
+
+async function resolveColorApplier({ deviceName, showDialog, noColorCorrection, colorCalId }) {
   let applier = null, colorCal = null, colorIp = null, colorVia = '-';
   let colorStatus = { state: 'no-active' };
   const t0 = Date.now();
   try {
-    if (showDialog === false && !noColorCorrection && deviceName && colorStore.hasAnyActive()) {
-      let cal = null;
-      let timedOut = false;
-      const manualRec = colorStore.getManualPrinter()[deviceName];
-      if (manualRec) {
-        colorVia = 'cola';
-        colorIp = manualRec.ip || null;
-        cal = colorStore.getActiveForQueue(deviceName);
+    // Elegida A MANO en la ventana de impresión: manda sobre la automática, y
+    // vale aunque esa calibración esté desactivada o sea de otra impresora (el
+    // usuario sabe lo que está haciendo; para eso la eligió).
+    if (showDialog === false && !noColorCorrection && colorCalId) {
+      const cal = colorStore.get(colorCalId);
+      colorVia = 'elegida';
+      if (!cal) {
+        colorStatus = { state: 'fallo', reason: 'la corrección de color elegida ya no está en esta PC' };
       } else {
-        colorVia = 'ip';
-        const manual = colorStore.getManualIp();
-        let ip = colorPrinters.resolveFromCache(deviceName, manual); // ~0 ms
-        if (!ip) {
-          const r = await colorPrinters.resolveOneQueue(deviceName, manual, 900);
-          ip = r.ip;
-          timedOut = r.timedOut;
+        const S = cal.lutSize || 17;
+        if (Array.isArray(cal.lut) && cal.lut.length === S * S * S * 3) {
+          applier = new ColorApplier({ V: cal.lut, S });
+          colorCal = cal;
+          colorIp = (cal.correctPrinter && cal.correctPrinter.ip) || null;
+          colorStatus = { state: 'no-active' }; // lo pisa runPrintJob al aplicar
+        } else {
+          colorStatus = { state: 'fallo', reason: 'la tabla de la calibración elegida es inválida' };
         }
-        colorIp = ip;
-        cal = ip ? colorStore.getActiveForIp(ip, deviceName) : null;
       }
+      return { applier, colorCal, colorIp, colorVia, colorStatus, colorResolveMs: Date.now() - t0 };
+    }
+    if (showDialog === false && !noColorCorrection && deviceName && colorStore.hasAnyActive()) {
+      const r = await calibracionParaImpresora(deviceName);
+      const cal = r.cal;
+      const timedOut = r.timedOut;
+      colorVia = r.via;
+      colorIp = r.ip;
       if (cal) {
         const S = cal.lutSize || 17;
         const expected = S * S * S * 3;
@@ -86,7 +117,7 @@ async function resolveColorApplier({ deviceName, showDialog, noColorCorrection }
 // propio. Devuelve { ok, color, error?, canceled? }.
 async function runPrintJob({
   pages, pageWidthMm, pageHeightMm, deviceName, copies, showDialog, docName,
-  devmodeB64, noColorCorrection, helperExe, savedDevmodePath, appendDebugLog,
+  devmodeB64, noColorCorrection, colorCalId, helperExe, savedDevmodePath, appendDebugLog,
 }) {
   const log = typeof appendDebugLog === 'function' ? appendDebugLog : () => {};
   if (!Array.isArray(pages) || pages.length === 0) return { ok: false, error: 'No hay paginas para imprimir.' };
@@ -94,7 +125,7 @@ async function runPrintJob({
   if (!helperExe) return { ok: false, error: 'Falta un archivo de PrintLayout (PrintHelper.exe), que es el que manda las hojas a la impresora. Casi siempre lo borra el antivirus: agregá una exclusión para la carpeta de PrintLayout y volvé a instalarlo.' };
 
   let { applier, colorCal, colorIp, colorVia, colorStatus, colorResolveMs } =
-    await resolveColorApplier({ deviceName, showDialog, noColorCorrection });
+    await resolveColorApplier({ deviceName, showDialog, noColorCorrection, colorCalId });
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'printlayout-print-'));
   const pagePaths = [];
@@ -216,4 +247,4 @@ async function runPrintJob({
   });
 }
 
-module.exports = { runPrintJob, resolveColorApplier, dataUrlToBuffer };
+module.exports = { runPrintJob, resolveColorApplier, calibracionParaImpresora, dataUrlToBuffer };

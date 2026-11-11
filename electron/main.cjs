@@ -1964,6 +1964,17 @@ ipcMain.handle('color:list', async () => {
   catch (err) { return { ok: false, error: err.message, calibrations: [] }; }
 });
 
+// Qué corrección de color le tocaría a esta impresora si no se elige ninguna a
+// mano. Lo usa la ventana de imprimir para poder decir "Automática (cuál)" en
+// vez de dejarte adivinando. Mismo criterio que al imprimir: lo resuelve el
+// propio print-core, no una copia.
+ipcMain.handle('color:for-device', async (_evt, deviceName) => {
+  try {
+    const r = await printCore.calibracionParaImpresora(deviceName);
+    return { ok: true, id: r.cal ? r.cal.id : null, ip: r.ip || null, via: r.via, timedOut: r.timedOut };
+  } catch (err) { return { ok: false, error: err.message, id: null }; }
+});
+
 ipcMain.handle('color:save', async (_evt, cal) => {
   try { return { ok: true, calibration: colorStore.save(cal) }; }
   catch (err) { return { ok: false, error: err.message }; }

@@ -435,7 +435,7 @@ function ordenarCopias(paginas, copies, collate) {
   return { paginas: paginas.slice(), copias: n };
 }
 
-async function printPdf({ path: pdfPath, pages, dpi, sizeMode, scalePct, orientation, deviceName, copies, docName, collate }) {
+async function printPdf({ path: pdfPath, pages, dpi, sizeMode, scalePct, orientation, deviceName, copies, docName, collate, colorCalId, noColorCorrection }) {
   if (!pdfPath || !allowedPaths.has(pdfPath)) return { ok: false, error: 'Archivo no permitido.' };
   const info = await getPageInfo(deviceName);
   if (!info.ok) return info;
@@ -492,6 +492,7 @@ async function printPdf({ path: pdfPath, pages, dpi, sizeMode, scalePct, orienta
       pages: jobPages,
       pageWidthMm: info.paperWmm, pageHeightMm: info.paperHmm,
       deviceName, copies: copiasAlDriver, showDialog: false, docName: withMachine(docName),
+      colorCalId, noColorCorrection,
       helperExe: deps.resolvePrintHelper(),
       savedDevmodePath: deviceName ? deps.devmodeFilePath(deviceName) : null,
       appendDebugLog: deps.appendDebugLog,

@@ -239,6 +239,7 @@ contextBridge.exposeInMainWorld('printlayout', {
   color: {
     listPrinters: () => ipcRenderer.invoke('color:list-printers'),
     list: () => ipcRenderer.invoke('color:list'),
+    forDevice: (deviceName) => ipcRenderer.invoke('color:for-device', deviceName),
     save: (cal) => ipcRenderer.invoke('color:save', cal),
     delete: (id) => ipcRenderer.invoke('color:delete', id),
     setActive: (id, active) => ipcRenderer.invoke('color:set-active', { id, active }),
