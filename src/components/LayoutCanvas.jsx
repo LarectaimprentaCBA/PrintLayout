@@ -10,6 +10,7 @@ import {
   cellNeedsRotation,
 } from '../lib/templates.js';
 import { offsetPolygons } from '../lib/contour/offset.js';
+import { cellsToCircleCuts } from '../lib/grid.js';
 import { coverObjectPosition, coverCropRect, focalPoint } from '../lib/faceDetection.js';
 import { renderPdfPage1Preview } from '../lib/pdfPreview.js';
 import { qrMatrix, qrPlacementMm } from '../lib/exportPdf.js';
@@ -197,13 +198,26 @@ export default function LayoutCanvas({
   const safeCuts = useMemo(() => {
     // OJO: corre antes del early-return por template null.
     if (!showSafety || !template) return null;
-    const cortes = cutsForPage(template, currentPage ?? 0);
+    // La zona segura se achica hacia adentro de la PIEZA, así que necesita el
+    // contorno cerrado de cada una. Con el corte continuo en S, los recorridos
+    // NO son el contorno de una pieza: son ondas abiertas que cruzan la fila
+    // entera. Tomarlas como polígono dibujaba un engendro (media luna cerrada
+    // con una recta a lo ancho de la hoja). Ahí las piezas son los círculos de
+    // las celdas, así que los armamos de nuevo.
+    const cortes = template.serpentineCut === true
+      ? cellsToCircleCuts(cellsForPage(template, currentPage ?? 0, face), { cutMarginMm: 0 })
+      : cutsForPage(template, currentPage ?? 0);
     if (cortes.length === 0) return null;
     const s = safetyMm(template);
     if (!(s > 0)) return null;
     const out = [];
     for (const poly of cortes) {
       if (!poly || poly.length < 3) continue;
+      // Un recorrido ABIERTO no es el contorno de nada: no se puede achicar
+      // hacia adentro. Mejor no dibujar nada que dibujar una forma inventada.
+      const cerrado = Math.hypot(poly[0][0] - poly[poly.length - 1][0],
+        poly[0][1] - poly[poly.length - 1][1]) < 0.05;
+      if (!cerrado) continue;
       const cp = poly.map(([x, y]) => ({ X: Math.round(x * 1000), Y: Math.round(y * 1000) }));
       try {
         const { polys } = offsetPolygons([cp], -s, { joinType: 'miter' });
@@ -215,7 +229,8 @@ export default function LayoutCanvas({
       }
     }
     return out.length ? out : null;
-  }, [showSafety, template?.cortes, template?.cortesPorPagina, template?.safetyMm, currentPage]);
+  }, [showSafety, template?.cortes, template?.cortesPorPagina, template?.safetyMm,
+    template?.serpentineCut, template?.celdas, currentPage, face]);
 
   const scrollRef = useRef(null);
   const [fitScale, setFitScale] = useState(1);

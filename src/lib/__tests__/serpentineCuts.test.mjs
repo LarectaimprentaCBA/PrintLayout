@@ -157,5 +157,25 @@ console.log('\n8) Con una grilla hecha por la app (computeGrid)');
   }
 }
 
+console.log('\n9) Las ondas son ABIERTAS: no son el contorno de una pieza');
+{
+  // Esto no es un detalle: la "zona segura" del preview achicaba cada recorrido
+  // como si fuera un polígono cerrado, y con las ondas dibujaba un engendro
+  // (media luna cerrada con una recta a lo ancho de la hoja). Lo vio Mariano en
+  // la primera prueba. El corte en sí estaba bien: el .plt baja la cuchilla en
+  // el primer punto y la sube en el último, no cierra la figura.
+  const cells = fila(5, 40);
+  for (const [n, onda] of cellsToSerpentineCircleCuts(cells).entries()) {
+    check(`onda ${n + 1}: empieza y termina en puntos distintos`,
+      dist(onda[0], onda[onda.length - 1]) > 1,
+      dist(onda[0], onda[onda.length - 1]).toFixed(2));
+  }
+  // Lo que SÍ es el contorno de cada pieza, y es lo que usa la zona segura.
+  const piezas = cellsToCircleCuts(cells, { cutMarginMm: 0 });
+  check('hay un contorno cerrado por pieza', piezas.length === cells.length, String(piezas.length));
+  check('y cada uno cierra sobre sí mismo',
+    piezas.every((p) => dist(p[0], p[p.length - 1]) < 0.01));
+}
+
 console.log(`\nRESULTADO: ${pass} OK, ${fail} FALLAS`);
 process.exit(fail ? 1 : 0);
