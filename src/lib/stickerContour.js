@@ -11,6 +11,8 @@ import { solidBgRemoval } from './contour/solidBgRemoval.js'
 import { traceContour } from './contour/trace.js'
 import { mergeContours, intersectPolys, CLIPPER_SCALE } from './contour/offset.js'
 import { cellShapePoly } from './grid.js'
+import { fixedShapeCortes, isFixedShape } from './contour/fixedShape.js'
+import { cellNeedsRotation } from './templates.js'
 
 function blobToDataUrl(blob) {
   return new Promise((resolve, reject) => {
@@ -179,6 +181,7 @@ async function dataUrlToBlob(dataUrl) {
  */
 export async function contourCutsByAssignments(assignments, cells, imageMap, {
   params = {}, paramsByImage = null, cache = null, cacheOnly = false,
+  mixedOrientations = false, stats = null,
 } = {}) {
   const cortes = []
   if (!Array.isArray(cells) || !imageMap) return cortes
@@ -222,6 +225,30 @@ export async function contourCutsByAssignments(assignments, cells, imageMap, {
     const clipMarginMm = Math.max(0, Number(p.clipMarginMm) || 0)
     const clipCornerRadiusMm = Math.max(0, Number(p.clipCornerRadiusMm) || 0)
 
+    // FORMA FIJA para esta imagen (rectángulo / círculo / óvalo): no se detecta
+    // nada, el corte va alrededor de donde se imprime. Solo por override de la
+    // imagen. No traza → no depende del caché y sirve aunque la detección falle.
+    if (ov && isFixedShape(ov.shape)) {
+      const fit = image.fitOverride ?? p.fitMode ?? 'contain'
+      const borderMm = Math.max(0, Number(image.frame?.whiteBorderMm ?? p.whiteBorderMm) || 0)
+      const rotated = cellNeedsRotation(cell, image, mixedOrientations)
+      const sBleed = Number(ov.shapeBleedMm) || 0
+      const sRadius = Math.max(0, Number(ov.shapeCornerRadiusMm) || 0)
+      const fw = Math.round(cell.w * 100), fh = Math.round(cell.h * 100)
+      const fKey = 'F:' + [imgId, fw, fh, ov.shape, sBleed, sRadius, fit, borderMm, rotated, image.width, image.height, clipShape, clipMarginMm, clipCornerRadiusMm].join(':')
+      let fBase = mapCache.get(fKey)
+      if (!fBase) {
+        const origin = { x: 0, y: 0, w: cell.w, h: cell.h }
+        const clipPoly = cellShapePoly(origin, { shape: clipShape, cutMarginMm: clipMarginMm, cornerRadiusMm: clipCornerRadiusMm })
+        fBase = fixedShapeCortes(origin, image.width, image.height, {
+          shape: ov.shape, bleedMm: sBleed, cornerRadiusMm: sRadius, fit, borderMm, rotated, clipPoly,
+        })
+        mapCache.set(fKey, fBase)
+      }
+      for (const poly of fBase) cortes.push(poly.map(([x, y]) => [x + cell.x, y + cell.y]))
+      continue
+    }
+
     // Cache por IMAGEN con su "traceKey" = SOLO los params que afectan el TRAZADO.
     // sangría/huecos/suavizado NO entran: son mapeo (re-unen sobre el sc ya
     // trazado = instantáneo). detectHoles SÍ entra: cambia la máscara. En cacheOnly
@@ -245,7 +272,12 @@ export async function contourCutsByAssignments(assignments, cells, imageMap, {
         continue
       }
     }
-    if (!sc) continue
+    if (!sc) {
+      // Sin trazado disponible (caché frío en cacheOnly): el caller decide qué
+      // hacer para no dejar esta imagen sin corte.
+      if (stats) stats.missing = (stats.missing || 0) + 1
+      continue
+    }
 
     // Calcula el contorno UNA vez por (imagen + tamaño de celda + params) en una
     // celda en el origen, y para cada celda solo TRASLADA por (cell.x, cell.y).

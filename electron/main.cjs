@@ -30,6 +30,7 @@ const printCore = require('./print-core.cjs');
 const { buscarPrintHelper, MSG_SIN_HELPER } = require('./helper-path.cjs');
 const qrcutConfig = require('./qrcut/config-store.cjs');
 const quickPrint = require('./quickprint/service.cjs');
+const revistaMaker = require('./revistamaker.cjs');
 
 autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
@@ -1644,6 +1645,18 @@ ipcMain.handle('pdf:repair', async (evt) => {
 
 ipcMain.handle('shell:show-item', (_evt, p) => {
   shell.showItemInFolder(p);
+});
+
+// Botón "Revistas": abre RevistaMaker; si esta PC no la tiene, la baja e
+// instala (una sola vez). El avance va por 'revistamaker:status'.
+ipcMain.handle('revistamaker:open', async (evt) => {
+  const sender = evt.sender;
+  const r = await revistaMaker.abrir({
+    tempDir: app.getPath('temp'),
+    aviso: (s) => { try { if (!sender.isDestroyed()) sender.send('revistamaker:status', s); } catch { /* ventana cerrada */ } },
+  });
+  if (!r.ok) console.warn('[revistamaker]', r.error);
+  return r;
 });
 
 // PDF → Imagen: el renderer rasterizo las paginas y nos manda los bytes raw

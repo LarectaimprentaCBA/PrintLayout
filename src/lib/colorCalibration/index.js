@@ -5,6 +5,7 @@ export { rgbToLab, deltaE, GrillaMedida, Lut3, triInterp } from './colorMath.js'
 export { medir, homografia, mapear, lum } from './reader.js';
 export { calcular, informeCorregida } from './correccion.js';
 export { applyLutRgba } from './applyLut.js';
+export { preservarBlanco } from './blanco.js';
 export * as Code from './code.js';
 export {
   encodeBits, decodeBits, drawCode, readCode, pairByCode, newSessionId,

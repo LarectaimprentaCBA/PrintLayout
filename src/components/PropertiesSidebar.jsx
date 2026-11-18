@@ -5,6 +5,8 @@ import {
   findCellPageInfo,
   cellsHomogeneous,
   fixedPageCount,
+  cellSizeSummary,
+  formatMm,
 } from '../lib/templates.js';
 import { readImageFiles } from '../lib/images.js';
 import SidebarImageItem from './SidebarImageItem.jsx';
@@ -565,6 +567,7 @@ export default function PropertiesSidebar({
               <dt className="text-ink-400">Celdas</dt>
               <dd>{totalCells(template)}</dd>
             </div>
+            <CellSizesRows template={template} />
             {template.dobble && (
               <div className="mt-1 space-y-2 rounded border border-accent-500/30 bg-accent-500/5 px-2 py-2">
                 <input
@@ -1277,6 +1280,65 @@ function CCheck({ label, checked, onChange, disabled = false }) {
   );
 }
 
+// Renglones "Tamaño celda" (+ "Pieza cortada" si el margen de corte la achica).
+// Con medidas mezcladas lista cada medida con su cantidad.
+function CellSizesRows({ template }) {
+  const sizes = cellSizeSummary(template);
+  if (!sizes.length) return null;
+  const MAX = 6;
+  const shown = sizes.slice(0, MAX);
+  const rest = sizes.slice(MAX).reduce((n, s) => n + s.count, 0);
+  const m = Math.max(0, Number(template.cutMarginMm) || 0);
+  const perCellShapes = (template.celdas ?? []).some((c) => c.shape);
+  const shape = template.cutShape ?? 'rect';
+  // Medida final de la pieza una vez cortada: solo cuando es inequívoca (una sola
+  // medida, forma simple y un margen de corte que la achica).
+  let piece = null;
+  if (sizes.length === 1 && m > 0 && !perCellShapes && hasCuts(template)) {
+    const { w, h } = sizes[0];
+    if (shape === 'circle') {
+      const d = Math.min(w, h) - 2 * m;
+      if (d > 0) piece = `Ø ${formatMm(d)} mm`;
+    } else if (shape === 'rect' || shape === 'rounded') {
+      if (w - 2 * m > 0 && h - 2 * m > 0) piece = `${formatMm(w - 2 * m)} × ${formatMm(h - 2 * m)} mm`;
+    }
+  }
+  return (
+    <>
+      <div className="flex justify-between gap-2">
+        <dt className="text-ink-400" title="Ancho × alto de cada celda">{sizes.length === 1 ? 'Tamaño celda' : 'Tamaños'}</dt>
+        <dd className="text-right">
+          {sizes.length === 1 ? (
+            <span>{formatMm(sizes[0].w)} × {formatMm(sizes[0].h)} mm</span>
+          ) : (
+            <ul className="space-y-0.5">
+              {shown.map((s) => (
+                <li key={`${s.w}x${s.h}`}>
+                  <span className="text-ink-400">{s.count} de </span>{formatMm(s.w)} × {formatMm(s.h)} mm
+                </li>
+              ))}
+              {rest > 0 && <li className="text-ink-400">y {rest} más de otras medidas</li>}
+            </ul>
+          )}
+        </dd>
+      </div>
+      {piece && (
+        <div className="flex justify-between gap-2">
+          <dt className="text-ink-400" title="Medida de la pieza ya cortada: la celda menos el margen de corte de cada lado">Pieza cortada</dt>
+          <dd>{piece}</dd>
+        </div>
+      )}
+    </>
+  );
+}
+
+// Formas fijas que puede tomar el corte de UNA imagen en una hoja por contorno.
+const FIXED_SHAPE_OPTS = [
+  ['rect', 'Rectáng.', 'Corta un rectángulo alrededor de la imagen, sin detectar su forma'],
+  ['circle', 'Círculo', 'Corta un círculo (diámetro = el lado más corto de la imagen)'],
+  ['oval', 'Óvalo', 'Corta un óvalo que toca los cuatro lados de la imagen'],
+];
+
 // Ajuste de contorno PROPIO de una imagen (se muestra en "Celda seleccionada"
 // cuando la forma de corte es Contorno). Default = el de la hoja; tildando
 // "ajuste propio" se guarda en template.contourByImage[imgId].
@@ -1295,10 +1357,26 @@ function ContourImageOverride({ template, imgId, onUpdate, onApply, dirty, compu
 
   const byImg = template.contourByImage || {};
   const ov = byImg[imgId] || null;
-  const hasOv = !!ov;
+  // FORMA FIJA: esta imagen no se detecta, se corta como rectángulo/círculo/óvalo
+  // alrededor de donde se imprime. Guarda shape + shapeBleedMm + shapeCornerRadiusMm
+  // en el mismo override; el resto de las claves son del contorno detectado.
+  const SHAPE_KEYS = ['shape', 'shapeBleedMm', 'shapeCornerRadiusMm'];
+  const fixedShape = ov && FIXED_SHAPE_OPTS.some(([v]) => v === ov.shape) ? ov.shape : null;
+  const hasOv = !!ov && Object.keys(ov).some((k) => !SHAPE_KEYS.includes(k));
+  const setShape = (shape) => {
+    const n = { ...byImg };
+    if (shape) {
+      n[imgId] = { ...(ov || {}), shape };
+    } else {
+      const rest = { ...(ov || {}) };
+      for (const k of SHAPE_KEYS) delete rest[k];
+      if (Object.keys(rest).length) n[imgId] = rest; else delete n[imgId];
+    }
+    onUpdate({ contourByImage: n });
+  };
 
   const setOv = (patch) => onUpdate({ contourByImage: { ...byImg, [imgId]: { ...(ov || {}), ...patch } } });
-  const enableOv = () => onUpdate({ contourByImage: { ...byImg, [imgId]: { tolerance: dTol, bleedMm: dBleed, includeHoles: dHoles, smoothMm: dSmooth, outerBorder: dOuter } } });
+  const enableOv = () => onUpdate({ contourByImage: { ...byImg, [imgId]: { ...(ov || {}), tolerance: dTol, bleedMm: dBleed, includeHoles: dHoles, smoothMm: dSmooth, outerBorder: dOuter } } });
   const disableOv = () => {
     const n = { ...byImg };
     delete n[imgId];
@@ -1318,6 +1396,32 @@ function ContourImageOverride({ template, imgId, onUpdate, onApply, dirty, compu
 
   return (
     <div className="mt-2 space-y-2 rounded border border-accent-500/30 bg-accent-500/5 p-2">
+      <div className="text-[11px] font-medium text-ink-200">Corte de esta imagen</div>
+      <div className="flex gap-0.5 rounded border border-ink-700 bg-ink-800 p-0.5">
+        {[[null, 'Detectar', 'Sigue la silueta del dibujo (lo normal)'], ...FIXED_SHAPE_OPTS].map(([val, lbl, tip]) => (
+          <button
+            key={lbl}
+            type="button"
+            title={tip}
+            onClick={() => setShape(val)}
+            className={`flex-1 rounded px-1 py-0.5 text-[10px] ${fixedShape === val ? 'bg-accent-600 text-white' : 'text-ink-300 hover:bg-ink-700'}`}
+          >
+            {lbl}
+          </button>
+        ))}
+      </div>
+      {fixedShape ? (
+        <>
+          <CNum label="Agrandar / achicar" value={ov.shapeBleedMm ?? 0} step={0.1} min={-20} max={20} onChange={(v) => setOv({ shapeBleedMm: v })} />
+          {fixedShape === 'rect' && (
+            <CNum label="Esquinas redondeadas" value={ov.shapeCornerRadiusMm ?? 0} step={0.5} min={0} max={50} onChange={(v) => setOv({ shapeCornerRadiusMm: Math.max(0, v) })} />
+          )}
+          <p className="text-[10px] leading-snug text-ink-500">
+            No detecta la forma: corta {fixedShape === 'rect' ? 'un rectángulo' : fixedShape === 'circle' ? 'un círculo' : 'un óvalo'} alrededor de la imagen. Vale para todas las copias de esta imagen en la hoja. Con número negativo corta por adentro (así no queda filo blanco); positivo, por afuera.
+          </p>
+        </>
+      ) : (
+      <>
       <label className="flex items-center justify-between gap-2">
         <span className="text-[11px] font-medium text-ink-200">Contorno propio de esta imagen</span>
         <input
@@ -1365,7 +1469,9 @@ function ContourImageOverride({ template, imgId, onUpdate, onApply, dirty, compu
           )}
         </>
       ) : (
-        <p className="text-[10px] leading-snug text-ink-500">Usa el ajuste general de la hoja. Tildá para darle uno propio.</p>
+        <p className="text-[10px] leading-snug text-ink-500">Usa el ajuste general de la hoja. Tildá para darle uno propio. Si la detección no sirve para esta imagen, elegí arriba Rectángulo, Círculo u Óvalo.</p>
+      )}
+      </>
       )}
       <ApplyContourButton onApply={onApply} dirty={dirty} computing={computing} />
     </div>

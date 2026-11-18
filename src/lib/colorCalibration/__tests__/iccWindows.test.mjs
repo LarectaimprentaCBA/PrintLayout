@@ -24,6 +24,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { Lut3 } from '../colorMath.js';
+import { preservarBlanco } from '../blanco.js';
 import { Levels } from '../layout.js';
 import { buildIccProfile } from '../icc.js';
 import { construirPerfil } from '../iccExport.js';
@@ -110,7 +111,8 @@ const { bytes, fileName } = construirPerfil(cal);
 const iccPath = path.join(dir, 'perfil.icc');
 fs.writeFileSync(iccPath, Buffer.from(bytes));
 const lut = new Lut3(cal.lutSize);
-lut.V.set(cal.lut);
+// El perfil debe mandar lo MISMO que imprime PrintLayout: la tabla con el blanco limpio.
+lut.V.set(preservarBlanco(cal.lut, cal.lutSize));
 const o = new Float64Array(3);
 const real = comparar(porWindows(iccPath), (c) => {
   lut.apply(c[0], c[1], c[2], o);

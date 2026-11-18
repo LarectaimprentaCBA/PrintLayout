@@ -12,6 +12,7 @@ const { spawn } = require('node:child_process');
 const colorStore = require('./color/store.cjs');
 const colorPrinters = require('./color/printers.cjs');
 const { ColorApplier } = require('./color/apply.cjs');
+const { preservarBlanco } = require('./color/lut.cjs');
 
 // Decodifica una dataURL `data:image/png;base64,xxx` a Buffer.
 function dataUrlToBuffer(dataUrl) {
@@ -68,7 +69,7 @@ async function resolveColorApplier({ deviceName, showDialog, noColorCorrection, 
       } else {
         const S = cal.lutSize || 17;
         if (Array.isArray(cal.lut) && cal.lut.length === S * S * S * 3) {
-          applier = new ColorApplier({ V: cal.lut, S });
+          applier = new ColorApplier({ V: preservarBlanco(cal.lut, S), S });
           colorCal = cal;
           colorIp = (cal.correctPrinter && cal.correctPrinter.ip) || null;
           colorStatus = { state: 'no-active' }; // lo pisa runPrintJob al aplicar
@@ -88,7 +89,7 @@ async function resolveColorApplier({ deviceName, showDialog, noColorCorrection, 
         const S = cal.lutSize || 17;
         const expected = S * S * S * 3;
         if (Array.isArray(cal.lut) && cal.lut.length === expected) {
-          applier = new ColorApplier({ V: cal.lut, S });
+          applier = new ColorApplier({ V: preservarBlanco(cal.lut, S), S });
           colorCal = cal;
         } else {
           colorStatus = { state: 'fallo', reason: 'la tabla de la calibración es inválida' };

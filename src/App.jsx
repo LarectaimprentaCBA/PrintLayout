@@ -75,6 +75,7 @@ import {
   findCellPageInfo,
   cellForFlatIndex,
   cellsHomogeneous,
+  hasMixedOrientations,
   backMirrorAxis,
   backRotate180,
   cutsForPage,
@@ -84,6 +85,7 @@ import {
 import { generateCuts, generateCutsPerCell, generateCutsWithTroquel, cellsToLinearCuts, cellsToSerpentineCircleCuts, cutsForGridMode, troquelCutForCell } from './lib/grid.js';
 import { buildOrderJobs } from './intake/buildOrderJob.js';
 import { contourCutsByAssignments } from './lib/stickerContour.js';
+import { isFixedShape } from './lib/contour/fixedShape.js';
 import {
   buildCatalogRows,
   catalogRowForTemplate,
@@ -2732,7 +2734,24 @@ export default function App() {
   // includeHoles y suavizado ya NO afectan la máscara/trazado (detectHoles siempre
   // on; la unión/suavizado se hacen al mapear) → son MAPEO barato e instantáneo.
   const TRACE_KEYS = ['engine', 'tolerance', 'threshold', 'turdsize', 'alphamax', 'opttolerance', 'outerBorder'];
-  const MAP_KEYS = ['bleedMm', 'includeHoles', 'smoothMm'];
+  // shape/shapeBleedMm/shapeCornerRadiusMm = FORMA FIJA de una imagen (rectángulo/
+  // círculo/óvalo en vez de detectar): pura geometría → también es mapeo.
+  const MAP_KEYS = ['bleedMm', 'includeHoles', 'smoothMm', 'shape', 'shapeBleedMm', 'shapeCornerRadiusMm'];
+  // Imágenes con forma fija: su corte sigue a DONDE SE IMPRIME la imagen, así que
+  // depende del encuadre (Enteras/Rellenar), del borde blanco y del tamaño de la
+  // imagen. Eso entra en la firma SOLO si hay alguna (si no, la firma queda
+  // idéntica a la de siempre y las hojas existentes no se recalculan solas).
+  const contourFixedSig = (() => {
+    if (selected?.cutShape !== 'contour' || !selected.contourByImage) return undefined;
+    const out = {};
+    for (const [id, o] of Object.entries(selected.contourByImage)) {
+      if (!isFixedShape(o?.shape)) continue;
+      const im = layout.imageMap.get(id);
+      out[id] = [im?.fitOverride ?? null, im?.frame?.whiteBorderMm ?? null, im?.width ?? 0, im?.height ?? 0];
+    }
+    if (!Object.keys(out).length) return undefined;
+    return { im: out, fm: selected.fitMode ?? 'contain', wb: selected.cellWhiteBorderMm ?? 0 };
+  })();
   const contourTraceSig = selected?.cutShape === 'contour'
     ? JSON.stringify({
       e: selected.contourEngine ?? 'potrace',
@@ -2757,6 +2776,7 @@ export default function App() {
       cm: selected.cutMarginMm ?? 0,
       cr: Number(selected.cornerRadiusMm) || 0,
       by: pickByImage(selected.contourByImage, MAP_KEYS),
+      fx: contourFixedSig,
     })
     : '';
   const [contourComputing, setContourComputing] = useState(false);
@@ -2771,6 +2791,8 @@ export default function App() {
   activeTabIdRef.current = activeTabId;
   const contourTabSwitched = !!selected && selected.id !== contourTplRef.current;
 
+  const contourFullRunningRef = useRef(false);
+  const computeContourRef = useRef(null);
   const computeContourNow = useCallback(async (cacheOnly = false) => {
     if (!selected || selected.cutShape !== 'contour') return;
     const runTabId = activeTabIdRef.current;
@@ -2795,6 +2817,10 @@ export default function App() {
       clipShape: selected.contourClipShape ?? 'none',
       clipMarginMm: selected.cutMarginMm ?? 0,
       clipCornerRadiusMm: Number(selected.cornerRadiusMm) || 0,
+      // Encuadre de la hoja: lo usan las imágenes con FORMA FIJA para ubicar el
+      // corte donde realmente se imprime la imagen.
+      fitMode: selected.fitMode ?? 'contain',
+      whiteBorderMm: selected.cellWhiteBorderMm ?? 0,
     };
     if (!cacheOnly) setContourComputing(true);
     try {
@@ -2807,6 +2833,8 @@ export default function App() {
       const perPage = Math.max(1, cells.length);
       const numPages = Math.max(1, Math.ceil(assignments.length / perPage));
       const cortesPorPagina = [];
+      const stats = { missing: 0 };
+      const mixedOrientations = hasMixedOrientations(selected);
       for (let p = 0; p < numPages; p++) {
         const pageAssign = assignments.slice(p * perPage, (p + 1) * perPage);
         // eslint-disable-next-line no-await-in-loop
@@ -2815,12 +2843,33 @@ export default function App() {
           paramsByImage: selected.contourByImage || null,
           cache: contourCacheRef.current,
           cacheOnly,
+          mixedOrientations,
+          stats,
         });
         cortesPorPagina.push(pc || []);
       }
       // Si cambiaste de pestaña mientras calculaba, NO escribimos (evita que el
       // corte de esta plantilla caiga en otra).
       if (activeTabIdRef.current !== runTabId) return;
+      // Re-mapeo con el caché de trazado frío (tras reiniciar / cambiar de pestaña)
+      // en una hoja que mezcla imágenes de FORMA FIJA con imágenes por contorno:
+      // las de forma fija sí dan corte (no necesitan trazado) pero las otras no →
+      // escribir esto dejaría a las de contorno SIN corte. En ese caso se traza
+      // de verdad. (Sin formas fijas no pasa: ahí ninguna da corte y la red de
+      // seguridad de abajo evita escribir, como siempre.)
+      // Mismo problema al revés: una imagen que estaba en forma fija vuelve a
+      // "Detectar" y nunca se trazó en esta sesión (hoja de una sola imagen recién
+      // reabierta) → no hay ningún corte y quedaría dibujada la forma vieja. Se
+      // reconoce porque la firma aplicada todavía nombra una forma ("shape").
+      const hadFixed = typeof selected.contourAppliedMapSig === 'string'
+        && selected.contourAppliedMapSig.includes('"shape"');
+      if (cacheOnly && stats.missing > 0 && (hadFixed || cortesPorPagina.some((pc) => pc && pc.length))) {
+        if (!contourFullRunningRef.current) {
+          contourFullRunningRef.current = true;
+          try { await computeContourRef.current?.(false); } finally { contourFullRunningRef.current = false; }
+        }
+        return;
+      }
       // Red de seguridad: si hay celdas con imagen pero NINGUNA hoja dio contorno,
       // NO pisamos los cortes guardados. Pasa cuando el caché de trazado está frío
       // (tras cambiar de pestaña o reiniciar la app) y el re-mapeo no encuentra
@@ -2851,6 +2900,8 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected, layout.assignmentsFront, layout.imageMap, contourTraceSig, contourAssignSig, contourMapSig]);
+
+  computeContourRef.current = computeContourNow;
 
   // Auto FULL (traza): al entrar a Contorno o al cambiar las imágenes asignadas.
   // NO retraza en un cambio de pestaña (contourTabSwitched) ni si el trazado ya
@@ -2883,7 +2934,10 @@ export default function App() {
   useEffect(() => {
     if (!selected || selected.cutShape !== 'contour') return;
     if (contourTabSwitched) return;
-    if (!(selected.cortes?.length)) return;
+    // Sin corte previo no hay nada que re-mapear… salvo que haya imágenes con
+    // FORMA FIJA: esas no necesitan trazado (es justo el caso "la detección no
+    // dio nada y la paso a rectángulo").
+    if (!(selected.cortes?.length) && !contourFixedSig) return;
     if (contourMapSig === (selected.contourAppliedMapSig ?? null)) return;
     computeContourNow(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -4581,6 +4635,50 @@ export default function App() {
     }
   };
 
+  // Botón "Revistas": abre RevistaMaker (programa aparte). Si esta PC no lo
+  // tiene, el main lo baja e instala una sola vez; mientras tanto el botón
+  // muestra el avance (revistaBusy = texto a mostrar, null = libre).
+  const [revistaBusy, setRevistaBusy] = useState(null);
+  useEffect(() => {
+    if (!window.printlayout?.revistaMaker?.onStatus) return undefined;
+    return window.printlayout.revistaMaker.onStatus((s) => {
+      if (s?.fase === 'bajando') {
+        setRevistaBusy(s.pct != null ? `Bajando ${s.pct}%` : 'Bajando…');
+        if (s.mb === undefined) {
+          setToast({ kind: 'info', text: 'RevistaMaker no está instalado en esta PC. Lo estoy bajando (unos 95 MB); es una sola vez.' });
+        }
+      } else if (s?.fase === 'instalando') {
+        setRevistaBusy('Instalando…');
+        setToast({ kind: 'info', text: 'Instalando RevistaMaker… en un momento se abre solo.' });
+      }
+    });
+  }, []);
+  const handleOpenRevistaMaker = async () => {
+    if (revistaBusy || !window.printlayout?.revistaMaker?.open) return;
+    setRevistaBusy('Abriendo…');
+    try {
+      const r = await window.printlayout.revistaMaker.open();
+      if (r?.ok) {
+        if (r.accion === 'instalada') {
+          setToast({ kind: 'success', text: `RevistaMaker quedó instalado${r.version ? ` (v${r.version})` : ''} y se está abriendo.` });
+        } else if (r.accion === 'al-frente') {
+          setToast({ kind: 'info', text: 'RevistaMaker ya estaba abierto: lo traje al frente.' });
+        } else {
+          setToast({ kind: 'info', text: 'Abriendo RevistaMaker…' });
+        }
+      } else {
+        const text = r?.instalador
+          ? `No se pudo instalar RevistaMaker: ${r?.error ?? 'error'}. El instalador quedó bajado: abrilo a mano con doble clic.`
+          : `No se pudo abrir RevistaMaker: ${r?.error ?? 'error'}`;
+        setToast({ kind: 'error', text, path: r?.instalador });
+      }
+    } catch (err) {
+      setToast({ kind: 'error', text: `No se pudo abrir RevistaMaker: ${err.message}` });
+    } finally {
+      setRevistaBusy(null);
+    }
+  };
+
   const overlayImage =
     activeDrag?.imageId ? layout.imageMap.get(activeDrag.imageId) : null;
 
@@ -4720,6 +4818,8 @@ export default function App() {
           onEditRotulos={selected?.rotulos ? () => { setRotulosPlanchaInit({ ...selected.rotulos, editing: true }); setRotulosPlanchaOpen(true); } : null}
           onOpenPdfToImage={() => setPdfToImageOpen(true)}
           onRepairPdf={handleRepairPdf}
+          onOpenRevistaMaker={handleOpenRevistaMaker}
+          revistaBusy={revistaBusy}
           onCheckUpdates={handleCheckUpdates}
           updateChecking={updateChecking}
           onOpenIntake={isLaRecta ? () => setIntakePanelOpen(true) : undefined}

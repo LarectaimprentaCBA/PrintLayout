@@ -11,6 +11,7 @@
 
 import fs from 'node:fs';
 import { Lut3 } from '../colorMath.js';
+import { preservarBlanco } from '../blanco.js';
 import { Levels } from '../layout.js';
 import {
   buildIccProfile, srgbToLabD50, srgbToXyzD50, labToPcs16, pcs16ToLab, nombreArchivoPerfil,
@@ -51,7 +52,8 @@ if (cal) {
 }
 
 const lut = new Lut3(cal.lutSize);
-lut.V.set(cal.lut);
+// El perfil debe mandar lo MISMO que imprime PrintLayout: la tabla con el blanco limpio.
+lut.V.set(preservarBlanco(cal.lut, cal.lutSize));
 const aplicarTabla = (r, g, b) => {
   const o = new Float64Array(3);
   lut.apply(r, g, b, o);

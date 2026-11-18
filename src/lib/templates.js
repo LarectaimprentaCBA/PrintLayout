@@ -408,6 +408,38 @@ export function cellNeedsRotation(cell, image, mixed) {
   return co !== 's' && io !== 's' && co !== io;
 }
 
+// Tamaños de celda de la plantilla, para mostrarlos en el panel: agrupa las
+// celdas por medida (redondeada a 0,1 mm) y dice cuántas hay de cada una.
+// Devuelve [{ w, h, count }] — primero la medida más repetida; a igual cantidad,
+// la más grande. Una grilla común da un solo renglón; medidas múltiples, varios.
+export function cellSizeSummary(template) {
+  if (!template) return [];
+  const cells = [];
+  if (isMultiPage(template)) {
+    for (const p of (template.pages || [])) for (const c of (p?.celdas || [])) cells.push(c);
+  } else {
+    for (const c of (template.celdas || [])) cells.push(c);
+  }
+  const groups = new Map();
+  for (const c of cells) {
+    const w = Math.round(Number(c?.w) * 10) / 10;
+    const h = Math.round(Number(c?.h) * 10) / 10;
+    if (!(w > 0) || !(h > 0)) continue;
+    const key = w + 'x' + h;
+    const g = groups.get(key);
+    if (g) g.count++;
+    else groups.set(key, { w, h, count: 1 });
+  }
+  return [...groups.values()].sort((p, q) => (q.count - p.count) || (q.w * q.h - p.w * p.h));
+}
+
+// 90 → "90", 62.5 → "62,5" (mm con coma, sin ceros de más).
+export function formatMm(v) {
+  const n = Math.round(Number(v) * 10) / 10;
+  if (!Number.isFinite(n)) return '—';
+  return String(n).replace('.', ',');
+}
+
 // Para mostrar en la sidebar, agrupamos celdas en filas para describir la
 // distribución sin pretender que sea una grilla regular.
 export function describeCells(template) {

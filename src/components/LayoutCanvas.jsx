@@ -16,6 +16,7 @@ import { renderPdfPage1Preview } from '../lib/pdfPreview.js';
 import { qrMatrix, qrPlacementMm } from '../lib/exportPdf.js';
 import CellSlot from './CellSlot.jsx';
 import ContourTolerancePreview from './ContourTolerancePreview.jsx';
+import { isFixedShape } from '../lib/contour/fixedShape.js';
 
 const PX_PER_MM_AT_100 = 3.78;
 
@@ -438,7 +439,10 @@ export default function LayoutCanvas({
               const showContourPreview =
                 template.cutShape === 'contour'
                 && img
-                && selectedCell === globalIdx;
+                && selectedCell === globalIdx
+                // Con forma fija (rectángulo/círculo/óvalo) no se detecta nada:
+                // el rojo de la tolerancia confundiría.
+                && !isFixedShape(template.contourByImage?.[imgId]?.shape);
               let previewTol = 32;
               let previewHoles = true;
               let previewOuter = true;

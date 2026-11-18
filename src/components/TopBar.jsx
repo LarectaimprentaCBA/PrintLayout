@@ -336,6 +336,8 @@ export default function TopBar({
   onEditRotulos,
   onOpenPdfToImage,
   onRepairPdf,
+  onOpenRevistaMaker,
+  revistaBusy,
   onCheckUpdates,
   updateChecking,
 }) {
@@ -484,6 +486,17 @@ export default function TopBar({
                 className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:bg-ink-700"
               >
                 Reparar PDF
+              </button>
+            )}
+            {onOpenRevistaMaker && (
+              <button
+                type="button"
+                onClick={onOpenRevistaMaker}
+                disabled={!!revistaBusy}
+                title="Abrir RevistaMaker, el programa para armar revistas. Si esta PC no lo tiene, se baja e instala solo la primera vez."
+                className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:bg-ink-700 disabled:opacity-50"
+              >
+                {revistaBusy || 'Revistas'}
               </button>
             )}
             {onOpenIntake && (

@@ -26,6 +26,7 @@
 // El módulo es PURO (sin DOM ni Node): devuelve un Uint8Array con el .icc.
 
 import { Lut3 } from './colorMath.js';
+import { preservarBlanco } from './blanco.js';
 
 // ── Escritura binaria (ICC es big-endian) ───────────────────────────────────
 class Writer {
@@ -555,7 +556,8 @@ export function buildIccProfile(cal, {
     throw new Error('La calibración no tiene una tabla de color válida.');
   }
   const lut = new Lut3(S);
-  lut.V.set(cal.lut);
+  // El perfil lleva el blanco limpio, igual que la impresión desde PrintLayout.
+  lut.V.set(preservarBlanco(cal.lut, S));
   const esXYZ = pcs === 'XYZ';
 
   let a2b;

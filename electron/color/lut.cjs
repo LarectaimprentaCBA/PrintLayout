@@ -96,4 +96,49 @@ function applyBgraInPlace(lut, bgra, width, height) { return applyLoop(lut, bgra
 // RGBA.
 function applyRgbaInPlace(lut, rgba, width, height) { return applyLoop(lut, rgba, width, height, 0, 1, 2); }
 
-module.exports = { makeLut, applyColor, applyBgraInPlace, applyRgbaInPlace, triInterp, b8 };
+// ── El blanco se queda blanco ────────────────────────────────────────────────
+// La calibración compara dos hojas ESCANEADAS. Si el papel de la impresora de
+// referencia es apenas más oscuro o más amarillo que el de la otra, el motor
+// "aprende" que para igualarlo hay que ponerle tinta al blanco: el fondo de un
+// plano o de un texto sale con un velo gris (y en una láser, gastando tóner en
+// toda la hoja). Imitar el color del papel ajeno nunca es lo que se quiere.
+//
+// Arreglo: el nodo blanco vuelve a ser blanco puro y ese mismo corrimiento se
+// va retirando de a poco en los colores casi blancos. Se retira SOLO dentro del
+// último escalón medido por la carta (7 niveles por canal: …, 212.5, 255), que
+// es justo la zona donde la tabla está interpolando contra el papel; de 212.5
+// para abajo queda EXACTAMENTE como se calibró.
+//
+// Se aplica al USAR la tabla (no se toca lo guardado ni lo compartido), así
+// vale también para las calibraciones viejas sin volver a escanear. Aplicarla
+// dos veces da lo mismo que una.
+// OJO: copia gemela en src/lib/colorCalibration/blanco.js (el main no puede
+// importar de src/). Hay un test que verifica que dan idéntico.
+const BLANCO_DESDE = 212.5;
+function preservarBlanco(V, S) {
+  const n = S * S * S * 3;
+  const out = new Float64Array(n);
+  for (let i = 0; i < n; i++) out[i] = V[i];
+  const w = n - 3; // nodo (S-1, S-1, S-1)
+  const d0 = V[w] - 255, d1 = V[w + 1] - 255, d2 = V[w + 2] - 255;
+  if (d0 === 0 && d1 === 0 && d2 === 0) return out;
+  const paso = 255 / (S - 1);
+  for (let r = 0; r < S; r++) {
+    for (let g = 0; g < S; g++) {
+      for (let b = 0; b < S; b++) {
+        const m = Math.min(r, g, b) * paso;
+        if (m <= BLANCO_DESDE) continue;
+        const k = (m - BLANCO_DESDE) / (255 - BLANCO_DESDE);
+        const base = ((r * S + g) * S + b) * 3;
+        out[base] = recorte(V[base] - k * d0);
+        out[base + 1] = recorte(V[base + 1] - k * d1);
+        out[base + 2] = recorte(V[base + 2] - k * d2);
+      }
+    }
+  }
+  out[w] = 255; out[w + 1] = 255; out[w + 2] = 255; // exacto, sin error de redondeo
+  return out;
+}
+function recorte(v) { return v < 0 ? 0 : (v > 255 ? 255 : v); }
+
+module.exports = { makeLut, applyColor, applyBgraInPlace, applyRgbaInPlace, triInterp, b8, preservarBlanco, BLANCO_DESDE };

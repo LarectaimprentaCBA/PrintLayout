@@ -126,6 +126,14 @@ contextBridge.exposeInMainWorld('printlayout', {
   shell: {
     showItem: (p) => ipcRenderer.invoke('shell:show-item', p),
   },
+  revistaMaker: {
+    open: () => ipcRenderer.invoke('revistamaker:open'),
+    onStatus: (cb) => {
+      const handler = (_evt, payload) => cb(payload);
+      ipcRenderer.on('revistamaker:status', handler);
+      return () => ipcRenderer.removeListener('revistamaker:status', handler);
+    },
+  },
   updater: {
     onStatus: (cb) => {
       const handler = (_evt, payload) => cb(payload);
