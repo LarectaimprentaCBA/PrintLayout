@@ -7,38 +7,9 @@
 // sola vez por impresora).
 import { useEffect, useMemo, useState } from 'react';
 
-const LS_LAST_PRINTER = 'printlayout.lastPrinter';
+import { pagesToPrintFor } from '../lib/printPages.js';
 
-// Parsea una lista tipo "1-3,5,7-9" a indices 0-based, validados contra
-// totalPages. Devuelve null si hay error de sintaxis o algun rango sale de
-// [1..totalPages].
-function parseRange(text, totalPages) {
-  if (typeof text !== 'string') return null;
-  const t = text.trim();
-  if (!t) return null;
-  const result = new Set();
-  const parts = t.split(',');
-  for (const raw of parts) {
-    const seg = raw.trim();
-    if (!seg) continue;
-    const m = /^(\d+)\s*-\s*(\d+)$/.exec(seg);
-    if (m) {
-      let a = parseInt(m[1], 10);
-      let b = parseInt(m[2], 10);
-      if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
-      if (a > b) [a, b] = [b, a];
-      if (a < 1 || b > totalPages) return null;
-      for (let i = a; i <= b; i++) result.add(i - 1);
-    } else if (/^\d+$/.test(seg)) {
-      const n = parseInt(seg, 10);
-      if (n < 1 || n > totalPages) return null;
-      result.add(n - 1);
-    } else {
-      return null;
-    }
-  }
-  return [...result].sort((a, b) => a - b);
-}
+const LS_LAST_PRINTER = 'printlayout.lastPrinter';
 
 
 export default function PrintModal({
@@ -117,6 +88,11 @@ export default function PrintModal({
     setError(null);
     setCutMarks(true);
     setRegistrationCross(false);
+    // Las páginas elegidas NO se arrastran al próximo trabajo: un "Rango 2-3"
+    // de la impresión anterior, en un trabajo de una sola hoja, dejaba el botón
+    // Imprimir apagado sin explicación (y en uno de varias hojas imprimía de menos).
+    setPageMode('all');
+    setRangeText('');
     (async () => {
       try {
         const r = await window.printlayout.pdf.listPrinters();
@@ -200,15 +176,10 @@ export default function PrintModal({
 
   // Indices 0-based de las paginas que se van a imprimir, segun el modo.
   // null = error de parseo del rango.
-  const pagesToPrint = useMemo(() => {
-    if (pageMode === 'all') {
-      return Array.from({ length: totalPages }, (_, i) => i);
-    }
-    if (pageMode === 'current') {
-      return [Math.max(0, Math.min(totalPages - 1, currentPage))];
-    }
-    return parseRange(rangeText, totalPages);
-  }, [pageMode, rangeText, totalPages, currentPage]);
+  const pagesToPrint = useMemo(
+    () => pagesToPrintFor(pageMode, rangeText, totalPages, currentPage),
+    [pageMode, rangeText, totalPages, currentPage],
+  );
 
   const rangeInvalid = pageMode === 'range' && pagesToPrint === null;
 

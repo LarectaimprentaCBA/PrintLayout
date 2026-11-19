@@ -44,11 +44,19 @@ export async function loadPhoto(item, { detectarCaras = true } = {}) {
   const long = Math.max(bitmap.width, bitmap.height);
   if (long > MAX_LONG_EDGE) {
     const s = MAX_LONG_EDGE / long;
-    const small = await createImageBitmap(bitmap, {
-      resizeWidth: Math.round(bitmap.width * s),
-      resizeHeight: Math.round(bitmap.height * s),
-      resizeQuality: 'high',
-    });
+    // Se achica DIBUJÁNDOLA en un lienzo, no con createImageBitmap({resize…}):
+    // ese camino, con una foto girada por EXIF (los JPG de iPhone sacados en
+    // vertical), aplica el tamaño ANTES del giro y la foto sale estirada (un
+    // círculo queda ovalado). Dibujar respeta el giro. Hay una prueba con fotos
+    // de ese tipo: npm run test:quickprint-fotos-giradas.
+    const w = Math.max(1, Math.round(bitmap.width * s));
+    const h = Math.max(1, Math.round(bitmap.height * s));
+    const lienzo = new OffscreenCanvas(w, h);
+    const ctx = lienzo.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    const small = lienzo.transferToImageBitmap();
     bitmap.close?.();
     bitmap = small;
   }
