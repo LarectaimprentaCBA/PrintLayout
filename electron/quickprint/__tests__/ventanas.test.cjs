@@ -32,6 +32,9 @@ fs.writeFileSync(pdfB, '%PDF-1.4\n');
 const foto = path.join(tmp, 'nena.jpg');
 fs.writeFileSync(foto, 'x');
 
+// Como la app real (vive en la bandeja): cerrar todas las ventanas no la cierra.
+app.on('window-all-closed', () => {});
+
 app.whenReady().then(async () => {
   // Los maneja main.cjs, que acá no corre: los stubeamos para no llenar la
   // salida de "No handler registered".
@@ -47,6 +50,10 @@ app.whenReady().then(async () => {
     appIconImage: () => nativeImage.createEmpty(),
     isDev: false,
   });
+
+  // En la app, lo que llega hasta 4 s después del último archivo cuenta como el
+  // mismo pedido. Acá lo achicamos para que el test no tarde una eternidad.
+  quickPrint._setRafagaMs(700);
 
   // El coalesce junta lo que llega en ~250 ms: por eso esperamos entre pedidos.
   console.log('\n1) Primer pedido: una ventana');
@@ -96,6 +103,57 @@ app.whenReady().then(async () => {
   check('sumó una sola ventana', trasLote.length === 2, String(trasLote.length));
   const nueva = trasLote.find((w) => w.getTitle().includes('+') || w.getTitle().includes('PDF'));
   check('el título resume el lote', !!nueva && /2 PDF/.test(nueva.getTitle()), nueva && nueva.getTitle());
+
+  console.log('\n5b) Una selección grande que Windows suelta DE A UNA = UNA sola ventana');
+  {
+    // El caso real: 32 fotos del iPhone de un cliente (heic + jpg + png
+    // mezclados). Windows arranca una copia de la app por archivo y los avisos
+    // llegan con huecos más largos que la espera de 250 ms. Antes: 8 ventanas.
+    for (const w of BrowserWindow.getAllWindows()) { try { w.destroy(); } catch (_) {} }
+    await esperar(1500); // que el pedido anterior ya no cuente como "el mismo"
+    // Imágenes de verdad (un PNG de 8×8), así la ventana las puede preparar.
+    const png = nativeImage.createFromBitmap(Buffer.alloc(8 * 8 * 4, 200), { width: 8, height: 8 }).toPNG();
+    const exts = ['.jpg', '.png', '.jpeg', '.JPG', '.PNG'];
+    const fotos = [];
+    for (let i = 1; i <= 32; i++) {
+      const f = path.join(tmp, `IMG_${i}${exts[i % exts.length]}`);
+      fs.writeFileSync(f, png);
+      fotos.push(f);
+    }
+    // Huecos de 0 a 450 ms: varios superan los 250 ms del coalesce.
+    const huecos = [300, 0, 450, 20, 280, 0, 0, 400, 320, 10, 260, 0, 350, 0, 450, 300];
+    for (let i = 0; i < fotos.length; i++) {
+      quickPrint.enqueue([fotos[i]]);
+      // Windows a veces repite un archivo: no tiene que salir dos veces.
+      if (i === 5) quickPrint.enqueue([fotos[2]]);
+      await esperar(huecos[i % huecos.length]);
+    }
+    await esperar(1500);
+    const v = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed());
+    check('32 fotos sueltas abren UNA ventana', v.length === 1, String(v.length));
+    check('el título cuenta las 32', v[0] && v[0].getTitle() === 'Imprimir — 32 fotos', v[0] && v[0].getTitle());
+    const r = v[0] ? await pedir(v[0]) : { photos: [] };
+    check('la ventana tiene las 32, sin repetir',
+      (r.photos || []).length === 32 && new Set((r.photos || []).map((f) => f.path)).size === 32,
+      String((r.photos || []).length));
+    // Lo que VE la ventana (lo que llegó por get-files + los avisos de "llegaron más").
+    // Esperamos a que termine de prepararlas y leemos el cartel "32 fotos".
+    let vistas = null;
+    for (let i = 0; i < 60 && v[0]; i++) {
+      vistas = await v[0].webContents.executeJavaScript(
+        '(document.body.innerText.match(/(\\d+) fotos?/) || [])[1] || document.body.innerText.slice(0, 80)');
+      if (String(vistas) === '32') break;
+      await esperar(500);
+    }
+    check('y en pantalla también son 32 (ni de más ni de menos)', String(vistas) === '32', String(vistas));
+
+    // Un pedido de verdad nuevo, más tarde, sigue abriendo SU ventana.
+    await esperar(1200);
+    quickPrint.enqueue([pdfA]);
+    await esperar(1500);
+    const v2 = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed());
+    check('otro pedido después abre otra ventana', v2.length === 2, String(v2.length));
+  }
 
   console.log('\n6) Orden de las copias (intercalar / sin intercalar)');
   {

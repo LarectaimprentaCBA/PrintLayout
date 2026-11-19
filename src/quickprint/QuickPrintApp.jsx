@@ -24,11 +24,22 @@ export default function QuickPrintApp() {
   // Cargar archivos + suscribir a nuevos (si se hace clic derecho de nuevo).
   useEffect(() => {
     let dead = false;
+    // Una selección grande llega en pedazos (Windows manda los archivos de a
+    // uno): se van sumando sin repetir. Si no hay nada nuevo devuelve la MISMA
+    // lista, para no volver a preparar las fotos por nada.
+    const sumar = (prev, nuevos) => {
+      const vistos = new Set(prev.map((f) => f.path));
+      const extra = (nuevos || []).filter((f) => f && !vistos.has(f.path) && vistos.add(f.path));
+      return extra.length ? [...prev, ...extra] : prev;
+    };
+    // Las fotos llegan en cualquier orden: las dejamos por nombre, como se ven
+    // en la carpeta (IMG_2 antes que IMG_10).
+    const porNombre = (a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true, sensitivity: 'base' });
     const apply = (p) => {
       if (dead || !p) return;
-      setPhotos((prev) => [...prev, ...(p.photos || [])]);
-      setPdfs((prev) => [...prev, ...(p.pdfs || [])]);
-      setUnsupported((prev) => [...prev, ...(p.unsupported || [])]);
+      setPhotos((prev) => { const s = sumar(prev, p.photos); return s === prev ? prev : [...s].sort(porNombre); });
+      setPdfs((prev) => sumar(prev, p.pdfs));
+      setUnsupported((prev) => sumar(prev, p.unsupported));
     };
     window.printlayout.quickprint.getFiles().then(apply);
     const off = window.printlayout.quickprint.onFilesAdded(apply);

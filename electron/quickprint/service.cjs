@@ -29,6 +29,18 @@ const payloadPorWin = new WeakMap(); // ventana → { photos, pdfs, unsupported 
 const MAX_VENTANAS = 8;          // tope: más que esto es llenar la pantalla
 let coalesceBuffer = []; // archivos acumulados mientras Explorer los va soltando
 let coalesceTimer = null;
+// Ráfaga = una misma selección del Explorador llegando en pedazos. Windows
+// arranca una copia de PrintLayout POR ARCHIVO (el verbo es "%1"), y cada copia
+// tarda lo suyo en avisarle a esta: con 32 fotos los avisos llegan repartidos
+// en varios segundos, con huecos más largos que la espera de 250 ms. Antes cada
+// hueco abría OTRA ventana (32 fotos → 8 ventanas). Ahora, lo que llega hasta
+// RAFAGA_MS después del último archivo se suma a la ventana que ya se abrió.
+// Un pedido NUEVO de verdad (otro clic derecho) tarda más que eso en llegar.
+const RAFAGA_MS = 4000;
+let rafagaMs = RAFAGA_MS;
+let rafaga = null;       // { win, inicio, ultimo } del último pedido
+let loteEmpezo = 0;      // cuándo llegó el primer archivo del lote en espera
+let ultimaLlegada = 0;   // cuándo llegó el último
 const allowedPaths = new Set(); // rutas que el renderer puede leer (seguridad)
 
 function ventanasVivas() {
@@ -146,6 +158,38 @@ function createWindow(payload) {
   return win;
 }
 
+function log(msg) {
+  try { if (deps && deps.appendDebugLog) deps.appendDebugLog('[quickprint] ' + msg); } catch (_) { /* noop */ }
+}
+
+// Le suma archivos a una ventana que ya existe (sin repetir los que ya tiene).
+// `traer`: además la trae al frente (cuando el pedido es otro y no hay lugar
+// para más ventanas). En una ráfaga NO: la ventana se está abriendo sola.
+function sumarAVentana(w, payload, traer) {
+  const prev = payloadPorWin.get(w) || { photos: [], pdfs: [], unsupported: [] };
+  const ya = new Set([...prev.photos, ...prev.pdfs, ...prev.unsupported].map((f) => f.path));
+  const nuevos = (lista) => lista.filter((f) => !ya.has(f.path));
+  const extra = { photos: nuevos(payload.photos), pdfs: nuevos(payload.pdfs), unsupported: nuevos(payload.unsupported) };
+  const total = {
+    photos: [...prev.photos, ...extra.photos],
+    pdfs: [...prev.pdfs, ...extra.pdfs],
+    unsupported: [...prev.unsupported, ...extra.unsupported],
+  };
+  payloadPorWin.set(w, total);
+  try {
+    w.setTitle(tituloDe(total));
+    if (traer) {
+      if (w.isMinimized()) w.restore();
+      w.show();
+      w.focus();
+    }
+    // Si la página todavía no cargó, este aviso se pierde y no pasa nada: al
+    // cargar pide get-files y recibe el total. Si llegan los dos, la ventana
+    // descarta los repetidos.
+    w.webContents.send('quickprint:files-added', extra);
+  } catch (_) { /* noop */ }
+}
+
 // Abre la ventana (o la actualiza si ya está abierta) con la selección coalescida.
 function flushCoalesce() {
   coalesceTimer = null;
@@ -156,38 +200,48 @@ function flushCoalesce() {
 
   const payload = classify(files);
   const vivas = ventanasVivas();
+  const empezo = loteEmpezo;
+  const termino = ultimaLlegada;
+
+  // ¿Es la MISMA selección, que Windows todavía está soltando? Entonces va a la
+  // ventana que abrió el primer pedazo, no a una nueva.
+  if (rafaga && rafaga.win && !rafaga.win.isDestroyed() && empezo - rafaga.ultimo <= rafagaMs) {
+    sumarAVentana(rafaga.win, payload, false);
+    rafaga.ultimo = termino;
+    log(`+${files.length} archivo(s) a la misma ventana (seguían llegando, ${empezo - rafaga.inicio} ms después del primero)`);
+    return;
+  }
 
   // Pasado el tope, en vez de tapar la pantalla de ventanas le sumamos los
   // archivos a la última y la traemos al frente (lo que hacía siempre).
   if (vivas.length >= MAX_VENTANAS) {
     const w = vivas[vivas.length - 1];
-    const prev = payloadPorWin.get(w) || { photos: [], pdfs: [], unsupported: [] };
-    payloadPorWin.set(w, {
-      photos: [...prev.photos, ...payload.photos],
-      pdfs: [...prev.pdfs, ...payload.pdfs],
-      unsupported: [...prev.unsupported, ...payload.unsupported],
-    });
-    try {
-      if (w.isMinimized()) w.restore();
-      w.show();
-      w.focus();
-      w.webContents.send('quickprint:files-added', payload);
-    } catch (_) { /* noop */ }
+    sumarAVentana(w, payload, true);
+    rafaga = { win: w, inicio: empezo, ultimo: termino };
+    log(`${files.length} archivo(s) sumados a la última ventana (tope de ${MAX_VENTANAS})`);
     return;
   }
 
-  createWindow(payload);
+  const win = createWindow(payload);
+  rafaga = { win, inicio: empezo, ultimo: termino };
+  log(`ventana nueva con ${files.length} archivo(s)`);
 }
 
 function enqueue(files) {
   if (!Array.isArray(files) || files.length === 0) return;
+  const ahora = Date.now();
+  if (coalesceBuffer.length === 0) loteEmpezo = ahora;
+  ultimaLlegada = ahora;
   coalesceBuffer.push(...files);
-  // Explorer puede invocar el verbo una vez por archivo (según el modelo de
-  // selección). Esperamos una ventanita para juntar TODA la selección en una
-  // sola ventana. 350 ms alcanza y no se nota.
+  // Explorer invoca el verbo una vez POR ARCHIVO. Esperamos un cuarto de
+  // segundo de silencio para abrir la ventana con lo que haya llegado; lo que
+  // siga llegando de la misma selección se le suma (ver `rafaga`).
   if (coalesceTimer) clearTimeout(coalesceTimer);
   coalesceTimer = setTimeout(flushCoalesce, 250);
 }
+
+// Solo para los tests: achicar la espera de la ráfaga.
+function _setRafagaMs(ms) { rafagaMs = Number.isFinite(ms) && ms >= 0 ? ms : RAFAGA_MS; }
 
 // ── PrintHelper: pageinfo ────────────────────────────────────────────────────
 function getPageInfo(deviceName) {
@@ -565,4 +619,4 @@ function init(d) {
   registerIpc();
 }
 
-module.exports = { init, filesFromArgv, enqueue, ordenarCopias, ordenarHojas };
+module.exports = { init, filesFromArgv, enqueue, ordenarCopias, ordenarHojas, _setRafagaMs };

@@ -18,24 +18,35 @@ export default function PhotoView({ files, deviceName, pageInfo, busy, setBusy, 
   const [prepMsg, setPrepMsg] = useState('');
   const [toast, setToast] = useState(null);
   const previewRef = useRef(null);
+  const cargadasRef = useRef(new Map()); // ruta → foto ya preparada
   const color = useCorreccionColor(deviceName);
 
   // Cargar todas las fotos, cediendo el hilo entre cada una (no congela) y
   // mostrando progreso. Detecta caras (para el recorte con foco).
+  // La lista puede CRECER mientras se prepara (una selección grande llega en
+  // pedazos): lo ya preparado se guarda por ruta y no se vuelve a hacer.
   useEffect(() => {
     let dead = false;
+    setLoading(true);
     (async () => {
       const out = [];
+      const listas = cargadasRef.current;
       for (let i = 0; i < files.length; i++) {
-        try {
-          const p = await loadPhoto(files[i], { detectarCaras: true });
+        const ruta = files[i]?.path;
+        let p = ruta ? listas.get(ruta) : null;
+        if (!p) {
+          try {
+            p = await loadPhoto(files[i], { detectarCaras: true });
+            if (ruta && p) listas.set(ruta, p);
+          } catch (err) {
+            console.warn('[quickprint] no se pudo cargar', files[i]?.name, err);
+          }
           if (dead) return;
-          out.push(p);
-        } catch (err) {
-          console.warn('[quickprint] no se pudo cargar', files[i]?.name, err);
+          await new Promise((r) => setTimeout(r, 0));
+          if (dead) return;
         }
+        if (p) out.push(p);
         setProgress({ done: i + 1, total: files.length });
-        await new Promise((r) => setTimeout(r, 0));
       }
       if (dead) return;
       setPhotos(out);
