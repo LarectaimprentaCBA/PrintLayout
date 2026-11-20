@@ -12,6 +12,7 @@ Input JSON:
   "markMarginMm": 10,          // margen entre borde de hoja y marca L
   "ip": "192.168.100.250",     // opcional
   "puerto": 8080,              // opcional
+  "pasadas": 1,                // opcional: 2 = cada figura se corta 2 veces seguidas
   "dryRun": false              // si true, no abre TCP, solo arma el payload
 }
 
@@ -149,6 +150,20 @@ def main():
     _order = sorted(range(_n), key=_orden_key)
     polilineas_plotter = [polilineas_plotter[i] for i in _order]
 
+    # "Cortar x2": cada figura se corta `pasadas` veces SEGUIDAS (termina una
+    # pieza, la repasa, y recien ahi va a la siguiente), para materiales que no
+    # se cortan de una sola pasada. Se repite DESPUES de ordenar, asi las pasadas
+    # de una misma figura nunca quedan separadas. Sin `pasadas` (o 1) el corte
+    # sale exactamente igual que siempre.
+    try:
+        pasadas = int(data.get("pasadas", 1) or 1)
+    except (TypeError, ValueError):
+        pasadas = 1
+    pasadas = max(1, min(5, pasadas))
+    figuras = len(polilineas_plotter)
+    if pasadas > 1:
+        polilineas_plotter = [p for p in polilineas_plotter for _ in range(pasadas)]
+
     try:
         payload = generador.generar_payload_con_marcas(
             polilineas_plotter, plot_w, plot_h,
@@ -164,6 +179,8 @@ def main():
         "ok": True,
         "bytes": len(payload),
         "polilineas": len(polilineas_plotter),
+        "figuras": figuras,
+        "pasadas": pasadas,
         "ip": ip,
         "puerto": puerto,
         "dryRun": dry_run,

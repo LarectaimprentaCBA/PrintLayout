@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { extendWithMethod, sampleColorAt } from '../lib/imageBleed.js';
+import { extendWithMethod, sampleColorAt, coverShrinkPercent } from '../lib/imageBleed.js';
 import { cutRectForCell, bleedMmForCell, safetyMm, cellsHomogeneous } from '../lib/templates.js';
 
 // Editor por imagen con sangrado/corte/zona segura. Toma medidas de la
@@ -197,6 +197,13 @@ export default function ImageEditorModal({
   const ah = parseFloat(actualH) || 0;
   const tw = parseFloat(targetW) || 0;
   const th = parseFloat(targetH) || 0;
+
+  // "Encoger / agrandar": hasta cuánto llega el control y a partir de qué %
+  // la imagen ya tapa toda la celda (ahí arranca "Recortar (zoom)").
+  const shrinkMax = shrinkFillMode === 'nineSlice' ? 100 : 200;
+  const shrinkCoverPct = tw > 0 && th > 0
+    ? Math.min(200, Math.ceil(coverShrinkPercent(aspectFromImg, { w: tw, h: th })))
+    : 100;
 
   // Inicializa centerRectMm cuando se entra a 9-slice por primera vez (default
   // = 60% central del area declarada).
@@ -977,7 +984,7 @@ export default function ImageEditorModal({
                 <option value="replicate">Edge replicate (franja)</option>
                 <option value="color">Color sólido</option>
                 <option value="nineSlice">9-slice (centro fijo)</option>
-                <option value="shrinkBleed">Encoger + bleed</option>
+                <option value="shrinkBleed">Encoger / agrandar + bleed</option>
                 <option value="crop">Recortar bordes (zoom)</option>
                 <option value="radial">Radial (sticker redondo)</option>
                 <option value="edgeGrow">Ampliar bordes (recorte libre)</option>
@@ -1178,15 +1185,43 @@ export default function ImageEditorModal({
 
               {method === 'shrinkBleed' && (
                 <div className="mt-2 space-y-2">
-                  <label className="block text-[10px] text-ink-400">
-                    Encoger contenido: {shrinkPercent}%
+                  <div className="text-[10px] text-ink-400">
+                    <div className="flex items-center justify-between gap-2">
+                      <span>Tamaño del contenido</span>
+                      <span className="flex items-center gap-1">
+                        <input
+                          type="number" min="10" max={shrinkMax} step="0.5"
+                          value={Math.min(shrinkPercent, shrinkMax)}
+                          onChange={(e) => {
+                            const v = parseFloat(e.target.value);
+                            if (Number.isFinite(v)) setShrinkPercent(Math.max(10, Math.min(shrinkMax, Math.round(v * 2) / 2)));
+                          }}
+                          className="w-14 rounded border border-ink-700 bg-ink-800 px-1 py-0.5 text-right text-xs text-ink-100 outline-none focus:border-accent-500"
+                        />
+                        %
+                      </span>
+                    </div>
                     <input
-                      type="range" min="10" max="100" step="1"
-                      value={shrinkPercent}
-                      onChange={(e) => setShrinkPercent(parseInt(e.target.value, 10))}
+                      type="range" min="10" max={shrinkMax} step="1"
+                      value={Math.min(shrinkPercent, shrinkMax)}
+                      onChange={(e) => setShrinkPercent(parseFloat(e.target.value))}
                       className="mt-0.5 w-full"
                     />
-                  </label>
+                    <p className="mt-0.5 text-ink-500">
+                      {shrinkFillMode === 'nineSlice'
+                        ? 'Menos de 100 achica. (Con 9-slice no se puede agrandar.)'
+                        : 'Menos de 100 achica. Más de 100 agranda: lo que se pasa del borde se recorta.'}
+                    </p>
+                  </div>
+                  {shrinkFillMode !== 'nineSlice' && shrinkCoverPct > 100 && (
+                    <button
+                      onClick={() => setShrinkPercent(shrinkCoverPct)}
+                      className="w-full rounded border border-ink-700 bg-ink-800 px-2 py-1 text-[10px] text-ink-200 hover:bg-ink-700"
+                      title="El tamaño justo en que la imagen tapa toda la celda y no queda nada para rellenar"
+                    >
+                      Llenar toda la celda ({shrinkCoverPct}%)
+                    </button>
+                  )}
                   {cutRect && refCell && (
                     <button
                       onClick={() => {

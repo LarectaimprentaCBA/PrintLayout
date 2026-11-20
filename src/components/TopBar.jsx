@@ -292,6 +292,7 @@ export default function TopBar({
   onPrintFront,
   onPrintBack,
   onCut,
+  onCutTwice,
   onExportCutToQr,
   layoutFitMode,
   onLayoutFitChange,
@@ -842,6 +843,16 @@ export default function TopBar({
           >
             {cutting ? 'Enviando…' : 'Cortar'}
           </button>
+          {canCut && onCutTwice && (
+            <button
+              onClick={onCutTwice}
+              disabled={cutting}
+              title="Enviar el corte al plotter con doble pasada: cada figura se corta dos veces seguidas antes de pasar a la siguiente"
+              className="rounded-md bg-accent-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-500 disabled:opacity-40"
+            >
+              Cortar x2
+            </button>
+          )}
           {canCut && onExportCutToQr && (
             <button
               onClick={onExportCutToQr}

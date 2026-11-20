@@ -4460,8 +4460,11 @@ export default function App() {
     }
   };
 
-  const handleCut = async () => {
+  // pasadas = 2 ("Cortar x2"): cada figura se corta dos veces seguidas antes de
+  // pasar a la siguiente. Solo en el envío directo; el corte por QR no cambia.
+  const handleCut = async (pasadas = 1) => {
     if (!selected || !hasCuts(selected) || cutting) return;
+    const veces = pasadas === 2 ? 2 : 1;
     const margin = selected.markMarginMm ?? 10;
     // Envío directo: manda el corte de la HOJA ACTUAL (por-página si aplica).
     const pageCortes = cutsForPage(selected, currentPage);
@@ -4473,6 +4476,7 @@ export default function App() {
     if (!confirm(
       `Vas a enviar ${pageCortes.length} líneas de corte al plotter` +
       (multi ? ` (hoja ${currentPage + 1}).\n` : `.\n`) +
+      (veces === 2 ? `CORTE x2: cada figura se corta DOS veces seguidas.\n` : '') +
       `Margen de marcas: ${margin} mm.\n` +
       `Asegurate de que la hoja ya esté impresa y posicionada en la máquina.`
     )) return;
@@ -4487,11 +4491,14 @@ export default function App() {
         markMarginMm: margin,
         markType: plotterMarkType(selected),
         bladeOffsetMm,
+        pasadas: veces,
       });
       if (result?.ok) {
         setToast({
           kind: 'success',
-          text: `Corte enviado al plotter (${result.bytes} bytes, ${result.polilineas} polilíneas).`,
+          text: result.pasadas === 2
+            ? `Corte x2 enviado al plotter (${result.figuras} figuras, cada una dos veces).`
+            : `Corte enviado al plotter (${result.bytes} bytes, ${result.polilineas} polilíneas).`,
         });
       } else {
         setToast({ kind: 'error', text: `No se pudo enviar: ${result?.error ?? 'desconocido'}` });
@@ -4759,7 +4766,8 @@ export default function App() {
           onExport={handleExport}
           onPrintFront={() => handlePrint('front')}
           onPrintBack={() => handlePrint('back')}
-          onCut={handleCut}
+          onCut={() => handleCut(1)}
+          onCutTwice={() => handleCut(2)}
           onExportCutToQr={handleExportCutToQr}
           layoutFitMode={layoutFitMode}
           onLayoutFitChange={selected ? setLayoutFitMode : undefined}

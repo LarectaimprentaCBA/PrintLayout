@@ -34,7 +34,12 @@ function loadImage(dataUrl) {
 // Si la imagen es mas GRANDE que el target: se escala hacia abajo (preserva
 // aspect) para que entre adentro del target. drawW/drawH < sw/sh; el bleed
 // rellena el espacio restante igual que en el caso chico.
-function computeLayout(img, srcSizeMm, targetSizeMm, offsetMm) {
+//
+// overflow = true: NO se achica para que entre. La imagen se dibuja a su tamano
+// declarado aunque se pase del target; lo que sobra queda fuera del canvas (se
+// recorta) y el bleed rellena solo los lados donde no llega. Lo usa "Encoger /
+// agrandar" cuando el contenido va a mas del 100%.
+function computeLayout(img, srcSizeMm, targetSizeMm, offsetMm, overflow = false) {
   const sw = img.naturalWidth;
   const sh = img.naturalHeight;
   if (!Number.isFinite(srcSizeMm?.w) || !Number.isFinite(srcSizeMm?.h)
@@ -50,7 +55,7 @@ function computeLayout(img, srcSizeMm, targetSizeMm, offsetMm) {
   const pxPerMmBase = Math.max(sw / srcSizeMm.w, sh / srcSizeMm.h);
   // Si la imagen declarada excede el target en alguno de los dos lados,
   // escalamos el tamano efectivo para que entre. fitScale <= 1.
-  const fitScale = Math.min(
+  const fitScale = overflow ? 1 : Math.min(
     1,
     targetSizeMm.w / srcSizeMm.w,
     targetSizeMm.h / srcSizeMm.h,
@@ -104,10 +109,10 @@ function output(canvas, targetSizeMm) {
 // flips apropiados; los excesos quedan fuera del canvas y se clippean. Es el
 // metodo mas robusto para fondos con textura natural.
 // ----------------------------------------------------------------------------
-export async function extendMirror(dataUrl, srcSizeMm, targetSizeMm, { offsetMm } = {}) {
+export async function extendMirror(dataUrl, srcSizeMm, targetSizeMm, { offsetMm, overflow } = {}) {
   const img = await loadImage(dataUrl);
   const { canvasW, canvasH, drawW, drawH, drawX, drawY } =
-    computeLayout(img, srcSizeMm, targetSizeMm, offsetMm);
+    computeLayout(img, srcSizeMm, targetSizeMm, offsetMm, overflow);
   const { canvas, ctx } = makeCanvas(canvasW, canvasH);
 
   // sx/sy: -1 = flip en ese eje, 1 = identidad.
@@ -140,11 +145,11 @@ export async function extendMirror(dataUrl, srcSizeMm, targetSizeMm, { offsetMm 
 // preserva variacion local del color/textura.
 // ----------------------------------------------------------------------------
 export async function extendEdgeReplicate(
-  dataUrl, srcSizeMm, targetSizeMm, { stripPx = 8, offsetMm } = {},
+  dataUrl, srcSizeMm, targetSizeMm, { stripPx = 8, offsetMm, overflow } = {},
 ) {
   const img = await loadImage(dataUrl);
   const { sw, sh, canvasW, canvasH, drawW, drawH, drawX, drawY } =
-    computeLayout(img, srcSizeMm, targetSizeMm, offsetMm);
+    computeLayout(img, srcSizeMm, targetSizeMm, offsetMm, overflow);
   const { canvas, ctx } = makeCanvas(canvasW, canvasH);
 
   const strip = Math.max(1, Math.min(stripPx, Math.floor(Math.min(sw, sh) / 2)));
@@ -189,11 +194,11 @@ export async function extendEdgeReplicate(
 // arriba. color es un hex string '#rrggbb' o cualquier valor valido CSS.
 // ----------------------------------------------------------------------------
 export async function extendSolidColor(
-  dataUrl, srcSizeMm, targetSizeMm, { color = '#ffffff', offsetMm } = {},
+  dataUrl, srcSizeMm, targetSizeMm, { color = '#ffffff', offsetMm, overflow } = {},
 ) {
   const img = await loadImage(dataUrl);
   const { canvasW, canvasH, drawW, drawH, drawX, drawY } =
-    computeLayout(img, srcSizeMm, targetSizeMm, offsetMm);
+    computeLayout(img, srcSizeMm, targetSizeMm, offsetMm, overflow);
   const { canvas, ctx } = makeCanvas(canvasW, canvasH);
   ctx.fillStyle = color;
   ctx.fillRect(0, 0, canvasW, canvasH);
@@ -316,12 +321,45 @@ export async function extendNineSlice(
 // de bleed elegido (mirror / edge replicate / color).
 //
 // options:
-//   shrinkPercent: 0–100 → que % del target ocupa el contenido (default 90).
-//                  Si querés escalar para que entre exacto en el corte, pasa
-//                  shrinkPercent calculado por el caller.
+//   shrinkPercent: 10–300 → que % del target ocupa el contenido (default 90).
+//                  100 = entra justo (toca dos lados, sin recortar nada).
+//                  Menos de 100 = se achica y el bleed rellena alrededor.
+//                  MAS de 100 = se agranda: lo que se pasa del target se
+//                  recorta, y el bleed rellena solo donde todavia no llega.
+//                  Es el punto intermedio entre "encoger" y "recortar (zoom)",
+//                  que arranca recien cuando la imagen ya tapa todo.
 //   fillMode: 'mirror' | 'replicate' | 'color' (default 'mirror').
 //   fillOptions: opciones especificas del fillMode (color, stripPx).
 // ----------------------------------------------------------------------------
+export const SHRINK_PERCENT_MIN = 10;
+export const SHRINK_PERCENT_MAX = 300;
+
+// PURO: tamano en mm que ocupa el contenido para un % dado, manteniendo el
+// aspect del archivo. Con 100 entra justo en el target; con mas, se pasa.
+// 9-slice no admite pasarse (estira el marco para llegar siempre al borde).
+export function shrinkContentSizeMm(aspect, targetSizeMm, shrinkPercent, fillMode) {
+  const tope = fillMode === 'nineSlice' ? 100 : SHRINK_PERCENT_MAX;
+  const n = Number(shrinkPercent);
+  const pct = Math.max(SHRINK_PERCENT_MIN, Math.min(tope, Number.isFinite(n) ? n : 90)) / 100;
+  const fitWmm = targetSizeMm.w * pct;
+  const fitHmm = targetSizeMm.h * pct;
+  let w = fitWmm;
+  let h = fitWmm / aspect;
+  if (h > fitHmm) {
+    h = fitHmm;
+    w = fitHmm * aspect;
+  }
+  return { w, h, pct };
+}
+
+// PURO: el % a partir del cual el contenido tapa TODO el target (ya no queda
+// nada para rellenar). Siempre >= 100. Es donde arranca "Recortar (zoom)".
+export function coverShrinkPercent(aspect, targetSizeMm) {
+  const t = targetSizeMm.w / targetSizeMm.h;
+  if (!(aspect > 0) || !(t > 0)) return 100;
+  return Math.max(t / aspect, aspect / t) * 100;
+}
+
 export async function extendShrinkAndBleed(
   dataUrl, srcSizeMm, targetSizeMm,
   { shrinkPercent = 90, fillMode = 'mirror', fillOptions = {}, offsetMm } = {},
@@ -330,17 +368,12 @@ export async function extendShrinkAndBleed(
   const sw = img.naturalWidth;
   const sh = img.naturalHeight;
 
-  // Calcular tamano del contenido encogido en mm, manteniendo aspect del file.
-  const pct = Math.max(10, Math.min(100, shrinkPercent)) / 100;
-  const fitWmm = targetSizeMm.w * pct;
-  const fitHmm = targetSizeMm.h * pct;
-  const aspect = sw / sh;
-  let contentWmm = fitWmm;
-  let contentHmm = fitWmm / aspect;
-  if (contentHmm > fitHmm) {
-    contentHmm = fitHmm;
-    contentWmm = fitHmm * aspect;
-  }
+  // Calcular tamano del contenido en mm, manteniendo aspect del file.
+  const { w: contentWmm, h: contentHmm, pct } =
+    shrinkContentSizeMm(sw / sh, targetSizeMm, shrinkPercent, fillMode);
+  // Mas del 100%: el contenido se pasa del target y se recorta (no se achica
+  // para que entre). Con 100 o menos queda exactamente como antes.
+  const overflow = pct > 1;
 
   // Trick: el archivo de imagen (sw x sh pixels) representa la "version
   // encogida" a contentMm. No hace falta rasterizar nada — solo redeclarar
@@ -349,7 +382,7 @@ export async function extendShrinkAndBleed(
   // porque contentMm respeta el aspect del file). Asi el bitmap original se
   // usa a su resolucion completa, sin perder calidad.
   const newSrcMm = { w: contentWmm, h: contentHmm };
-  const fillOpts = { ...fillOptions, offsetMm };
+  const fillOpts = { ...fillOptions, offsetMm, overflow };
   switch (fillMode) {
     case 'replicate':
       return extendEdgeReplicate(dataUrl, newSrcMm, targetSizeMm, fillOpts);
@@ -372,7 +405,7 @@ export async function extendShrinkAndBleed(
       return extendEdgeGrow(dataUrl, newSrcMm, targetSizeMm, fillOpts);
     case 'mirror':
     default:
-      return extendMirror(dataUrl, newSrcMm, targetSizeMm, { offsetMm });
+      return extendMirror(dataUrl, newSrcMm, targetSizeMm, { offsetMm, overflow });
   }
 }
 
@@ -519,11 +552,11 @@ export async function extendRadial(
 //   'color'     — color sólido elegido.
 export async function extendEdgeGrow(
   dataUrl, srcSizeMm, targetSizeMm,
-  { offsetMm, fillMode = 'stretch', color = '#ffffff', stripPx = 8 } = {},
+  { offsetMm, fillMode = 'stretch', color = '#ffffff', stripPx = 8, overflow } = {},
 ) {
   const img = await loadImage(dataUrl);
   const { canvasW, canvasH, drawW, drawH, drawX, drawY } =
-    computeLayout(img, srcSizeMm, targetSizeMm, offsetMm);
+    computeLayout(img, srcSizeMm, targetSizeMm, offsetMm, overflow);
   const { canvas, ctx } = makeCanvas(canvasW, canvasH);
   ctx.drawImage(img, drawX, drawY, drawW, drawH);
 
