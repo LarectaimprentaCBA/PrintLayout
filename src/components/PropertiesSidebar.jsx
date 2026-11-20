@@ -1184,6 +1184,10 @@ function ContourControls({ template, onUpdate, onApply, dirty, computing }) {
       <CNum label="Sangrado (vivo)" value={dBleed} step={0.1} min={-10} max={10} onChange={(v) => onUpdate({ contourBleedMm: v })} />
       <CRange label="Suavizado (vivo)" value={dSmooth} min={0} max={0.5} step={0.02} onChange={(v) => onUpdate({ contourSmoothMm: v })} />
       <CCheck label="Cortar huecos internos" checked={dHoles && !dOuter} disabled={dOuter} onChange={(v) => onUpdate({ contourIncludeHoles: v })} />
+      <CNum label="Extender color" value={Number(template.contourColorBleedMm) || 0} step={0.5} min={0} max={10} onChange={(v) => onUpdate({ contourColorBleedMm: Math.max(0, Number(v) || 0) })} />
+      <p className="text-[10px] leading-snug text-ink-500">
+        Pinta alrededor de cada sticker una franja con el color de su propio borde, para que el corte no deje filo blanco. No achica ni mueve el diseño, y el corte no cambia. Probá con <b>2</b>. <b>0</b> = apagado. Anda aunque la imagen tenga blanco alrededor; queda mejor si el borde es de color liso.
+      </p>
       <div className="flex items-center justify-between text-[10px] text-ink-500">
         <span>Puntos de corte</span>
         <span className="tabular-nums text-ink-300">{nCutPts}</span>

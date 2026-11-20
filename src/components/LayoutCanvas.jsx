@@ -17,8 +17,48 @@ import { qrMatrix, qrPlacementMm } from '../lib/exportPdf.js';
 import CellSlot from './CellSlot.jsx';
 import ContourTolerancePreview from './ContourTolerancePreview.jsx';
 import { isFixedShape } from '../lib/contour/fixedShape.js';
+import {
+  colorBleedFor, bleedAllowances, bleedPlacement, getColorBleedImage, maxHaloMm,
+} from '../lib/contour/colorBleed.js';
 
 const PX_PER_MM_AT_100 = 3.78;
+
+// Sangrado de color (stickers por contorno): el sticker con su franja, dibujado
+// ENCIMA de la celda y recortado para no pisar a la vecina. Es la misma imagen y
+// la misma ubicación que usa la impresión (exportPdf), así que lo que se ve acá
+// es lo que sale. Mientras se arma no muestra nada (queda la foto de siempre).
+function ColorBleedOverlay({ image, params, cell, allow, pxPerMm }) {
+  const [bl, setBl] = useState(null);
+  useEffect(() => {
+    let dead = false;
+    getColorBleedImage(image, params, cell.w, cell.h)
+      .then((r) => { if (!dead) setBl(r); })
+      .catch((err) => { if (!dead) { setBl(null); console.warn('Sangrado de color:', err); } });
+    return () => { dead = true; };
+  }, [image.id, image.dataUrl, params.tolerance, params.detectHoles, params.haloMm, cell.w, cell.h]);
+  if (!bl) return null;
+  const pl = bleedPlacement(cell, bl.imgW, bl.imgH, bl.padFrac);
+  const lim = (v) => Math.min(v, params.maxMm);
+  const x0 = cell.x - lim(allow.l), y0 = cell.y - lim(allow.t);
+  const x1 = cell.x + cell.w + lim(allow.r), y1 = cell.y + cell.h + lim(allow.b);
+  return (
+    <div
+      className="pointer-events-none absolute overflow-hidden"
+      style={{ left: x0 * pxPerMm, top: y0 * pxPerMm, width: (x1 - x0) * pxPerMm, height: (y1 - y0) * pxPerMm, zIndex: 5 }}
+    >
+      <img
+        src={bl.url}
+        alt=""
+        draggable={false}
+        className="absolute select-none"
+        style={{
+          left: (pl.x - x0) * pxPerMm, top: (pl.y - y0) * pxPerMm,
+          width: pl.w * pxPerMm, height: pl.h * pxPerMm, maxWidth: 'none',
+        }}
+      />
+    </div>
+  );
+}
 
 // Overlay para RE-ENCUADRAR la foto arrastrándola dentro de su celda (modo
 // cover). Actualiza image.focalPoint (normalizado 0..1). Paneo natural: arrastrar
@@ -378,6 +418,11 @@ export default function LayoutCanvas({
     : (currentPage ?? 0) * (cellsPerPage ?? cells.length);
   const totalPages = pageCount ?? 1;
   const pxPerMm = PX_PER_MM_AT_100 * scale;
+  // Sangrado de color: cuánto puede salirse la franja de cada celda sin pisar a
+  // la vecina (null si la hoja no lo usa). Sin hook: va después del return de
+  // "sin plantilla" y es una cuenta barata.
+  const haloMaxMm = maxHaloMm(template);
+  const bleedAllow = haloMaxMm > 0 ? bleedAllowances(cells, haloMaxMm) : null;
 
   return (
     <main className="relative flex flex-1 flex-col overflow-hidden bg-ink-950">
@@ -453,6 +498,12 @@ export default function LayoutCanvas({
                 previewOuter = ov?.outerBorder ?? template.contourOuterBorder ?? true;
               }
               const bPx = bMm * pxPerMm;
+              // Franja de color: solo en el frente, misma regla que la impresión.
+              const bleedParams = img && bleedAllow && !(template.doubleSided && face === 'back')
+                ? colorBleedFor(template, imgId, {
+                  fitMode, borderMm: bMm, rotated: cellNeedsRotation(cell, img, mixedOrientations),
+                })
+                : null;
 
               return (
                 <Fragment key={globalIdx}>
@@ -478,6 +529,15 @@ export default function LayoutCanvas({
                     cellWpx={w}
                     cellHpx={h}
                   />
+                  {bleedParams && (
+                    <ColorBleedOverlay
+                      image={img}
+                      params={bleedParams}
+                      cell={cell}
+                      allow={bleedAllow[i]}
+                      pxPerMm={pxPerMm}
+                    />
+                  )}
                   {showContourPreview && (
                     <ContourTolerancePreview
                       imageUrl={img.dataUrl}

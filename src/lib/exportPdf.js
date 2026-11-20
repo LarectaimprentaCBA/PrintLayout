@@ -1,4 +1,7 @@
-import { PDFDocument, rgb, cmyk, degrees, StandardFonts } from 'pdf-lib';
+import {
+  PDFDocument, rgb, cmyk, degrees, StandardFonts,
+  pushGraphicsState, popGraphicsState, rectangle, clip, endPath,
+} from 'pdf-lib';
 import qrcode from 'qrcode-generator';
 import {
   cellPositions,
@@ -14,6 +17,9 @@ import { coverCropRect, coverObjectPosition } from './faceDetection.js';
 import { cropImageDataUrl } from './imageCrop.js';
 import { rotateImageDataUrl90CW } from './imageRotate.js';
 import { renderPdfBytesToImages } from './pdfPreview.js';
+import {
+  colorBleedFor, bleedAllowances, bleedPlacement, getColorBleedImage, maxHaloMm,
+} from './contour/colorBleed.js';
 
 const MM_TO_PT = 72 / 25.4;
 
@@ -443,6 +449,11 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
 
     const page = doc.addPage([pageW, pageH]);
 
+    // Sangrado de color (stickers por contorno): cuánto puede salirse la franja
+    // de cada celda sin pisar a la vecina. Solo se calcula si la hoja lo usa.
+    const haloMaxMm = maxHaloMm(template);
+    const bleedAllow = haloMaxMm > 0 ? bleedAllowances(cells, haloMaxMm) : null;
+
     const bgPage = await backgroundForPage(p);
     if (bgPage) {
       page.drawPage(bgPage, {
@@ -524,7 +535,34 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
         });
       }
 
-      if (cellFitMode === 'cover') {
+      // Sangrado de color: el sticker con su franja (PNG con transparencia) va
+      // EN LUGAR del original. El blanco de alrededor era papel, así que no se
+      // pierde nada; con fondo de PDF sí se dibuja también el original, para que
+      // siga tapando el fondo como siempre. Si algo falla, sale como siempre.
+      let bleedDraw = null;
+      // OJO: `face` vale 'back' también en una hoja de UNA cara exportada sin
+      // fondo (ver buildPdf), así que el dorso de verdad es doble faz + 'back'.
+      const esDorso = template.doubleSided && face === 'back';
+      if (bleedAllow && !esDorso && !rotate180) {
+        const bp = colorBleedFor(template, imgId, {
+          fitMode: cellFitMode, borderMm: bMm, rotated: drawImageObj !== image,
+        });
+        if (bp) {
+          try {
+            const bl = await getColorBleedImage(image, bp, cell.w, cell.h);
+            const key = `bleed:${bl.url}`;
+            let emb = embedCache.get(key);
+            if (!emb) { emb = await doc.embedPng(bl.bytes); embedCache.set(key, emb); }
+            bleedDraw = { emb, bl, bp };
+          } catch (err) {
+            console.warn('Sangrado de color: no se pudo armar para', image.name || imgId, err);
+          }
+        }
+      }
+
+      if (bleedDraw && !bgPage) {
+        // nada: lo dibuja el bloque de abajo
+      } else if (cellFitMode === 'cover') {
         const embedded = await embedCoverCrop(drawImageObj, innerWmm, innerHmm);
         // Al rotar 180° el ancla (x,y) de pdf-lib queda en la esquina opuesta,
         // por eso desplazamos al vertice superior-derecho del rectangulo.
@@ -552,6 +590,34 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
           height: drawH,
           rotate: rotate180 ? degrees(180) : undefined,
         });
+      }
+
+      if (bleedDraw) {
+        const { emb, bl, bp } = bleedDraw;
+        const pl = bleedPlacement(cell, bl.imgW, bl.imgH, bl.padFrac);
+        const a = bleedAllow[i];
+        const lim = (v) => Math.min(v, bp.maxMm);
+        // Recorte: la celda agrandada solo lo que la vecina deja.
+        const cx0 = cell.x - lim(a.l), cy0 = cell.y - lim(a.t);
+        const cx1 = cell.x + cell.w + lim(a.r), cy1 = cell.y + cell.h + lim(a.b);
+        page.pushOperators(
+          pushGraphicsState(),
+          rectangle(
+            cx0 * MM_TO_PT + offsetXpt,
+            pageH - offsetYpt - cy1 * MM_TO_PT,
+            (cx1 - cx0) * MM_TO_PT,
+            (cy1 - cy0) * MM_TO_PT,
+          ),
+          clip(),
+          endPath(),
+        );
+        page.drawImage(emb, {
+          x: pl.x * MM_TO_PT + offsetXpt,
+          y: pageH - offsetYpt - (pl.y + pl.h) * MM_TO_PT,
+          width: pl.w * MM_TO_PT,
+          height: pl.h * MM_TO_PT,
+        });
+        page.pushOperators(popGraphicsState());
       }
 
       // Línea de marco sobre el borde exterior de la celda. Se dibuja DESPUÉS de
