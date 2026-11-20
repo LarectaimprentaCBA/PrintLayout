@@ -335,6 +335,7 @@ export default function TopBar({
   onOpenRotulos,
   onEditRotulos,
   onOpenPdfToImage,
+  onOpenPdfEdit,
   onRepairPdf,
   onOpenRevistaMaker,
   revistaBusy,
@@ -476,6 +477,16 @@ export default function TopBar({
                 className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:bg-ink-700"
               >
                 PDF→Imagen
+              </button>
+            )}
+            {onOpenPdfEdit && (
+              <button
+                type="button"
+                onClick={onOpenPdfEdit}
+                title="Abrir un PDF para eliminarle páginas, cambiarles el orden o agregarle páginas de otro PDF. Guarda una copia; el original no se toca."
+                className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:bg-ink-700"
+              >
+                Editar PDF
               </button>
             )}
             {onRepairPdf && (

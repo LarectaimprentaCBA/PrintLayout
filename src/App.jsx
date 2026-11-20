@@ -19,6 +19,7 @@ import PromptModal from './components/PromptModal.jsx';
 import PdfUploadModal from './components/PdfUploadModal.jsx';
 import PdfImageExtractModal from './components/PdfImageExtractModal.jsx';
 import PdfToImageModal from './components/PdfToImageModal.jsx';
+import PdfEditModal from './components/PdfEditModal.jsx';
 import GridUploadModal from './components/GridUploadModal.jsx';
 import ImagePackModal from './components/ImagePackModal.jsx';
 import MultiSizeModal from './components/MultiSizeModal.jsx';
@@ -221,6 +222,7 @@ export default function App() {
   const [syncing, setSyncing] = useState(false);
   const [presetsModalOpen, setPresetsModalOpen] = useState(false);
   const [pdfToImageOpen, setPdfToImageOpen] = useState(false);
+  const [pdfEditOpen, setPdfEditOpen] = useState(false);
   const [intakePanelOpen, setIntakePanelOpen] = useState(false);
   const [mazosPublicadosOpen, setMazosPublicadosOpen] = useState(false);
   const [qrCutPanelOpen, setQrCutPanelOpen] = useState(false);
@@ -4817,6 +4819,7 @@ export default function App() {
           onOpenRotulos={() => setRotulosOpen(true)}
           onEditRotulos={selected?.rotulos ? () => { setRotulosPlanchaInit({ ...selected.rotulos, editing: true }); setRotulosPlanchaOpen(true); } : null}
           onOpenPdfToImage={() => setPdfToImageOpen(true)}
+          onOpenPdfEdit={() => setPdfEditOpen(true)}
           onRepairPdf={handleRepairPdf}
           onOpenRevistaMaker={handleOpenRevistaMaker}
           revistaBusy={revistaBusy}
@@ -5183,6 +5186,11 @@ export default function App() {
         <PdfToImageModal
           open={pdfToImageOpen}
           onClose={() => setPdfToImageOpen(false)}
+        />
+
+        <PdfEditModal
+          open={pdfEditOpen}
+          onClose={() => setPdfEditOpen(false)}
         />
 
         <IntakePanelModal
