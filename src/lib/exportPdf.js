@@ -552,7 +552,7 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
             const bl = await getColorBleedImage(image, bp, cell.w, cell.h);
             const key = `bleed:${bl.url}`;
             let emb = embedCache.get(key);
-            if (!emb) { emb = await doc.embedPng(bl.bytes); embedCache.set(key, emb); }
+            if (!emb) { emb = await doc.embedPng(await bl.getBytes()); embedCache.set(key, emb); }
             bleedDraw = { emb, bl, bp };
           } catch (err) {
             console.warn('Sangrado de color: no se pudo armar para', image.name || imgId, err);

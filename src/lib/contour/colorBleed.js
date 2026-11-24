@@ -184,6 +184,19 @@ const cache = new Map() // clave → Promise<resultado>
 const MAX_CACHE = 120
 const MAX_LADO = 4096
 
+// Lado máximo (px) de la imagen que se muestra en pantalla.
+const VISTA_MAX = 1400
+
+// PNG de un canvas, ya mismo (sincrónico).
+function pngAhora(canvas) {
+  const b64 = canvas.toDataURL('image/png').split(',')[1] || ''
+  const bin = atob(b64)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  if (!bytes.length) throw new Error('no se pudo armar la franja de color')
+  return bytes
+}
+
 function loadImg(src) {
   return new Promise((resolve, reject) => {
     const im = new Image()
@@ -193,11 +206,36 @@ function loadImg(src) {
   })
 }
 
+// La silueta del dibujo y el original ya leído, por imagen + tolerancia. Detectar
+// el borde es lo caro y NO depende del ancho de la franja: al mover el sangrado
+// de a 0,1 mm se reusa y solo se repinta la franja.
+const siluetas = new Map() // clave → Promise<{ mask, original }>
+const MAX_SILUETAS = 12
+
+function siluetaDe(image, tolerance, detectHoles) {
+  const key = [image.id, (image.dataUrl || '').length, tolerance, detectHoles ? 'H' : 'B'].join('|')
+  let pr = siluetas.get(key)
+  if (pr) { siluetas.delete(key); siluetas.set(key, pr); return pr }
+  pr = (async () => {
+    const blob = await (await fetch(image.dataUrl)).blob()
+    // La MISMA silueta que usa el corte (misma tolerancia, misma resolución).
+    const maskBlob = await solidBgRemoval(blob, { tolerance, detectHoles, defringe: true })
+    const [mask, original] = await Promise.all([createImageBitmap(maskBlob), loadImg(image.dataUrl)])
+    return { mask, original }
+  })()
+  pr.catch(() => { if (siluetas.get(key) === pr) siluetas.delete(key) })
+  siluetas.set(key, pr)
+  if (siluetas.size > MAX_SILUETAS) {
+    const vieja = siluetas.keys().next().value
+    const pv = siluetas.get(vieja)
+    siluetas.delete(vieja)
+    if (pv) pv.then((r) => { try { r.mask.close?.() } catch (_) { /* noop */ } }).catch(() => {})
+  }
+  return pr
+}
+
 async function construir(image, { tolerance, detectHoles, haloMm }, cellW, cellH) {
-  const blob = await (await fetch(image.dataUrl)).blob()
-  // La MISMA silueta que usa el corte (misma tolerancia, misma resolución).
-  const maskBlob = await solidBgRemoval(blob, { tolerance, detectHoles, defringe: true })
-  const mask = await createImageBitmap(maskBlob)
+  const { mask, original } = await siluetaDe(image, tolerance, detectHoles)
   const w = mask.width, h = mask.height
 
   // mm → px de trabajo: la imagen entra "entera" en la celda.
@@ -221,7 +259,6 @@ async function construir(image, { tolerance, detectHoles, haloMm }, cellW, cellH
   xH.putImageData(id, 0, 0)
 
   // Salida a la resolución del ORIGINAL (el dibujo no pierde definición).
-  const original = await loadImg(image.dataUrl)
   let k = original.naturalWidth / w
   if (Math.max(W, H) * k > MAX_LADO) k = MAX_LADO / Math.max(W, H)
   const FW = Math.max(1, Math.round(W * k)), FH = Math.max(1, Math.round(H * k))
@@ -242,12 +279,39 @@ async function construir(image, { tolerance, detectHoles, haloMm }, cellW, cellH
   xD.globalCompositeOperation = 'destination-in'
   xD.drawImage(cM, 0, 0, FW, FH)
   xF.drawImage(cD, 0, 0)
-  mask.close?.()
 
-  const out = await new Promise((resolve) => cF.toBlob(resolve, 'image/png'))
-  if (!out) throw new Error('no se pudo armar la franja de color')
-  const bytes = new Uint8Array(await out.arrayBuffer())
-  return { url: URL.createObjectURL(out), bytes, width: FW, height: FH, padFrac: p / w, imgW: w, imgH: h }
+  // Lo que se VE en pantalla se codifica en el momento. canvas.toBlob deja el
+  // PNG para cuando el navegador está "ocioso": en cada clic del sangrado la
+  // franja tardaba 1–2 s en aparecer aunque ya estaba pintada.
+  let cV = cF
+  if (Math.max(FW, FH) > VISTA_MAX) {
+    const kv = VISTA_MAX / Math.max(FW, FH)
+    cV = document.createElement('canvas')
+    cV.width = Math.max(1, Math.round(FW * kv)); cV.height = Math.max(1, Math.round(FH * kv))
+    const xV = cV.getContext('2d')
+    xV.imageSmoothingEnabled = true
+    xV.imageSmoothingQuality = 'high'
+    xV.drawImage(cF, 0, 0, cV.width, cV.height)
+  }
+  const vista = pngAhora(cV)
+  const url = URL.createObjectURL(new Blob([vista], { type: 'image/png' }))
+
+  // Lo que se IMPRIME va a resolución completa. Si la vista ya lo es, son los
+  // mismos bytes; si no, se codifica aparte (sin frenar la pantalla) y queda
+  // listo para cuando se exporte o imprima.
+  let bytesPr
+  if (cV === cF) {
+    bytesPr = Promise.resolve(vista)
+  } else {
+    bytesPr = new Promise((resolve, reject) => {
+      cF.toBlob((b) => {
+        if (!b) { reject(new Error('no se pudo armar la franja de color')); return }
+        b.arrayBuffer().then((ab) => resolve(new Uint8Array(ab)), reject)
+      }, 'image/png')
+    })
+    bytesPr.catch(() => {})
+  }
+  return { url, getBytes: () => bytesPr, width: FW, height: FH, padFrac: p / w, imgW: w, imgH: h }
 }
 
 /**
@@ -256,8 +320,9 @@ async function construir(image, { tolerance, detectHoles, haloMm }, cellW, cellH
  * @param {{tolerance:number, detectHoles:boolean, haloMm:number}} params - de colorBleedFor
  * @param {number} cellW - ancho de la celda (mm)
  * @param {number} cellH - alto de la celda (mm)
- * @returns {Promise<{url:string, bytes:Uint8Array, width:number, height:number,
- *   padFrac:number, imgW:number, imgH:number}>}
+ * @returns {Promise<{url:string, getBytes:() => Promise<Uint8Array>, width:number,
+ *   height:number, padFrac:number, imgW:number, imgH:number}>} url = lo que se ve
+ *   en pantalla; getBytes() = el PNG a resolución completa, para imprimir.
  */
 export function getColorBleedImage(image, params, cellW, cellH) {
   const key = [image.id, (image.dataUrl || '').length, params.tolerance, params.detectHoles ? 'H' : 'B',

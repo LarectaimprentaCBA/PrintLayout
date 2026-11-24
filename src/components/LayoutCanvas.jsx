@@ -9,7 +9,7 @@ import {
   hasMixedOrientations,
   cellNeedsRotation,
 } from '../lib/templates.js';
-import { offsetPolygons } from '../lib/contour/offset.js';
+import { safeZoneCuts } from '../lib/safeZone.js';
 import { cellsToCircleCuts } from '../lib/grid.js';
 import { coverObjectPosition, coverCropRect, focalPoint } from '../lib/faceDetection.js';
 import { renderPdfPage1Preview } from '../lib/pdfPreview.js';
@@ -251,24 +251,8 @@ export default function LayoutCanvas({
     if (cortes.length === 0) return null;
     const s = safetyMm(template);
     if (!(s > 0)) return null;
-    const out = [];
-    for (const poly of cortes) {
-      if (!poly || poly.length < 3) continue;
-      // Un recorrido ABIERTO no es el contorno de nada: no se puede achicar
-      // hacia adentro. Mejor no dibujar nada que dibujar una forma inventada.
-      const cerrado = Math.hypot(poly[0][0] - poly[poly.length - 1][0],
-        poly[0][1] - poly[poly.length - 1][1]) < 0.05;
-      if (!cerrado) continue;
-      const cp = poly.map(([x, y]) => ({ X: Math.round(x * 1000), Y: Math.round(y * 1000) }));
-      try {
-        const { polys } = offsetPolygons([cp], -s, { joinType: 'miter' });
-        for (const sol of polys) {
-          if (sol && sol.length >= 3) out.push(sol.map((p) => [p.X / 1000, p.Y / 1000]));
-        }
-      } catch {
-        /* forma degenerada: la salteamos */
-      }
-    }
+    // Una vez por forma distinta (96 stickers iguales = 1 cálculo, no 96).
+    const out = safeZoneCuts(cortes, s);
     return out.length ? out : null;
   }, [showSafety, template?.cortes, template?.cortesPorPagina, template?.safetyMm,
     template?.serpentineCut, template?.celdas, currentPage, face]);
