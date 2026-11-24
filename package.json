@@ -1,6 +1,6 @@
 {
   "name": "printlayout",
-  "version": "0.1.206",
+  "version": "0.1.207",
   "description": "PrintLayout — herramienta de imposición de fotos, tarjetas y stickers para impresión y corte. Desarrollada por La Recta Imprenta (Córdoba, AR) para uso interno.",
   "type": "module",
   "main": "electron/main.cjs",
@@ -42,6 +42,7 @@
     "test:sangrado-color": "node src/lib/__tests__/colorBleed.test.mjs",
     "test:editar-pdf": "node src/lib/__tests__/pdfEdit.test.mjs",
     "test:zona-segura": "node src/lib/__tests__/safeZone.test.mjs",
+    "test:reabrir-pestanas": "node src/lib/__tests__/restoreTabs.test.mjs",
     "test:cortar-x2": "node electron/__tests__/cortarX2.test.cjs",
     "test:agrandar-contenido": "electron src/lib/__tests__/agrandarContenido.test.cjs",
     "test:plan-hojas": "node src/quickprint/__tests__/planSheets.test.mjs",

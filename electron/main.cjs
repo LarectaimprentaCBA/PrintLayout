@@ -180,6 +180,30 @@ if (!gotSingleInstanceLock) {
   });
 }
 
+// ¿Pidieron arrancar ESCONDIDA en la bandeja? Solo con el argumento --bandeja
+// (lo usa el arranque automático de Windows, para que al prender la PC no
+// aparezca una ventana). Si la abre una persona (acceso directo, menú Inicio),
+// no viene el argumento y la ventana SE MUESTRA: antes arrancaba siempre oculta
+// y parecía que "no abría".
+function pidioArrancarEnBandeja(argv) {
+  return (argv || []).some((a) => typeof a === 'string' && /^--(bandeja|tray|hidden|oculta)$/i.test(a));
+}
+
+// Muestra la ventana apenas tenga algo para pintar (sin el fogonazo de una
+// ventana vacía). Si por lo que sea ese aviso no llega, se muestra igual.
+function showMainWindowWhenReady() {
+  const win = mainWindow;
+  if (!win || win.isDestroyed()) return;
+  let hecho = false;
+  const mostrar = () => {
+    if (hecho) return;
+    hecho = true;
+    if (mainWindow === win) showMainWindow();
+  };
+  win.once('ready-to-show', mostrar);
+  setTimeout(mostrar, 5000);
+}
+
 // Muestra/enfoca la ventana principal (desde el tray, el segundo-instance, etc.).
 function showMainWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -266,8 +290,9 @@ function createWindow() {
     backgroundColor: '#0b0d10',
     title: 'PrintLayout',
     icon: appIconImage(),
-    // Arranca OCULTA: la app vive en la bandeja. El renderer igual se carga, así
-    // el trabajo de fondo (intake de fotos, server QR) corre con la ventana oculta.
+    // Se crea OCULTA y la muestra whenReady (salvo que hayan pedido --bandeja o
+    // sea "Imprimir con PrintLayout"). El renderer igual se carga, así el trabajo
+    // de fondo (intake de fotos, server QR) corre con la ventana oculta.
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -2592,7 +2617,7 @@ app.whenReady().then(() => {
   // Si no obtuvimos el lock de instancia única, esta copia ya llamó app.quit():
   // no armamos nada (la primera instancia es la que corre).
   if (!gotSingleInstanceLock) return;
-  createWindow();   // arranca OCULTA (show:false)
+  createWindow();   // se crea oculta (show:false); más abajo se decide si se muestra
   createTray();     // ícono en la bandeja
 
   // "Imprimir con PrintLayout" (clic derecho de Windows). Registramos el
@@ -2610,6 +2635,12 @@ app.whenReady().then(() => {
   // aparte (la app queda en la bandeja; NO mostramos la ventana principal).
   const initialPrint = quickPrint.filesFromArgv(process.argv);
   if (initialPrint.length) quickPrint.enqueue(initialPrint);
+
+  // La abrió una persona → se ve la ventana. Queda en la bandeja solo si lo
+  // pidieron (--bandeja, arranque de Windows) o si vino a imprimir del clic derecho.
+  const enBandeja = pidioArrancarEnBandeja(process.argv) || initialPrint.length > 0;
+  appendDebugLog(`[arranque] ${enBandeja ? 'en la bandeja (sin ventana)' : 'con ventana'} argv=${JSON.stringify(process.argv.slice(1))}`);
+  if (!enBandeja) showMainWindowWhenReady();
 
   // Reparar el verbo del clic derecho si falta (diferido: no retrasa la ventana).
   setTimeout(repairContextMenuVerb, 3000);

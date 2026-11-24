@@ -7,7 +7,9 @@
 // sola vez por impresora).
 import { useEffect, useMemo, useState } from 'react';
 
-import { pagesToPrintFor } from '../lib/printPages.js';
+import {
+  pagesToPrintFor, rememberedPageChoice, pageChoiceToSave, loadPageChoice, savePageChoice,
+} from '../lib/printPages.js';
 
 const LS_LAST_PRINTER = 'printlayout.lastPrinter';
 
@@ -36,6 +38,9 @@ export default function PrintModal({
   // La calibración imprime a una impresora puntual: que eso no cambie cuál queda
   // elegida la próxima vez que se imprima un trabajo normal.
   rememberPrinter = true,
+  // Identifica el trabajo (la pestaña): un "Rango" solo se recuerda para el
+  // mismo trabajo. "Todas" / "Actual" se recuerdan para cualquiera.
+  jobKey = null,
   onConfirm,
   onCancel,
 }) {
@@ -88,11 +93,12 @@ export default function PrintModal({
     setError(null);
     setCutMarks(true);
     setRegistrationCross(false);
-    // Las páginas elegidas NO se arrastran al próximo trabajo: un "Rango 2-3"
-    // de la impresión anterior, en un trabajo de una sola hoja, dejaba el botón
-    // Imprimir apagado sin explicación (y en uno de varias hojas imprimía de menos).
-    setPageMode('all');
-    setRangeText('');
+    // Queda elegido lo que se usó la última vez ("Todas" / "Actual"). Un "Rango"
+    // solo vuelve si es el MISMO trabajo y todavía entra en sus hojas: un "2-3"
+    // de otro trabajo dejaba el botón Imprimir apagado o imprimía de menos.
+    const recordado = rememberedPageChoice(loadPageChoice(localStorage), jobKey, totalPages);
+    setPageMode(recordado.mode);
+    setRangeText(recordado.rangeText);
     (async () => {
       try {
         const r = await window.printlayout.pdf.listPrinters();
@@ -200,6 +206,7 @@ export default function PrintModal({
     try {
       if (rememberPrinter) localStorage.setItem(LS_LAST_PRINTER, deviceName);
     } catch {}
+    savePageChoice(localStorage, pageChoiceToSave(pageMode, rangeText, jobKey, totalPages));
     onConfirm?.({
       deviceName,
       copies,
@@ -405,6 +412,12 @@ export default function PrintModal({
               {pageMode === 'range' && rangeInvalid && (
                 <p className="mt-1 text-[10px] text-red-400">
                   Rango inválido. Usá números entre 1 y {totalPages}, ej: "1-3,5".
+                </p>
+              )}
+              {Array.isArray(pagesToPrint) && pagesToPrint.length < totalPages && (
+                <p className="mt-1 text-[10px] text-amber-300">
+                  Se {pagesToPrint.length === 1 ? 'imprime' : 'imprimen'} {pagesToPrint.length} de {totalPages} hojas
+                  {pagesToPrint.length <= 6 ? ` (${pagesToPrint.map((i) => i + 1).join(', ')})` : ''}.
                 </p>
               )}
             </div>

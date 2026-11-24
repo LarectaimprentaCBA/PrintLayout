@@ -1341,12 +1341,26 @@ export default function App() {
   // de openJobFromPath sin re-suscribir en cada render.
   const openJobFromPathRef = useRef(null);
   openJobFromPathRef.current = openJobFromPath;
+  // Si el doble clic llega mientras todavía se están reabriendo las pestañas de
+  // la última vez (app recién abierta), esperamos a que terminen: así, si ese
+  // .pljob ya era una de ellas, vamos a esa pestaña en vez de abrirlo repetido.
+  const tabsRestoringRef = useRef(tabsRestoring);
+  tabsRestoringRef.current = tabsRestoring;
+  const pendingOpenPathRef = useRef(null);
   useEffect(() => {
     const off = window.printlayout?.jobs?.onOpenJobFile?.((filePath) => {
+      if (tabsRestoringRef.current) { pendingOpenPathRef.current = filePath; return; }
       openJobFromPathRef.current?.(filePath);
     });
     return off;
   }, []);
+  useEffect(() => {
+    if (tabsRestoring) return;
+    const p = pendingOpenPathRef.current;
+    if (!p) return;
+    pendingOpenPathRef.current = null;
+    openJobFromPathRef.current?.(p);
+  }, [tabsRestoring]);
 
   const handleDeleteJob = async (jobId) => {
     const r = await removeJobFromDisk(jobId);
@@ -5236,10 +5250,10 @@ export default function App() {
 
         <ConfirmModal
           open={!!pendingRestore}
-          title="¿Restaurar sesión anterior?"
+          title="¿Abrir lo que tenías la última vez?"
           message={
             pendingRestore
-              ? `Tenías ${pendingRestore.tabs.length} pestaña${
+              ? `La vez anterior la app se cerró mientras abría tus trabajos, por eso pregunto antes de volver a abrirlos. Tenías ${pendingRestore.tabs.length} pestaña${
                   pendingRestore.tabs.length === 1 ? '' : 's'
                 } abierta${pendingRestore.tabs.length === 1 ? '' : 's'} la última vez (${
                   pendingRestore.tabs
@@ -5255,8 +5269,11 @@ export default function App() {
             { label: 'Restaurar', value: 'restore', variant: 'primary' },
           ]}
           onAction={(v) => {
-            if (v === 'restore') confirmRestore();
-            else discardRestore();
+            if (v === 'restore') {
+              confirmRestore();
+              // Que no quede "Nuevo trabajo" abierto encima de lo recién reabierto.
+              setNewTabModalOpen(false);
+            } else discardRestore();
           }}
           onCancel={() => {}}
         />
@@ -5346,6 +5363,7 @@ export default function App() {
           }
           totalPages={layout.pageCount}
           currentPage={currentPage}
+          jobKey={activeTabId}
           showCutMarksOption={selectedHasGeneratedMarks}
           colorRefreshTick={colorRefreshTick}
           showRegistrationCross={!!selected?.doubleSided}

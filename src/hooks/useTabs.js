@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { dbg } from '../lib/debugLog.js';
+import { mergeRestoredTabs, tieneTrabajo } from '../lib/restoreTabs.js';
 
 // Gestor de tabs (multi-doc). Cada tab contiene el state "de identidad" del
 // trabajo: template embebido (copia self-contained con id sintetico),
@@ -17,6 +18,23 @@ import { dbg } from '../lib/debugLog.js';
 //     template id sintetico (asi no quedan huerfanos en disco).
 
 const SAVE_DEBOUNCE_MS = 800;
+
+// Al arrancar, las pestañas de la última vez se abren SOLAS (sin preguntar).
+// Red de seguridad: si la vez anterior la app se cerró mientras las estaba
+// abriendo (un trabajo que la cuelga), no insistimos a ciegas — ahí sí se
+// pregunta, para que quede la salida de "Empezar nuevo".
+const LS_RESTORE_EN_CURSO = 'printlayout.restoreEnCurso';
+const RESTORE_OK_MS = 15000; // viva este rato después de abrirlas = salió bien
+
+function leerRestoreEnCurso() {
+  try { return !!localStorage.getItem(LS_RESTORE_EN_CURSO); } catch { return false; }
+}
+function marcarRestoreEnCurso() {
+  try { localStorage.setItem(LS_RESTORE_EN_CURSO, String(Date.now())); } catch { /* sin storage */ }
+}
+function limpiarRestoreEnCurso() {
+  try { localStorage.removeItem(LS_RESTORE_EN_CURSO); } catch { /* sin storage */ }
+}
 
 function makeTabId() {
   return `tab_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
@@ -68,9 +86,9 @@ function sanitizeTab(t) {
 export function useTabs() {
   // Mientras restauramos del disco, arrancamos con una tab vacia. Asi App.jsx
   // siempre tiene activeTab !== null y no hay loading state que romper.
-  // Si el restore async encuentra tabs persistidas, las dejamos en pending y
-  // pedimos al usuario que confirme antes de aplicarlas (asi no se le carga
-  // un trabajo viejo gigante sin pedirselo).
+  // Si el restore async encuentra tabs persistidas, se abren solas (el usuario
+  // sigue donde estaba, sin apretar "Restaurar"). Solo si la vez anterior la
+  // app se cerro mientras las abria quedan en pending y se pregunta.
   const [tabs, setTabs] = useState(() => [createEmptyTab('Sin titulo 1')]);
   const [activeTabId, setActiveTabId] = useState(() => tabs?.[0]?.id ?? null);
   const [restoring, setRestoring] = useState(true);
@@ -80,8 +98,26 @@ export function useTabs() {
 
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0] || null;
 
-  // Restore async al mount. NO aplica solo: deja en pendingRestore para que
-  // App.jsx muestre un modal de confirmacion.
+  // Lo ultimo que se ve en pantalla, para juntarlo con lo restaurado.
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+  const activeTabIdRef = useRef(activeTabId);
+  activeTabIdRef.current = activeTabId;
+
+  // Abre las pestañas guardadas. Deja la marca "abriendo" y la saca si la app
+  // sigue viva un rato despues (= no se colgo abriendolas).
+  const restoreOkTimerRef = useRef(null);
+  const aplicarRestore = useCallback((guardado) => {
+    marcarRestoreEnCurso();
+    const r = mergeRestoredTabs(tabsRef.current, activeTabIdRef.current, guardado.tabs, guardado.activeTabId);
+    dbg(`[tab] restore: ${guardado.tabs.length} guardadas + ${r.tabs.length - guardado.tabs.length} ya abiertas → activa ${r.activeTabId}`);
+    setTabs(r.tabs);
+    setActiveTabId(r.activeTabId);
+    if (restoreOkTimerRef.current) clearTimeout(restoreOkTimerRef.current);
+    restoreOkTimerRef.current = setTimeout(limpiarRestoreEnCurso, RESTORE_OK_MS);
+  }, []);
+
+  // Restore async al mount.
   useEffect(() => {
     const api = typeof window !== 'undefined' ? window.printlayout?.openTabs : null;
     if (!api?.load) {
@@ -97,10 +133,15 @@ export function useTabs() {
       if (list.length > 0) {
         const wantId = data?.activeTabId;
         const exists = wantId && list.some((t) => t.id === wantId);
-        setPendingRestore({
-          tabs: list,
-          activeTabId: exists ? wantId : list[0].id,
-        });
+        const guardado = { tabs: list, activeTabId: exists ? wantId : list[0].id };
+        // ¿Hay algo que valga la pena abrir? (una sola pestaña vacia = nada)
+        const hayTrabajo = list.some(tieneTrabajo);
+        if (hayTrabajo && leerRestoreEnCurso()) {
+          // La vez anterior no termino de abrirlas: preguntar.
+          setPendingRestore({ ...guardado, porFalla: true });
+        } else {
+          aplicarRestore(guardado);
+        }
       }
       setRestoring(false);
     }).catch((err) => {
@@ -114,18 +155,16 @@ export function useTabs() {
   // persistidas y limpia el pending. El auto-save reanudara guardando esta
   // misma lista (no hay pisada).
   const confirmRestore = useCallback(() => {
-    setPendingRestore((pending) => {
-      if (!pending) return null;
-      setTabs(pending.tabs);
-      setActiveTabId(pending.activeTabId);
-      return null;
-    });
-  }, []);
+    if (!pendingRestore) return;
+    aplicarRestore(pendingRestore);
+    setPendingRestore(null);
+  }, [pendingRestore, aplicarRestore]);
 
   // Descarta el restore pendiente: borra las tabs persistidas del disco y los
   // work-states asociados (asi al proximo arranque empieza realmente limpio).
   // Mantiene la tab vacia inicial.
   const discardRestore = useCallback(() => {
+    limpiarRestoreEnCurso();
     setPendingRestore((pending) => {
       if (!pending) return null;
       const wsApi = typeof window !== 'undefined' ? window.printlayout?.workStates : null;

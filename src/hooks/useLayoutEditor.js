@@ -67,6 +67,8 @@ export function useLayoutEditor(template, face = 'front') {
   // de "tiene trabajo" en la sidebar de plantillas, incluso para plantillas
   // que todavia no abrimos en esta sesion.
   const diskTemplatesRef = useRef(new Set());
+  // Id de la plantilla cuyo trabajo se está leyendo del disco AHORA (o null).
+  const diskLoadPendingRef = useRef(null);
   // Timer del debounce de auto-save al disco.
   const saveTimerRef = useRef(null);
 
@@ -154,7 +156,13 @@ export function useLayoutEditor(template, face = 'front') {
     let cancelled = false;
     const api = typeof window !== 'undefined' ? window.printlayout?.workStates : null;
     if (api?.load) {
+      // Mientras se lee del disco, el estado en pantalla está vacío "de paso":
+      // el auto-guardado NO tiene que tomarlo por "el usuario lo vació" y borrar
+      // el archivo (pasaba si la lectura tardaba más que el debounce).
+      diskLoadPendingRef.current = newTplId;
+      const finLectura = () => { if (diskLoadPendingRef.current === newTplId) diskLoadPendingRef.current = null; };
       api.load(newTplId).then((disk) => {
+        finLectura();
         if (cancelled || !disk) return;
         if (lastTemplateIdRef.current !== newTplId) return;
         // Sanity check: que tenga la forma esperada.
@@ -174,6 +182,7 @@ export function useLayoutEditor(template, face = 'front') {
         historyIndexRef.current = 0;
         bumpHistoryTick();
       }).catch((err) => {
+        finLectura();
         console.warn('[work-states] load fallo:', err);
       });
     }
@@ -220,6 +229,8 @@ export function useLayoutEditor(template, face = 'front') {
         payload.assignmentsFront.some((x) => x !== null) ||
         payload.assignmentsBack.some((x) => x !== null);
       if (!hasImages && !hasAssignments) {
+        // Vacío porque todavía se está leyendo del disco: no borrar nada.
+        if (diskLoadPendingRef.current === tplId) return;
         if (diskTemplatesRef.current.has(tplId)) {
           dbg(`[ws] DELETE ${tplId} (estado vacío) ← ¡OJO borra trabajo en disco!`);
           api.delete(tplId).catch(() => {});
