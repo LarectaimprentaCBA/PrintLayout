@@ -2795,7 +2795,12 @@ export default function App() {
 
   const contourFullRunningRef = useRef(false);
   const computeContourRef = useRef(null);
-  const computeContourNow = useCallback(async (cacheOnly = false) => {
+  // puedeTrazar: en un re-mapeo (cacheOnly) con el caché de trazado frío, trazar
+  // de verdad en vez de no hacer nada. Solo lo pide un cambio REAL del usuario
+  // (ver el efecto de re-mapeo): sin esto, tras reabrir la app el "Sangrado
+  // (vivo)" cambiaba el número (y la franja de color) pero el corte quedaba
+  // clavado en el valor viejo.
+  const computeContourNow = useCallback(async (cacheOnly = false, puedeTrazar = false) => {
     if (!selected || selected.cutShape !== 'contour') return;
     const runTabId = activeTabIdRef.current;
     const cells = selected.celdas ?? [];
@@ -2865,7 +2870,7 @@ export default function App() {
       // reconoce porque la firma aplicada todavía nombra una forma ("shape").
       const hadFixed = typeof selected.contourAppliedMapSig === 'string'
         && selected.contourAppliedMapSig.includes('"shape"');
-      if (cacheOnly && stats.missing > 0 && (hadFixed || cortesPorPagina.some((pc) => pc && pc.length))) {
+      if (cacheOnly && stats.missing > 0 && (hadFixed || puedeTrazar === true || cortesPorPagina.some((pc) => pc && pc.length))) {
         if (!contourFullRunningRef.current) {
           contourFullRunningRef.current = true;
           try { await computeContourRef.current?.(false); } finally { contourFullRunningRef.current = false; }
@@ -2933,15 +2938,26 @@ export default function App() {
   // desde un caché frío → pisaba el corte guardado con vacío. Al comparar contra
   // el mapSig APLICADO (guardado en la plantilla), en un switch/restore coinciden
   // → no se toca el corte.
+  //
+  // "tocada": el usuario cambió alguno de esos parámetros EN ESTA SESIÓN (la
+  // firma dejó de ser la que tenía la pestaña cuando se la vio por primera vez).
+  // Ahí, si el caché de trazado está frío (app recién abierta), se traza de
+  // verdad para que el corte acompañe al número. Al abrir/restaurar NO se marca
+  // (la firma es la primera que se ve) → el corte guardado no se recalcula solo.
+  const contourMapSeenRef = useRef({});
   useEffect(() => {
     if (!selected || selected.cutShape !== 'contour') return;
+    const vistas = contourMapSeenRef.current;
+    let vista = vistas[selected.id];
+    if (!vista) { vista = { primera: contourMapSig, tocada: false }; vistas[selected.id] = vista; }
+    else if (vista.primera !== contourMapSig) vista.tocada = true;
     if (contourTabSwitched) return;
     // Sin corte previo no hay nada que re-mapear… salvo que haya imágenes con
     // FORMA FIJA: esas no necesitan trazado (es justo el caso "la detección no
     // dio nada y la paso a rectángulo").
     if (!(selected.cortes?.length) && !contourFixedSig) return;
     if (contourMapSig === (selected.contourAppliedMapSig ?? null)) return;
-    computeContourNow(true);
+    computeContourNow(true, vista.tocada);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contourMapSig, selected?.contourAppliedMapSig, selected?.id, contourTabSwitched]);
 
