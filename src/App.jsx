@@ -28,6 +28,7 @@ import ImageCountPackModal from './components/ImageCountPackModal.jsx';
 import ImageQuantitiesModal from './components/ImageQuantitiesModal.jsx';
 import ImageSizeGroupsModal from './components/ImageSizeGroupsModal.jsx';
 import ImageFrontBackPoseModal from './components/ImageFrontBackPoseModal.jsx';
+import DeckSetsModal from './components/DeckSetsModal.jsx';
 import IntakePanelModal from './components/IntakePanelModal.jsx';
 import QrCutPanelModal from './components/QrCutPanelModal.jsx';
 import ColorCalModal from './components/ColorCalModal.jsx';
@@ -588,6 +589,7 @@ export default function App() {
   const [editGeometryTemplate, setEditGeometryTemplate] = useState(null);
   const [quantitiesOpen, setQuantitiesOpen] = useState(false);
   const [poseFrontBackOpen, setPoseFrontBackOpen] = useState(false);
+  const [deckSetsOpen, setDeckSetsOpen] = useState(false);
   // Imagen abierta en el editor.
   const [editingImageId, setEditingImageId] = useState(null);
   // Índice de celda (flat) desde donde se abrió el editor, para mostrar el
@@ -4843,6 +4845,7 @@ export default function App() {
           }
           onOpenQuantities={() => setQuantitiesOpen(true)}
           onOpenFrontBackPose={() => setPoseFrontBackOpen(true)}
+          onOpenDeckSets={canPoseFrontBack ? () => setDeckSetsOpen(true) : undefined}
           onUndo={layout.undo}
           onRedo={layout.redo}
           canUndo={layout.canUndo}
@@ -5207,6 +5210,27 @@ export default function App() {
             }
           }}
           onCancel={() => setPoseFrontBackOpen(false)}
+        />
+
+        <DeckSetsModal
+          open={deckSetsOpen}
+          cellsPerPage={layout.cellsPerPage}
+          initialImages={layout.images}
+          onConfirm={(cards, info) => {
+            const res = layout.applyFrontBackPairs(cards);
+            setDeckSetsOpen(false);
+            setCurrentPage(0);
+            layout.setSelectedCell(null);
+            if (res) {
+              setToast({
+                kind: 'success',
+                text: `${info.sets} juego${info.sets === 1 ? '' : 's'} de ${info.perSet} carta${info.perSet === 1 ? '' : 's'} (${info.cards} cartas, frente y dorso) en ${res.pages} hoja${res.pages === 1 ? '' : 's'}.`,
+              });
+            } else {
+              setToast({ kind: 'error', text: 'No se pudieron armar los juegos en esta plantilla (tiene que ser una grilla doble faz).' });
+            }
+          }}
+          onCancel={() => setDeckSetsOpen(false)}
         />
 
         <PaperPresetsModal

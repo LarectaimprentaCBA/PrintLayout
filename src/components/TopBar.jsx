@@ -316,6 +316,7 @@ export default function TopBar({
   onDistributeEvenly,
   onOpenQuantities,
   onOpenFrontBackPose,
+  onOpenDeckSets,
   onUndo,
   onRedo,
   canUndo,
@@ -791,6 +792,11 @@ export default function TopBar({
                   label: 'Posar frente/dorso',
                   onClick: () => onOpenFrontBackPose(),
                   title: 'Cargar pares frente/dorso con cantidad y posarlos emparejados',
+                }] : []),
+                ...(doubleSided && typeof onOpenDeckSets === 'function' ? [{
+                  label: 'Armar juegos',
+                  onClick: () => onOpenDeckSets(),
+                  title: 'Cargar frentes y dorsos por separado y armar varios juegos: cada juego con una carta de cada frente, y los dorsos repartidos',
                 }] : []),
               ]}
             />
