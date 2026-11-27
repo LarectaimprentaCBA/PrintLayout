@@ -421,6 +421,28 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
     return embedded;
   }
 
+  // Plancha de TAGS: el arte (frente / dorso) sale del PDF de la plancha y va
+  // SIEMPRE debajo de todo, en las dos caras. No es un "fondo con marcas"
+  // (`pdfBase64`): las marcas y el QR los dibuja la app, igual que en una grilla.
+  // En el frente no hay nada para posar (el logo va solo en el dorso).
+  const tagArtB64 = template.tags?.pdfBase64 || null;
+  const esDorsoTags = template.doubleSided && face === 'back';
+  async function tagArtForFace() {
+    if (!tagArtB64) return null;
+    const idx = esDorsoTags ? 1 : 0;
+    const key = `__tags__:${idx}`;
+    if (ctx.bgCache.has(key)) return ctx.bgCache.get(key);
+    let embedded = null;
+    try {
+      if (!ctx.tagArtSrc) ctx.tagArtSrc = await PDFDocument.load(base64ToBytes(tagArtB64));
+      [embedded] = await doc.embedPdf(ctx.tagArtSrc, [idx]);
+    } catch (err) {
+      console.error('No se pudo embeber el arte de la plancha de tags:', err);
+    }
+    ctx.bgCache.set(key, embedded);
+    return embedded;
+  }
+
   const isMulti = fixedPageCount(template) !== null;
   // Para multi-page: cada hoja tiene sus propias celdas; pageCount fijo.
   // Para legacy: las mismas celdas se repiten; pageCount sale del array.
@@ -464,6 +486,16 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
       });
     }
 
+    const tagArt = await tagArtForFace();
+    if (tagArt) {
+      page.drawPage(tagArt, {
+        x: offsetXpt,
+        y: offsetYpt,
+        width: templateWpt,
+        height: templateHpt,
+      });
+    }
+
     // ¿Dibujar marcas de registro propias? Solo para plantillas SIN fondo propio
     // (grilla rápida / auto-pack con cortes generados) que van a cortarse en
     // plotter. Con fondo de PDF las marcas ya vienen embebidas. La negación del
@@ -481,6 +513,9 @@ async function appendFaceToDoc(doc, ctx, template, assignments, options) {
     // del loop: image.frame pisa el valor de plantilla campo por campo; si no hay
     // override, hereda el de la plantilla (comportamiento de siempre).
     for (let i = 0; i < cells.length; i++) {
+      // Tags: en el frente no se posa nada (las celdas son solo el lugar que cae
+      // detrás del logo), aunque hubiera quedado algo asignado por error.
+      if (tagArtB64 && !esDorsoTags) break;
       const cell = cells[i];
       const imgId = assignments?.[offset + i];
       if (!imgId) continue;

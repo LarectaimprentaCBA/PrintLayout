@@ -227,3 +227,34 @@ export async function renderPdfPage1Preview(template, dpi = 96, pageIndex = 0) {
     doc.destroy();
   }
 }
+
+// Plancha de TAGS: renderiza el arte del FRENTE (página 1) o del DORSO (página 2)
+// del PDF de la plancha, para la vista previa y para las miniaturas con las que
+// se elige la plancha. Cachea por plantilla + cara + dpi (y largo del PDF, por si
+// se vuelve a subir la plancha con el mismo id).
+export async function renderTagArtPreview(template, face = 'front', dpi = 96) {
+  const b64 = template?.tags?.pdfBase64;
+  if (!b64) return null;
+  const pageNo = face === 'back' ? 2 : 1;
+  const key = `${template.id}:tags:${pageNo}:${dpi}:${b64.length}`;
+  if (cache.has(key)) return cache.get(key);
+
+  const doc = await pdfjsLib.getDocument({ data: base64ToBytes(b64) }).promise;
+  try {
+    if (doc.numPages < pageNo) return null;
+    const page = await doc.getPage(pageNo);
+    const viewport = page.getViewport({ scale: dpi / 72 });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+    cache.set(key, dataUrl);
+    return dataUrl;
+  } finally {
+    doc.destroy();
+  }
+}

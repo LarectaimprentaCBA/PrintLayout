@@ -84,6 +84,7 @@ import {
   cutIdForPage,
   cutPageCount,
 } from './lib/templates.js';
+import { isTagSheet, buildTagCuts, checkTagSheet, tagSheetInfo, normTagHole } from './lib/tagSheets.js';
 import { generateCuts, generateCutsPerCell, generateCutsWithTroquel, cellsToLinearCuts, cellsToSerpentineCircleCuts, cutsForGridMode, troquelCutForCell } from './lib/grid.js';
 import { buildOrderJobs } from './intake/buildOrderJob.js';
 import { contourCutsByAssignments } from './lib/stickerContour.js';
@@ -668,6 +669,9 @@ export default function App() {
       if (!rawTemplate) return null;
       const t = { ...rawTemplate, id: tplId, temporal: true, tabBacked: true };
       if (sourceTemplateId) t.sourceTemplateId = sourceTemplateId;
+      // Plancha de tags abierta desde la lista: cada trabajo lleva SU nombre de
+      // corte (ver el efecto que lo genera), nunca uno heredado de la plantilla.
+      if (sourceTemplateId && isTagSheet(t)) { delete t.cutId; delete t.cutIdManual; }
       return t;
     };
 
@@ -1447,6 +1451,12 @@ export default function App() {
       // recalcula un efecto async (contourCutsByAssignments). NO los regeneramos
       // como rectángulos acá para no pisarlos.
       if (next.cutShape === 'contour') return { template: next };
+      // Plancha de tags: el corte viene del PDF (silueta + agujero), no se arma
+      // desde las celdas (que acá son los recuadros del logo).
+      if (isTagSheet(next)) {
+        next.cortes = buildTagCuts(next.tags.cortesBase, next.tags.hole);
+        return { template: next };
+      }
       const cutM = next.cutMarginMm ?? 0;
       const markM = next.markMarginMm ?? 0;
       const shape = next.cutShape ?? 'rect';
@@ -1539,7 +1549,10 @@ export default function App() {
   useEffect(() => {
     if (!qrConfig || !selected || !hasCuts(selected) || selected.cutId) return;
     let def;
-    if (isSavedTemplate(selected)) {
+    // Tags: el corte cambia por TRABAJO (con o sin agujero), así que cada trabajo
+    // lleva su propio nombre de corte aunque salga de una plancha guardada. Si
+    // compartieran uno, el último que se imprime pisaría el corte de los demás.
+    if (isSavedTemplate(selected) && !isTagSheet(selected)) {
       def = deriveCutId(selected).cutId;
     } else {
       const prefix = qrConfig.cutPrefix || '';
@@ -1600,6 +1613,7 @@ export default function App() {
     // el QR/.plt sigue al nombre nuevo (como pediste).
     const followName = isSavedTemplate(template)
       && hasCuts(template)
+      && !isTagSheet(template)
       && !template.cutIdManual;
     const nextCutId = followName
       ? deriveCutId({ name: trimmed, sourceTemplateId: template.sourceTemplateId }).cutId
@@ -1667,17 +1681,20 @@ export default function App() {
         sourceTemplateId: _sti,
         ...rest
       } = tpl;
+      const esTags = isTagSheet(tpl);
       let saved = await update({
         ...rest,
         ...(tpl.sourceTemplateId ? { id: tpl.sourceTemplateId } : {}),
         name,
         categoria: categoria || undefined,
+        // Tags: la plancha guardada no lleva nombre de corte (es por trabajo).
+        ...(esTags ? { cutId: undefined, cutIdManual: undefined } : {}),
       });
       // Sellar el cutId derivado del NOMBRE (estable) salvo override manual. Se
       // hace con el id ya asignado por el store, así el sufijo de colisión es
       // estable y no depende de cuándo corrió el efecto de generación.
       let collidedCut = false;
-      if (hasCuts(saved) && !tpl.cutIdManual) {
+      if (hasCuts(saved) && !tpl.cutIdManual && !esTags) {
         const r = deriveCutId({ name: saved.name, sourceTemplateId: saved.id });
         collidedCut = r.collided;
         if (r.cutId !== saved.cutId) {
@@ -1695,7 +1712,7 @@ export default function App() {
             categoria: saved.categoria,
             sharedAt: saved.sharedAt,
             sharedHash: saved.sharedHash,
-            ...(hasCuts(saved) && !tpl.cutIdManual
+            ...(hasCuts(saved) && !tpl.cutIdManual && !esTags
               ? { cutId: saved.cutId, cutIdManual: false }
               : {}),
           },
@@ -1782,7 +1799,7 @@ export default function App() {
     setGridModalOpen(false);
   };
 
-  const submitPdfUpload = async ({ margin: rawMargin, doubleSided, name, categoria }) => {
+  const submitPdfUpload = async ({ margin: rawMargin, doubleSided, tags = false, name, categoria }) => {
     const file = pdfUpload?.file;
     setPdfUpload(null);
     if (!file) return;
@@ -1797,12 +1814,32 @@ export default function App() {
       const saved = await createFromPdf(file, {
         markMarginMm: margin,
         doubleSided,
+        tags,
         name,
         categoria,
       });
       // Abrimos la plantilla recien creada en tab nueva (forceNew=true para
       // no pisar el trabajo en curso).
       openInTab(saved, { name: saved.name, forceNew: true });
+      if (isTagSheet(saved)) {
+        const info = tagSheetInfo(saved.tags.cortesBase);
+        const avisos = checkTagSheet({
+          cortesBase: saved.tags.cortesBase,
+          celdasDorso: saved.celdasDorso,
+          pageWidthMm: saved.pageWidthMm,
+          pageHeightMm: saved.pageHeightMm,
+          markMarginMm: saved.markMarginMm,
+        });
+        const resumen = `Plancha de tags "${saved.name}" lista: ${info.pieces} tag${info.pieces === 1 ? '' : 's'}, `
+          + `${saved.celdasDorso.length} lugar${saved.celdasDorso.length === 1 ? '' : 'es'} para el logo, `
+          + (info.holes > 0
+            ? `${info.withHole} con agujero dibujado.`
+            : 'sin agujero dibujado (lo podés agregar desde "Agujero").');
+        setToast(avisos.length
+          ? { kind: 'error', text: `${resumen} ⚠ ${avisos.join(' ⚠ ')}` }
+          : { kind: 'success', text: `${resumen} Cargá el logo desde el panel de la derecha.` });
+        return;
+      }
       setToast({
         kind: 'success',
         text: `Plantilla "${saved.name}" lista. ${saved.celdas.length} celda${
@@ -2137,6 +2174,7 @@ export default function App() {
   // legacy (grilla con celdas/celdasDorso, no multi-página) con celdas.
   const canPoseFrontBack = !!selected
     && !!selected.doubleSided
+    && !isTagSheet(selected)
     && fixedPageCount(selected) === null
     && (layout.cellsPerPage || 0) > 0;
 
@@ -3906,9 +3944,52 @@ export default function App() {
   // (vertical/horizontal) y la imagen viene en la opuesta, la rotamos 90 CW
   // para que entre directo. Casos comunes: photos horizontales en plantilla
   // Polaroid (vertical), o photos verticales en tarjetas horizontales.
+  // ---- Plancha de tags: logo + agujero -------------------------------------
+  // El logo es UNA imagen que va en TODOS los recuadros del dorso, entera y
+  // centrada (nunca recortada ni girada). Cargar otra la reemplaza.
+  const handleSetTagLogo = (img) => {
+    if (!selected || !isTagSheet(selected) || !img) return false;
+    const porHoja = layout.cellsPerPage || 0;
+    if (porHoja === 0) return false;
+    const hojas = Math.max(1, layout.pageCount || 1);
+    const logo = { ...img, fitOverride: 'contain' };
+    const res = layout.applyFrontBackPairs(
+      Array.from({ length: porHoja * hojas }, () => ({ front: null, back: logo })),
+    );
+    if (!res) return false;
+    setViewingFace('back');
+    layout.setSelectedCell(null);
+    return true;
+  };
+
+  // El agujero se decide por TRABAJO: cortarlo o no, lo traiga dibujado la
+  // plancha o no. Cambia solo el corte (y el .plt del QR se actualiza solo).
+  const handleSetTagHole = (patch) => {
+    updateActiveTab((tab) => {
+      if (!tab.template || !isTagSheet(tab.template)) return {};
+      const hole = normTagHole({ ...tab.template.tags.hole, ...patch });
+      const tags = { ...tab.template.tags, hole };
+      return {
+        template: { ...tab.template, tags, cortes: buildTagCuts(tags.cortesBase, hole) },
+        isDirty: true,
+      };
+    });
+  };
+
   const handleAddImages = async (loadedImages) => {
     if (!selected) {
       layout.addImages(loadedImages);
+      return;
+    }
+    if (isTagSheet(selected)) {
+      const ok = handleSetTagLogo(loadedImages[0]);
+      setToast(ok
+        ? {
+          kind: 'success',
+          text: `Logo puesto en los ${selected.celdasDorso?.length ?? 0} tags del dorso.`
+            + (loadedImages.length > 1 ? ' (Cargaste varias imágenes: usé la primera.)' : ''),
+        }
+        : { kind: 'error', text: 'No se pudo poner el logo en la plancha.' });
       return;
     }
     const processed = [];
@@ -4256,7 +4337,9 @@ export default function App() {
     if (!selected || printing) return;
     const isBack = face === 'back';
     const assignments = isBack ? layout.assignmentsBack : layout.assignmentsFront;
-    if (!assignments?.some((id) => id !== null)) {
+    // Plancha de tags: el arte del frente y del dorso es fijo, así que siempre hay
+    // algo para imprimir (el logo es opcional y va solo en el dorso).
+    if (!isTagSheet(selected) && !assignments?.some((id) => id !== null)) {
       setToast({
         kind: 'error',
         text: isBack ? 'No hay imágenes en el dorso.' : 'No hay imágenes para imprimir.',
@@ -4768,7 +4851,7 @@ export default function App() {
           }}
           backMirror={selected ? backMirrorAxis(selected) : 'y'}
           backRotate180={selected ? backRotate180(selected) : false}
-          onChangeBackMirror={selected?.doubleSided ? (axis) => {
+          onChangeBackMirror={selected?.doubleSided && !isTagSheet(selected) ? (axis) => {
             // Resolvemos AMBOS campos y borramos el backFlip viejo, asi no queda
             // estado mixto en plantillas que venian del modo acoplado anterior.
             updateActiveTab((tab) => ({
@@ -4781,7 +4864,7 @@ export default function App() {
               isDirty: true,
             }));
           } : undefined}
-          onChangeBackRotate180={selected?.doubleSided ? (val) => {
+          onChangeBackRotate180={selected?.doubleSided && !isTagSheet(selected) ? (val) => {
             updateActiveTab((tab) => ({
               template: {
                 ...tab.template,
@@ -4932,6 +5015,7 @@ export default function App() {
             onSetFocalPoint={(imageId, fp) => layout.updateImage(imageId, { focalPoint: fp })}
             onUploadPdfClick={() => blankPdfInputRef.current?.click()}
             onCreateGridClick={() => setGridModalOpen(true)}
+            onSetTagHolePos={(dxMm, fromTopMm) => handleSetTagHole({ dxMm, fromTopMm })}
             onSetTroquelPos={(dxMm, fromTopMm) =>
               handleUpdateTemporalTemplate({ troquel: { ...(selected?.troquel || {}), dxMm, fromTopMm } })}
           />
@@ -4969,7 +5053,8 @@ export default function App() {
             onSetDobbleCaja={handleDobbleCaja}
             onClearDobbleCaja={handleDobbleClearCaja}
             onPublishMazo={handlePublishMazo}
-            onToggleDoubleSided={handleToggleDoubleSided}
+            onToggleDoubleSided={isTagSheet(selected) ? undefined : handleToggleDoubleSided}
+            onSetTagHole={handleSetTagHole}
             onChangeWhiteBorder={(v) => handlePatchActiveTemplate({ cellWhiteBorderMm: v })}
             onChangeBorderLine={(v) => handlePatchActiveTemplate({ cellBorderLineMm: v })}
             onChangeBorderColor={(v) => handlePatchActiveTemplate({ cellBorderColor: v })}

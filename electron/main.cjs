@@ -799,7 +799,7 @@ ipcMain.handle('paper-presets:sync-push', async () => {
 });
 
 ipcMain.handle('templates:parse-pdf', async (_evt, payload) => {
-  // payload = { bytes, doubleSided }
+  // payload = { bytes, doubleSided, tags }
   const bytes = payload?.bytes ?? payload; // backward compat
   const doubleSided = !!payload?.doubleSided;
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'printlayout-pdf-'));
@@ -807,7 +807,10 @@ ipcMain.handle('templates:parse-pdf', async (_evt, payload) => {
   try {
     fs.writeFileSync(tmpPdf, Buffer.from(bytes));
     const args = [tmpPdf];
-    if (doubleSided) args.push('--double-sided');
+    // Plancha de tags (frente, dorso, recuadros de logo, corte): otro reparto de
+    // páginas, lo resuelve el mismo parser con --tags.
+    if (payload?.tags) args.push('--tags');
+    else if (doubleSided) args.push('--double-sided');
     const { stdout } = await runPython('parse_template.py', { args });
     let parsed;
     try {

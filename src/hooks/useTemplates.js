@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { buildTagCuts, mirrorCellsX, tagHoleDefaults } from '../lib/tagSheets.js';
 
 export function useTemplates() {
   const [templates, setTemplates] = useState([]);
@@ -29,13 +30,14 @@ export function useTemplates() {
   // Subir un PDF -> parsearlo en el backend Python -> guardar plantilla.
   const createFromPdf = useCallback(async (
     file,
-    { markMarginMm = 10, doubleSided = false, name: customName, categoria } = {},
+    { markMarginMm = 10, doubleSided = false, tags = false, name: customName, categoria } = {},
   ) => {
     if (!file) throw new Error('Archivo no provisto.');
     const buf = await file.arrayBuffer();
     const bytes = new Uint8Array(buf);
     const parsed = await window.printlayout.templates.parsePdf(bytes, {
       doubleSided,
+      tags,
     });
     if (!parsed?.ok) {
       throw new Error(parsed?.error || 'No se pudo parsear el PDF.');
@@ -45,6 +47,45 @@ export function useTemplates() {
     let bin = '';
     for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
     const pdfBase64 = btoa(bin);
+
+    // Plancha de TAGS: el PDF trae el arte del frente y del dorso, los recuadros
+    // del logo y el corte. NO va en `pdfBase64` (eso significa "las marcas ya
+    // vienen dibujadas"): acá las marcas y el QR los pone la app, como en una
+    // grilla. El arte viaja en `tags.pdfBase64`.
+    if (tags) {
+      const cajas = parsed.celdasDorso ?? [];
+      if (cajas.length === 0) {
+        throw new Error('La página 3 no tiene ningún recuadro para el logo. Dibujá un rectángulo donde va el logo de cada tag.');
+      }
+      const cortesBase = parsed.cortes ?? [];
+      const hole = tagHoleDefaults(cortesBase);
+      const tagsTpl = {
+        name,
+        pdfBase64: null,
+        pageWidthMm: parsed.pageWidthMm,
+        pageHeightMm: parsed.pageHeightMm,
+        pageCount: 1,
+        singlePage: true,
+        doubleSided: true,
+        backMirror: 'x',
+        backRotate180: false,
+        // El logo va en el DORSO. Las celdas del frente son solo el "lugar que
+        // cae detrás" de cada logo: no se muestran ni se imprimen.
+        celdas: mirrorCellsX(cajas, parsed.pageWidthMm),
+        celdasDorso: cajas,
+        cortes: buildTagCuts(cortesBase, hole),
+        cutMarginMm: 0,
+        cutShape: 'rect',
+        markMarginMm,
+        conQr: true,
+        fitMode: 'contain',
+        tags: { pdfBase64, cortesBase, hole },
+        categoria: (categoria || '').trim() || undefined,
+      };
+      const savedTags = await window.printlayout.templates.save(tagsTpl);
+      setTemplates((prev) => [...prev, savedTags]);
+      return savedTags;
+    }
 
     const isSinglePage = !!parsed.singlePage;
     const tpl = {

@@ -18,11 +18,17 @@ Formato doble-faz (4 paginas):
                     cajas son las mismas posiciones que en frente).
   pag 4 (idx 3) -> vectores de corte.
 
+Formato plancha de TAGS (4 paginas, --tags). La app pone las marcas y el QR:
+  pag 1 (idx 0) -> arte del frente (los tags ya posados). No se parsea.
+  pag 2 (idx 1) -> arte del dorso, tal como se imprime. No se parsea.
+  pag 3 (idx 2) -> un rectangulo por cada lugar del logo (sobre el dorso).
+  pag 4 (idx 3) -> vectores de corte (silueta de cada tag y su agujero).
+
 Coordenadas devueltas: en mm, origen top-left (mismo sistema que PrintLayout
 y que pymupdf nativamente). La inversion a bottom-left para el plotter se
 hace UNA SOLA VEZ en send_to_plotter.py.
 
-Uso: python parse_template.py <pdf> [--double-sided]
+Uso: python parse_template.py <pdf> [--double-sided | --tags]
 Salida: JSON por stdout.
 """
 import json
@@ -50,7 +56,7 @@ def pt_to_mm(pt):
     return pt / PT_PER_MM
 
 
-def parse_pdf(pdf_path, doble_faz=False):
+def parse_pdf(pdf_path, doble_faz=False, tags=False):
     try:
         doc = fitz.open(pdf_path)
     except Exception as e:
@@ -68,6 +74,9 @@ def parse_pdf(pdf_path, doble_faz=False):
     page_h_pt = page0.rect.height
     page_w_mm = pt_to_mm(page_w_pt)
     page_h_mm = pt_to_mm(page_h_pt)
+
+    if tags:
+        return _parse_tags(doc, n, page_w_pt, page_h_pt, page_w_mm, page_h_mm)
 
     # Modo 1-pagina: la unica pagina trae las cajas como celdas. No hay
     # imprimible (no se embebe en el export) ni cortes ni dorso.
@@ -138,6 +147,47 @@ def parse_pdf(pdf_path, doble_faz=False):
         "pageCount": n,
         "celdas": celdas,
         "celdasDorso": celdas_dorso,
+        "cortes": cortes,
+    }
+
+
+def _parse_tags(doc, n, page_w_pt, page_h_pt, page_w_mm, page_h_mm):
+    """Plancha de tags: frente, dorso, recuadros de logo y corte (4 paginas)."""
+    if n < 4:
+        return {
+            "ok": False,
+            "error": (
+                f"La plancha de tags necesita 4 paginas y el PDF tiene {n}: "
+                "1) frente, 2) dorso, 3) recuadros del logo, 4) corte."
+            ),
+        }
+    nombres = {1: "dorso", 2: "recuadros del logo", 3: "corte"}
+    for idx in (1, 2, 3):
+        pg = doc[idx]
+        if (abs(pg.rect.width - page_w_pt) > 0.1
+                or abs(pg.rect.height - page_h_pt) > 0.1):
+            return {
+                "ok": False,
+                "error": (
+                    f"La pagina {idx + 1} ({nombres[idx]}) no mide lo mismo que la 1. "
+                    "Las 4 paginas tienen que ser del mismo tamano."
+                ),
+            }
+    cajas = _extraer_celdas(doc[2], page_h_pt)
+    cortes = _extraer_cortes(doc[3], page_h_pt)
+    if not cortes:
+        return {
+            "ok": False,
+            "error": "La pagina 4 no tiene ninguna linea de corte.",
+        }
+    return {
+        "ok": True,
+        "tags": True,
+        "pageWidthMm": page_w_mm,
+        "pageHeightMm": page_h_mm,
+        "pageCount": n,
+        "celdas": [],
+        "celdasDorso": cajas,
         "cortes": cortes,
     }
 
@@ -312,11 +362,12 @@ def _samplear_bezier(p0, p1, p2, p3, append_pt):
 
 def main():
     if len(sys.argv) < 2:
-        print(json.dumps({"ok": False, "error": "uso: parse_template.py <pdf> [--double-sided]"}))
+        print(json.dumps({"ok": False, "error": "uso: parse_template.py <pdf> [--double-sided | --tags]"}))
         sys.exit(2)
     pdf_path = sys.argv[1]
     doble_faz = "--double-sided" in sys.argv[2:]
-    result = parse_pdf(pdf_path, doble_faz=doble_faz)
+    tags = "--tags" in sys.argv[2:]
+    result = parse_pdf(pdf_path, doble_faz=doble_faz, tags=tags)
     print(json.dumps(result))
 
 

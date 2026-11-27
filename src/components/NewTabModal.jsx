@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
+import { renderTagArtPreview } from '../lib/pdfPreview.js';
+import { isTagSheet, tagSheetInfo } from '../lib/tagSheets.js';
 import { describeCells, hasCuts } from '../lib/templates.js';
 import { PLANCHA_LIST } from '../rotulos/planchas.js';
 
@@ -431,6 +433,15 @@ export default function NewTabModal({
                     {visibleTemplates.map((t) => (
                       <li key={t.id}>
                         <div className="group flex items-center gap-3 rounded-md border border-transparent px-3 py-2 hover:border-ink-700 hover:bg-ink-800">
+                          {isTagSheet(t) && (
+                            <TagSheetThumb
+                              template={t}
+                              onClick={() => {
+                                onClose?.();
+                                onPickTemplate?.(t.id);
+                              }}
+                            />
+                          )}
                           <button
                             type="button"
                             onClick={() => {
@@ -455,7 +466,9 @@ export default function NewTabModal({
                             </div>
                             <div className="mt-0.5 text-[11px] text-ink-400">
                               {hasQuery && t.categoria ? `${t.categoria} · ` : ''}
-                              {describeCells(t)}
+                              {isTagSheet(t)
+                                ? `plancha de tags · ${tagSheetInfo(t.tags.cortesBase).pieces} tags`
+                                : describeCells(t)}
                               {hasCuts(t) && (
                                 <span className="ml-2 text-accent-400">corte</span>
                               )}
@@ -565,6 +578,66 @@ function OptionCard({ title, subtitle, icon, onClick, disabled = false }) {
         <span className="block text-sm font-medium text-ink-100">{title}</span>
         <span className="mt-0.5 block text-[11px] text-ink-400">{subtitle}</span>
       </span>
+    </button>
+  );
+}
+
+// Miniatura del FRENTE de una plancha de tags, para reconocerla de un vistazo en
+// la lista. Al pasar el mouse se ve grande (frente y dorso lado a lado).
+function TagSheetThumb({ template, onClick }) {
+  const [front, setFront] = useState(null);
+  const [back, setBack] = useState(null);
+  const [hover, setHover] = useState(null); // { x, y } de la miniatura
+  useEffect(() => {
+    let vivo = true;
+    renderTagArtPreview(template, 'front', 28)
+      .then((u) => { if (vivo) setFront(u); })
+      .catch(() => {});
+    return () => { vivo = false; };
+  }, [template]);
+  useEffect(() => {
+    if (!hover || back) return undefined;
+    let vivo = true;
+    renderTagArtPreview(template, 'back', 28)
+      .then((u) => { if (vivo) setBack(u); })
+      .catch(() => {});
+    return () => { vivo = false; };
+  }, [hover, back, template]);
+  const ratio = (template.pageWidthMm || 1) / (template.pageHeightMm || 1);
+  const h = 84;
+  const w = Math.max(40, Math.min(150, Math.round(h * ratio)));
+  const bigH = 380;
+  const bigW = Math.round(bigH * ratio);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-miniatura="tags"
+      onMouseEnter={(e) => { const r = e.currentTarget.getBoundingClientRect(); setHover({ x: r.right + 10, y: r.top }); }}
+      onMouseLeave={() => setHover(null)}
+      className="shrink-0 overflow-hidden rounded border border-ink-600 bg-white"
+      style={{ width: w, height: h }}
+      title={template.name}
+    >
+      {front && <img src={front} alt="" draggable={false} className="h-full w-full object-contain" />}
+      {hover && front && (
+        <div
+          className="pointer-events-none fixed z-[70] flex gap-2 rounded-md border border-ink-600 bg-ink-900 p-2 shadow-2xl"
+          style={{
+            left: Math.min(hover.x, window.innerWidth - (bigW * 2 + 40)),
+            top: Math.max(8, Math.min(hover.y - 40, window.innerHeight - bigH - 50)),
+          }}
+        >
+          {[['Frente', front], ['Dorso', back]].map(([lbl, url]) => (
+            <div key={lbl} className="text-center">
+              <div className="bg-white" style={{ width: bigW, height: bigH }}>
+                {url && <img src={url} alt="" className="h-full w-full object-contain" />}
+              </div>
+              <div className="mt-1 text-[10px] text-ink-300">{lbl}</div>
+            </div>
+          ))}
+        </div>
+      )}
     </button>
   );
 }

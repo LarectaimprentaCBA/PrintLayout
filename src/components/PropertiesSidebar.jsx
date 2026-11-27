@@ -9,6 +9,7 @@ import {
   formatMm,
 } from '../lib/templates.js';
 import { readImageFiles } from '../lib/images.js';
+import { isTagSheet, tagSheetInfo, normTagHole } from '../lib/tagSheets.js';
 import SidebarImageItem from './SidebarImageItem.jsx';
 
 // Tolerancia de simplificación del contorno (mm). Normaliza valores viejos del
@@ -110,6 +111,7 @@ export default function PropertiesSidebar({
   onChangeBorderLine,
   onChangeBorderColor,
   onToggleDoubleSided,
+  onSetTagHole,
   onUpdateTemporal,
   onApplyContour,
   contourDirty = false,
@@ -286,16 +288,23 @@ export default function PropertiesSidebar({
 
       <div className="flex items-center justify-between border-b border-ink-700 px-3 py-2">
         <h2 className="text-xs font-semibold uppercase tracking-wider text-ink-300">
-          Imágenes ({images?.length ?? 0})
+          {isTagSheet(template) ? 'Logo del cliente' : `Imágenes (${images?.length ?? 0})`}
         </h2>
         <div className="flex gap-1">
           <button
             disabled={!template || extractingPdf}
             onClick={() => multiInputRef.current?.click()}
-            title="Cargar imágenes (JPG, PNG, HEIC) o PDF"
+            title={isTagSheet(template)
+              ? 'Elegí el logo: se pone solo en todos los tags del dorso'
+              : 'Cargar imágenes (JPG, PNG, HEIC) o PDF'}
+            data-accion="cargar-imagenes"
             className="rounded bg-accent-600 px-2 py-1 text-xs font-medium text-white hover:bg-accent-500 disabled:opacity-40"
           >
-            {extractingPdf ? 'Extrayendo…' : '+ Cargar'}
+            {extractingPdf
+              ? 'Extrayendo…'
+              : isTagSheet(template)
+                ? (images?.length ? 'Cambiar logo' : '+ Cargar logo')
+                : '+ Cargar'}
           </button>
           {images && images.length > 0 && (
             <button
@@ -325,6 +334,11 @@ export default function PropertiesSidebar({
         {!template ? (
           <p className="px-2 py-3 text-xs text-ink-400">
             Seleccioná una plantilla primero.
+          </p>
+        ) : (!images || images.length === 0) && isTagSheet(template) ? (
+          <p className="px-2 py-3 text-xs text-ink-400">
+            Hacé clic en <b>+ Cargar logo</b> (o arrastrá el archivo acá). Se pone solo en
+            los {template.celdasDorso?.length ?? 0} tags del dorso, entero y centrado.
           </p>
         ) : !images || images.length === 0 ? (
           <p className="px-2 py-3 text-xs text-ink-400">
@@ -564,7 +578,7 @@ export default function PropertiesSidebar({
               </dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-ink-400">Celdas</dt>
+              <dt className="text-ink-400">{isTagSheet(template) ? 'Lugares para el logo' : 'Celdas'}</dt>
               <dd>{totalCells(template)}</dd>
             </div>
             <CellSizesRows template={template} />
@@ -832,7 +846,10 @@ export default function PropertiesSidebar({
                 )}
               </dd>
             </div>
-            {template.temporal && onUpdateTemporal && !template.dobble && (
+            {isTagSheet(template) && onSetTagHole && (
+              <TagHoleControls template={template} onChange={onSetTagHole} />
+            )}
+            {template.temporal && onUpdateTemporal && !template.dobble && !isTagSheet(template) && (
               <>
                 <div className="flex items-center justify-between">
                   <dt className="text-ink-400">Margen corte</dt>
@@ -1100,6 +1117,56 @@ function TroquelControls({ template, onUpdate }) {
           <p className="text-[10px] leading-snug text-ink-500">
             El plotter corta primero el agujero y después el contorno de cada pieza. Se ve en rojo en la vista previa.
           </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Plancha de tags: el agujero se decide por trabajo. Si la plancha lo trae
+// dibujado, alcanza con el interruptor; a los tags que no lo traen la app les
+// agrega uno redondo (tamaño y posición configurables, como en las grillas).
+function TagHoleControls({ template, onChange }) {
+  const info = tagSheetInfo(template.tags?.cortesBase);
+  const h = normTagHole(template.tags?.hole);
+  const faltan = info.withoutHole; // tags sin agujero dibujado
+  return (
+    <div className="space-y-2 rounded border border-accent-500/30 bg-accent-500/5 p-2" data-panel="tags-agujero">
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-ink-400">
+        Plancha de tags · {info.pieces} tag{info.pieces === 1 ? '' : 's'}
+      </div>
+      <label className="flex cursor-pointer items-center justify-between gap-2">
+        <span className="text-ink-200">Cortar el agujero</span>
+        <input
+          type="checkbox"
+          name="cortarAgujero"
+          checked={h.cut}
+          onChange={(e) => onChange({ cut: e.target.checked })}
+          className="h-3.5 w-3.5 accent-accent-500"
+        />
+      </label>
+      <p className="text-[10px] leading-snug text-ink-500" data-nota="agujero">
+        {info.holes === 0
+          ? 'Esta plancha no trae el agujero dibujado: si lo prendés, la app agrega uno en cada tag.'
+          : faltan === 0
+            ? 'La plancha trae el agujero dibujado en todos los tags.'
+            : `${info.withHole} tag${info.withHole === 1 ? ' trae' : 's traen'} el agujero dibujado; a los otros ${faltan} se lo agrega la app.`}
+        {h.cut ? ' Se corta primero el agujero y después la silueta.' : ' Ahora se corta solo la silueta.'}
+      </p>
+      {h.cut && faltan > 0 && (
+        <>
+          <div className="flex items-center justify-between">
+            <span className="text-ink-400">Diámetro (mm)</span>
+            <TroquelNumber value={h.diameterMm} min={0} onChange={(v) => onChange({ diameterMm: Math.max(0, v) })} />
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-ink-400" title="Distancia desde la punta de arriba del tag hasta el centro del agujero">Desde arriba (mm)</span>
+            <TroquelNumber value={h.fromTopMm} min={0} onChange={(v) => onChange({ fromTopMm: Math.max(0, v) })} />
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-ink-400" title="Corrimiento horizontal desde el centro del tag. 0 = centrado; + a la derecha, − a la izquierda">Horizontal (mm)</span>
+            <TroquelNumber value={h.dxMm} onChange={(v) => onChange({ dxMm: v })} />
+          </div>
         </>
       )}
     </div>

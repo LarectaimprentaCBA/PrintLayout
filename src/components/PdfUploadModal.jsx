@@ -11,6 +11,10 @@ export default function PdfUploadModal({
 }) {
   const [margin, setMargin] = useState(String(defaultMargin));
   const [doubleSided, setDoubleSided] = useState(defaultDoubleSided);
+  // 'comun' = plantilla de siempre (las marcas vienen en el PDF).
+  // 'tags'  = plancha de tags (frente + dorso + lugar del logo + corte; las
+  //           marcas y el QR los pone la app).
+  const [tipo, setTipo] = useState('comun');
   const [name, setName] = useState('');
   const [categoria, setCategoria] = useState('');
   const inputRef = useRef(null);
@@ -19,6 +23,7 @@ export default function PdfUploadModal({
     if (open) {
       setMargin(String(defaultMargin));
       setDoubleSided(defaultDoubleSided);
+      setTipo('comun');
       // Default: nombre del archivo sin .pdf
       const baseName = (fileName || '').replace(/\.pdf$/i, '').trim();
       setName(baseName);
@@ -33,7 +38,8 @@ export default function PdfUploadModal({
     e?.preventDefault();
     onConfirm?.({
       margin,
-      doubleSided,
+      doubleSided: tipo === 'tags' ? false : doubleSided,
+      tags: tipo === 'tags',
       name: name.trim(),
       categoria: categoria.trim(),
     });
@@ -52,6 +58,42 @@ export default function PdfUploadModal({
           <p className="mt-1 truncate text-xs text-ink-400" title={fileName}>
             {fileName}
           </p>
+        )}
+
+        <div className="mt-3 flex gap-1 rounded border border-ink-700 bg-ink-800 p-0.5 text-xs" data-campo="tipoPlantilla">
+          {[['comun', 'Plantilla común'], ['tags', 'Plancha de tags']].map(([val, lbl]) => (
+            <button
+              key={val}
+              type="button"
+              data-tipo={val}
+              onClick={() => {
+                setTipo(val);
+                // Las marcas las dibuja la app: arranca con el margen de las grillas.
+                if (val === 'tags' && String(margin) === String(defaultMargin)) setMargin('15');
+                if (val === 'comun' && String(margin) === '15') setMargin(String(defaultMargin));
+                // Las planchas de tags van juntas en su carpeta, así se eligen
+                // mirando las miniaturas.
+                if (val === 'tags' && !categoria.trim()) setCategoria('Tags');
+                if (val === 'comun' && categoria === 'Tags') setCategoria('');
+              }}
+              className={`flex-1 rounded px-2 py-1 ${tipo === val ? 'bg-accent-600 text-white' : 'text-ink-300 hover:bg-ink-700'}`}
+            >
+              {lbl}
+            </button>
+          ))}
+        </div>
+
+        {tipo === 'tags' && (
+          <div className="mt-2 rounded border border-accent-500/30 bg-accent-500/5 px-2 py-1.5 text-[11px] leading-snug text-ink-300">
+            El PDF tiene que traer <b>4 páginas del mismo tamaño</b> (el de la hoja):
+            <ol className="ml-4 mt-1 list-decimal space-y-0.5">
+              <li>Frente: los tags ya acomodados, sin marcas.</li>
+              <li>Dorso: tal como se imprime.</li>
+              <li>Un rectángulo donde va el logo de cada tag.</li>
+              <li>El corte: la silueta de cada tag (y el agujero, si lo lleva).</li>
+            </ol>
+            <p className="mt-1 text-ink-400">Las marcas y el QR los pone la app.</p>
+          </div>
         )}
 
         <label className="mt-4 block text-xs text-ink-300">
@@ -89,7 +131,9 @@ export default function PdfUploadModal({
 
         <label className="mt-3 block text-xs text-ink-300">
           <span className="block mb-1">
-            Margen entre el borde de la hoja y las marcas L (mm)
+            {tipo === 'tags'
+              ? 'Margen entre el borde de la hoja y las marcas (mm)'
+              : 'Margen entre el borde de la hoja y las marcas L (mm)'}
           </span>
           <input
             value={margin}
@@ -102,6 +146,7 @@ export default function PdfUploadModal({
           />
         </label>
 
+        {tipo !== 'tags' && (
         <label className="mt-4 flex cursor-pointer items-center gap-2 text-xs text-ink-200">
           <input
             type="checkbox"
@@ -116,6 +161,7 @@ export default function PdfUploadModal({
             </span>
           </span>
         </label>
+        )}
 
         <div className="mt-5 flex justify-end gap-2">
           <button

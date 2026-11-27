@@ -116,6 +116,10 @@ function hashTemplateContent(tpl) {
     backRotate180: !!tpl.backRotate180,
     dobbleFondo: tpl.dobbleFondo ?? null,
     cajaFondo: tpl.cajaFondo ?? null,
+    // Plancha de tags: el arte (frente/dorso), el corte original y el ajuste del
+    // agujero viven en `tags`. Solo entra al hash si la plantilla lo trae, así
+    // las demás plantillas siguen hasheando EXACTAMENTE igual que antes.
+    ...(tpl.tags ? { tags: tpl.tags } : {}),
   };
   return crypto
     .createHash('sha256')

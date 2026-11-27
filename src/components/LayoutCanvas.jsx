@@ -12,7 +12,8 @@ import {
 import { safeZoneCuts } from '../lib/safeZone.js';
 import { cellsToCircleCuts } from '../lib/grid.js';
 import { coverObjectPosition, coverCropRect, focalPoint } from '../lib/faceDetection.js';
-import { renderPdfPage1Preview } from '../lib/pdfPreview.js';
+import { renderPdfPage1Preview, renderTagArtPreview } from '../lib/pdfPreview.js';
+import { mirrorCutsX, classifyTagCuts, normTagHole } from '../lib/tagSheets.js';
 import { qrMatrix, qrPlacementMm } from '../lib/exportPdf.js';
 import CellSlot from './CellSlot.jsx';
 import ContourTolerancePreview from './ContourTolerancePreview.jsx';
@@ -189,6 +190,7 @@ export default function LayoutCanvas({
   onUploadPdfClick,
   onCreateGridClick,
   onSetTroquelPos,
+  onSetTagHolePos,
 }) {
   // QR de corte para la vista previa (SVG). Mismo texto/posición que la
   // impresión (qrMatrix + qrPlacementMm compartidos con exportPdf). Solo en el
@@ -253,7 +255,11 @@ export default function LayoutCanvas({
     if (!(s > 0)) return null;
     // Una vez por forma distinta (96 stickers iguales = 1 cálculo, no 96).
     const out = safeZoneCuts(cortes, s);
-    return out.length ? out : null;
+    if (!out.length) return null;
+    // Tags mirando el dorso: igual que el corte, se ve espejada.
+    return template.tags?.pdfBase64 && face === 'back'
+      ? mirrorCutsX(out, template.pageWidthMm)
+      : out;
   }, [showSafety, template?.cortes, template?.cortesPorPagina, template?.safetyMm,
     template?.serpentineCut, template?.celdas, currentPage, face]);
 
@@ -335,13 +341,28 @@ export default function LayoutCanvas({
   // parpadear) al paginar.
   const bgPageIndex = template && fixedPageCount(template) !== null ? (currentPage ?? 0) : 0;
 
+  // Plancha de tags: el fondo es el ARTE de la cara que se está mirando (frente
+  // o dorso), no un PDF con marcas. Se ve siempre, en las dos caras.
+  const isTags = !!template?.tags?.pdfBase64;
+  const tagFace = isTags && face === 'back' ? 'back' : 'front';
+  // Tags a los que la app les AGREGA el agujero (no lo traen dibujado): ahí va el
+  // tirador para moverlo a mano. Corre antes del return de "sin plantilla".
+  const tagHoleBoxes = useMemo(() => {
+    const base = template?.tags?.cortesBase;
+    if (!Array.isArray(base)) return [];
+    return classifyTagCuts(base).filter((p) => p.holes.length === 0).map((p) => p.box);
+  }, [template?.tags?.cortesBase]);
+  const tagHole = isTags ? normTagHole(template.tags.hole) : null;
+
   useEffect(() => {
     let cancelled = false;
     setPreviewUrl(null);
     if (!template) return;
     (async () => {
       try {
-        const url = await renderPdfPage1Preview(template, 110, bgPageIndex);
+        const url = isTags
+          ? await renderTagArtPreview(template, tagFace, 110)
+          : await renderPdfPage1Preview(template, 110, bgPageIndex);
         if (!cancelled) setPreviewUrl(url);
       } catch (err) {
         console.error('No se pudo renderizar el preview:', err);
@@ -350,7 +371,7 @@ export default function LayoutCanvas({
     return () => {
       cancelled = true;
     };
-  }, [template?.id, bgPageIndex]);
+  }, [template?.id, bgPageIndex, isTags, tagFace]);
 
 
   if (!template) {
@@ -430,7 +451,7 @@ export default function LayoutCanvas({
             className="relative bg-white shadow-2xl"
             style={{ width: sheetW, height: sheetH }}
           >
-            {showBackground && previewUrl && (
+            {(showBackground || isTags) && previewUrl && (
               <img
                 src={previewUrl}
                 alt=""
@@ -438,7 +459,9 @@ export default function LayoutCanvas({
                 className="pointer-events-none absolute inset-0 h-full w-full select-none"
               />
             )}
-            {cells.map((cell, i) => {
+            {/* Tags: en el frente no se posa nada (el logo va en el dorso), así
+                que no se dibujan casilleros encima del arte. */}
+            {(isTags && face !== 'back' ? [] : cells).map((cell, i) => {
               const x = cell.x * pxPerMm;
               const y = cell.y * pxPerMm;
               const w = cell.w * pxPerMm;
@@ -560,8 +583,14 @@ export default function LayoutCanvas({
             })}
             {showCuts && (() => {
               // Corte de la HOJA ACTUAL (por-página si la plantilla lo trae).
-              const pageCortes = cutsForPage(template, currentPage ?? 0);
-              if (!pageCortes.length) return null;
+              const cortesHoja = cutsForPage(template, currentPage ?? 0);
+              if (!cortesHoja.length) return null;
+              // Tags mirando el dorso: el corte está dibujado desde el frente, así
+              // que se muestra espejado (como queda al dar vuelta la hoja) para
+              // poder controlar que el dorso y el logo caigan adentro de cada tag.
+              const pageCortes = isTags && face === 'back'
+                ? mirrorCutsX(cortesHoja, template.pageWidthMm)
+                : cortesHoja;
               return (
                 <svg
                   viewBox={`0 0 ${template.pageWidthMm} ${template.pageHeightMm}`}
@@ -668,6 +697,18 @@ export default function LayoutCanvas({
                   troquel={template.troquel}
                   pxPerMm={pxPerMm}
                   onChange={onSetTroquelPos}
+                />
+              ))}
+            {/* Tags: mismo tirador para el agujero que agrega la app (solo en el
+                frente, que es desde donde está dibujado el corte). */}
+            {onSetTagHolePos && isTags && face !== 'back' && tagHole.cut && tagHole.diameterMm > 0
+              && tagHoleBoxes.map((box, i) => (
+                <TroquelHandle
+                  key={`tag-hole-${i}`}
+                  cell={box}
+                  troquel={tagHole}
+                  pxPerMm={pxPerMm}
+                  onChange={onSetTagHolePos}
                 />
               ))}
           </div>
